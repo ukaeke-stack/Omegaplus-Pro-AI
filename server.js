@@ -87,12 +87,33 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
-  if(type==="ou") return market.marketId==="18"||n.includes("over/under")||n.includes("total goals")||n.includes("goal line")||n.includes("goals")||market.outcomes.some(o=>/^(over|under)\\s*\\d+(?:\\.\\d+)?(?:\\s*goals?)?$/i.test(String(o.outcomeName||"")));
-  if(type==="btts") return market.marketId==="29";
-  if(type==="1x2") return market.marketId==="1";
-  if(type==="handicap") return ["14","16"].includes(market.marketId);
-  if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner");
-  if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card");
+  const names=(market.outcomes||[]).map(o=>normalizeText(o.outcomeName));
+  if(type==="ou"){
+    return market.marketId==="18" ||
+      n.includes("over under") || n.includes("over/under") || n.includes("total goals") ||
+      n.includes("goal line") || n.includes("goals") ||
+      names.some(x=>/^(over|under)\\s*\\d+(?:\\.\\d+)?(?:\\s+goals?)?$/.test(x));
+  }
+  if(type==="btts"){
+    return market.marketId==="29" ||
+      n.includes("both teams") || n.includes("btts") ||
+      (names.some(x=>x==="yes") && names.some(x=>x==="no"));
+  }
+  if(type==="1x2"){
+    return market.marketId==="1" ||
+      n.includes("1x2") || n.includes("match result") ||
+      (names.includes("1") && names.includes("x") && names.includes("2"));
+  }
+  if(type==="handicap"){
+    return ["14","16"].includes(market.marketId) || n.includes("handicap");
+  }
+  if(type==="corners"){
+    return ["166","165","162"].includes(market.marketId) || n.includes("corner");
+  }
+  if(type==="cards"){
+    return ["139","138","900304","900305","900312"].includes(market.marketId) ||
+      n.includes("booking") || n.includes("card");
+  }
   return false;
 }
 function confidenceForOutcome(market,outcome){
