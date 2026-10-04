@@ -10,7 +10,7 @@ const BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=REGION.toUpperCase();
 const MARKETS=["1","14","16","18","29","139","138","162","165","166","900304","900305","900312"];
-const cache={at:0,fixtures:[]};
+const cache={at:0,fixtures:[],lastError:null};
 let requestPromise=null,lastRequest=0;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 app.use(express.json({limit:"1mb"}));
@@ -37,15 +37,18 @@ async function getFixtures(){
   if(requestPromise)return requestPromise;
   requestPromise=(async()=>{
     const allById=new Map();
-    const keys=[MARKETS.join(","),"18","1"];
+    // Discover fixtures from the simple, stable Over/Under market first.
+    // Then enrich the same fixture set with the combined market request.
+    // This prevents a partially-populated combined response from becoming the
+    // sole source of truth for the fixture list.
+    const keys=["18",MARKETS.join(",")];
     for(const key of keys){
-      let addedThisQuery=0;
       for(let page=1;page<=12;page++){
         const q=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:"100",pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
         const body=await sporty("/factsCenter/pcUpcomingEvents?"+q);
         const ts=body.data?.tournaments||[]; let count=0;
         for(const t of ts) for(const e of t.events||[]){
-          count++; addedThisQuery++;
+          count++;
           const id=String(e.eventId||""); if(!id) continue;
           const incoming={eventId:id,league:String(t.name||""),category:String(t.categoryName||""),home:String(e.homeTeamName||""),away:String(e.awayTeamName||""),startTimeMs:msValue(e.estimateStartTime),markets:(e.markets||[]).map(m=>({marketId:String(m.id||""),marketName:String(m.desc||m.name||m.title||m.id||""),specifier:m.specifier??null,outcomes:(m.outcomes||[]).map(o=>({outcomeId:String(o.id||""),outcomeName:String(o.desc||""),odds:Number(o.odds),isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))}))}))};
           const existing=allById.get(id);
@@ -57,10 +60,13 @@ async function getFixtures(){
         }
         if(count<100 || (Number(body.data?.totalNum||0)&&page*100>=Number(body.data.totalNum)))break;
       }
-      if(addedThisQuery>0 && allById.size>0) break;
+      // The discovery query establishes the fixture universe. The enrichment
+      // query is allowed to add markets, but never replace an existing fixture.
     }
     const all=[...allById.values()];
-    cache.at=Date.now();cache.fixtures=all;return all;
+    cache.at=Date.now();cache.fixtures=all;cache.lastError=null;
+    console.log("Live SportyBet fixtures:",all.length);
+    return all;
   })().finally(()=>{requestPromise=null});
   return requestPromise;
 }
@@ -88,10 +94,29 @@ function datesFrom(reqBodyOrQuery){
   return String(raw).split(",").map(x=>x.trim()).filter(/^\d{4}-\d{2}-\d{2}$/.test);
 }
 
-app.get("/api/health",async(_,res)=>res.json({ok:true,service:"Omegaplus Pro AI",source:"SportyBet web feed"}));
+app.get("/api/health",async(_,res)=>{
+  try{
+    const f=await getFixtures();
+    res.json({ok:true,service:"Omegaplus Pro AI",source:"SportyBet web feed",fixtureCount:f.length,cacheAgeMs:Date.now()-cache.at,lastFeedError:cache.lastError});
+  }catch(e){
+    cache.lastError=e.message;
+    res.status(502).json({ok:false,service:"Omegaplus Pro AI",source:"SportyBet web feed",fixtureCount:cache.fixtures.length,error:e.message});
+  }
+});
 app.get("/api/leagues",async(req,res)=>{try{const f=await getFixtures(),dates=datesFrom(req.query);res.json({ok:true,dates,leagues:leaguesFor(f,dates)})}catch(e){res.status(502).json({ok:false,error:e.message,leagues:[]})}});
 app.get("/api/fixtures",async(req,res)=>{try{const f=await getFixtures(),dates=datesFrom(req.query),rows=f.filter(x=>dates.includes(dayKey(x.startTimeMs)));res.json({ok:true,dates,total:rows.length,fixtures:rows.map(x=>({id:x.eventId,league:x.league,date:dayKey(x.startTimeMs),time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),home:x.home,away:x.away}))})}catch(e){res.status(502).json({ok:false,error:e.message,fixtures:[]})}});
 
+// Backward-compatible aliases used by older deployed clients.
+app.get("/api/predictions",async(req,res)=>{
+  try{
+    const f=await getFixtures(),dates=datesFrom(req.query),rows=f.filter(x=>!dates.length||dates.includes(dayKey(x.startTimeMs)));
+    res.json({ok:true,total:rows.length,predictions:rows});
+  }catch(e){res.status(502).json({ok:false,error:e.message,predictions:[]})}
+});
+app.post("/api/predictions/analyze",async(req,res)=>{
+  req.url="/api/analyze";
+  return app._router?.handle ? res.redirect(307,"/api/analyze") : res.status(500).json({ok:false,error:"Compatibility route unavailable"});
+});
 app.post("/api/analyze",async(req,res)=>{
   try{
     const f=await getFixtures(),dates=datesFrom(req.body||{}),leagues=Array.isArray(req.body?.leagues)?req.body.leagues:[],types=Array.isArray(req.body?.marketTypes)?req.body.marketTypes:[],options=Array.isArray(req.body?.selections)?req.body.selections:[],limit=Math.max(1,Math.min(50,Number(req.body?.maxGames)||20));
