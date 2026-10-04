@@ -23,7 +23,7 @@ function saveHistoryRows(rows,replaceDate=null){
   const kept=history.filter(x=>x.date!==targetDate);
   const now=new Date().toISOString();
   const fresh=rows.slice(0,10).map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:now}));
-  writeHistory([...kept,...fresh]);
+  writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
 function settleOutcome(x){
@@ -39,7 +39,7 @@ function historySelectedDate(){
 }
 function renderHistory(date=historySelectedDate()){
   const box=$("#historyList");if(!box)return;
-  const all=readHistory(),h=all.filter(x=>x.date===date).sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+  const all=readHistory(),h=all.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
   $("#historyStatus").textContent=h.length
     ? h.length+" record(s) for "+prettyDate(date)+"."
     : "No prediction records saved for "+prettyDate(date)+".";
@@ -131,7 +131,9 @@ async function loadDailyBest(){
   try{
     const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:["Over 1.5","Over 2.5"],maxGames:10})})).json();
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
-    const rows=d.predictions||[];
+    const rows=(d.predictions||[]).slice(0,10);
+    saveHistoryRows(rows.map(x=>({...x,date})),date);
+    renderHistory(date);
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
     $$("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){saveHistoryRows([],date);renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
