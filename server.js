@@ -173,7 +173,13 @@ app.get("/api/leagues",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
 });
 
-function requestedDates(req){\n  const raw=req.query.dates||req.query.date;\n  const dates=String(raw||localDayKey(Date.now())).split(",").filter(validDate);\n  return [...new Set(dates.length?dates:[localDayKey(Date.now())])];\n}\n\napp.get("/api/predictions",async(req,r)=>{
+function requestedDates(req){
+  const raw=req.query.dates||req.query.date;
+  const dates=String(raw||localDayKey(Date.now())).split(",").filter(validDate);
+  return [...new Set(dates.length?dates:[localDayKey(Date.now())])];
+}
+
+app.get("/api/predictions",async(req,r)=>{
   try{
     const raw=req.query.dates||req.query.date||localDayKey(Date.now());
     const dates=[...new Set(String(raw).split(",").filter(validDate))];
