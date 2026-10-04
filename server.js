@@ -1,226 +1,36 @@
 import express from "express";
 import path from "node:path";
+import fs from "node:fs";
 import {fileURLToPath} from "node:url";
-
-const app=express();
-const __dirname=path.dirname(fileURLToPath(import.meta.url));
-const PORT=process.env.PORT||3000;
-const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
-const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
-const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
-
-app.use(express.json({limit:"1mb"}));
-app.use(express.static(path.join(__dirname,"public")));
-
+const app=express(),__dirname=path.dirname(fileURLToPath(import.meta.url));
+const PORT=process.env.PORT||3000,SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com",SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng",COUNTRY=SPORTYBET_REGION.toUpperCase();
+const DATA_DIR=process.env.DATA_DIR||"/data",HISTORY_FILE=path.join(DATA_DIR,"history.json");fs.mkdirSync(DATA_DIR,{recursive:true});
+const readHistory=()=>{try{return JSON.parse(fs.readFileSync(HISTORY_FILE,"utf8"))}catch{return[]}};
+const writeHistory=r=>fs.writeFileSync(HISTORY_FILE,JSON.stringify(r.slice(-5000),null,2));
+function upsertHistory(rows){const m=new Map(readHistory().map(x=>[x.key,x]));for(const x of rows)m.set(x.key,{...m.get(x.key),...x});writeHistory([...m.values()])}
+app.use(express.json({limit:"1mb"}));app.use(express.static(path.join(__dirname,"public")));
 const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301"];
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-let lastSportyRequest=0;
-let liveCache={at:0,key:"",fixtures:[]};
-
-async function sportyFetch(pathname,options={}){
-  const wait=Math.max(0,250-(Date.now()-lastSportyRequest));
-  if(wait) await sleep(wait);
-  lastSportyRequest=Date.now();
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),15000);
-  try{
-    const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
-      ...options,
-      headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},
-      signal:controller.signal
-    });
-    const text=await res.text();
-    let body=null;
-    try{body=text?JSON.parse(text):null}catch{}
-    if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
-    if(!body) throw new Error("SportyBet returned an invalid response");
-    if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
-    return body;
-  }finally{clearTimeout(timer)}
-}
-
-async function getSportyFixtures(){
-  const key=MARKET_IDS.join(",");
-  if(Date.now()-liveCache.at<30000&&liveCache.key===key) return liveCache.fixtures;
-  const all=[],pageSize=100;
-  for(let page=1;page<=20;page++){
-    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"48",_t:String(Date.now())});
-    const body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-    const tournaments=body.data?.tournaments||[];
-    let pageCount=0;
-    for(const tournament of tournaments){
-      for(const event of tournament.events||[]){
-        pageCount++;
-        all.push({
-          eventId:String(event.eventId||""),
-          league:String(tournament.name||""),
-          category:String(tournament.categoryName||""),
-          home:String(event.homeTeamName||""),
-          away:String(event.awayTeamName||""),
-          startTimeMs:Number(event.estimateStartTime||0),
-          matchStatus:String(event.matchStatus||"Not start"),
-          markets:(event.markets||[]).map(m=>({
-            marketId:String(m.id||""),
-            marketName:String(m.desc||m.name||m.title||m.id||""),
-            specifier:m.specifier??null,
-            status:m.status,
-            outcomes:(m.outcomes||[]).map(o=>({
-              outcomeId:String(o.id||""),
-              outcomeName:String(o.desc||""),
-              odds:Number(o.odds),
-              isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))
-            }))
-          }))
-        });
-      }
-    }
-    if(pageCount<pageSize) break;
-  }
-  liveCache={at:Date.now(),key,fixtures:all};
-  return all;
-}
-
-function localDayKey(ms){
-  const d=new Date(ms+60*60*1000);
-  return d.toISOString().slice(0,10);
-}
-function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
-function marketMatches(market,type){
-  const n=normalizeText(market.marketName);
-  if(type==="ou") return market.marketId==="18";
-  if(type==="btts") return market.marketId==="29";
-  if(type==="1x2") return market.marketId==="1";
-  if(type==="handicap") return ["14","16"].includes(market.marketId);
-  if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner");
-  if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card");
-  return false;
-}
-function confidenceForOutcome(market,outcome){
-  const active=market.outcomes.filter(o=>o.isActive&&Number.isFinite(o.odds)&&o.odds>1);
-  if(!active.length||!Number.isFinite(outcome.odds)||outcome.odds<=1) return 0;
-  const inv=1/outcome.odds,total=active.reduce((s,o)=>s+1/o.odds,0),normalized=total?inv/total:inv;
-  return Math.round(Math.max(50,Math.min(99,normalized*100)));
-}
-function pickLabel(type,outcome){
-  return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
-}
-function selectionRequested(outcome,requested){
-  if(!requested) return true;
-  const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
-  return a===b||a.includes(b)||b.includes(a);
-}
-function leagueRank(name){
-  const n=normalizeText(name);
-  const top=[
-    "premier league","la liga","laliga","bundesliga","serie a","ligue 1",
-    "eredivisie","primeira liga","championship","super lig","belgium first",
-    "scottish premiership","mls","major league soccer","saudi pro league"
-  ];
-  const champions=["champions league","uefa champions","europa league","conference league","copa libertadores","afc champions"];
-  const international=["world cup","euro","nations league","africa cup","afcon","international","world","qualifiers"];
-  const i=top.findIndex(x=>n.includes(x)); if(i>=0) return i;
-  if(champions.some(x=>n.includes(x))) return 100;
-  if(international.some(x=>n.includes(x))) return 200;
-  return 300;
-}
-function sortLeagues(a,b){
-  const ra=leagueRank(a),rb=leagueRank(b);
-  if(ra!==rb) return ra-rb;
-  return a.localeCompare(b);
-}
-
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));let lastSportyRequest=0,liveCache={at:0,key:"",fixtures:[]};
+async function sportyFetch(pathname,options={}){const wait=Math.max(0,250-(Date.now()-lastSportyRequest));if(wait)await sleep(wait);lastSportyRequest=Date.now();const c=new AbortController(),timer=setTimeout(()=>c.abort(),15000);try{const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},signal:c.signal});const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}if(!res.ok)throw Error("SportyBet HTTP "+res.status);if(!body)throw Error("SportyBet returned an invalid response");if(Number(body.bizCode||10000)!==10000)throw Error(body.message||"SportyBet rejected the request");return body}finally{clearTimeout(timer)}}
+async function getSportyFixtures(){const key=MARKET_IDS.join(",");if(Date.now()-liveCache.at<30000&&liveCache.key===key)return liveCache.fixtures;const all=[],pageSize=100;for(let page=1;page<=20;page++){const p=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"48",_t:String(Date.now())}),body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+p),tournaments=body.data?.tournaments||[];let count=0;for(const t of tournaments)for(const e of t.events||[]){count++;all.push({eventId:String(e.eventId||""),league:String(t.name||""),category:String(t.categoryName||""),home:String(e.homeTeamName||""),away:String(e.awayTeamName||""),startTimeMs:Number(e.estimateStartTime||0),matchStatus:String(e.matchStatus||"Not start"),score:e.score||null,markets:(e.markets||[]).map(m=>({marketId:String(m.id||""),marketName:String(m.desc||m.name||m.title||m.id||""),specifier:m.specifier??null,status:m.status,outcomes:(m.outcomes||[]).map(o=>({outcomeId:String(o.id||""),outcomeName:String(o.desc||""),odds:Number(o.odds),isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))}))}))});}if(count<pageSize)break}liveCache={at:Date.now(),key,fixtures:all};return all}
+function localDayKey(ms){return new Date(ms+60*60*1000).toISOString().slice(0,10)}
+function norm(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
+function marketMatches(m,type){const n=norm(m.marketName);if(type==="ou")return m.marketId==="18";if(type==="btts")return m.marketId==="29";if(type==="1x2")return m.marketId==="1";if(type==="handicap")return["14","16"].includes(m.marketId);if(type==="corners")return["166","165","162"].includes(m.marketId)||n.includes("corner");if(type==="cards")return["139","138","900304","900305","900312"].includes(m.marketId)||n.includes("booking")||n.includes("card");return false}
+function confidence(m,o){const a=m.outcomes.filter(x=>x.isActive&&Number.isFinite(x.odds)&&x.odds>1);if(!a.length||!Number.isFinite(o.odds)||o.odds<=1)return 0;const total=a.reduce((s,x)=>s+1/x.odds,0);return Math.round(Math.max(50,Math.min(99,(1/o.odds)/total*100)))}
+function pickLabel(type,o){return o.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under")}
+function selectionRequested(o,s){const a=norm(o.outcomeName),b=norm(s);return a===b||a.includes(b)||b.includes(a)}
+function leagueRank(n){n=norm(n);const top=["premier league","la liga","laliga","bundesliga","serie a","ligue 1","eredivisie","primeira liga","championship","super lig","belgium first","scottish premiership","mls","major league soccer","saudi pro league"],eu=["champions league","uefa champions","europa league","conference league","copa libertadores","afc champions"],intl=["world cup","euro","nations league","africa cup","afcon","international","qualifiers"];const i=top.findIndex(x=>n.includes(x));return i>=0?i:eu.some(x=>n.includes(x))?100:intl.some(x=>n.includes(x))?200:300}
+const sortLeagues=(a,b)=>leagueRank(a)-leagueRank(b)||a.localeCompare(b);
+function makeRow(f,m,o,type){const c=confidence(m,o);return{id:f.eventId+"_"+m.marketId+"_"+(m.specifier||"")+"_"+o.outcomeId,eventId:f.eventId,league:f.league,category:f.category,date:localDayKey(f.startTimeMs),time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,home:f.home,away:f.away,market:m.marketName,marketId:m.marketId,specifier:m.specifier,outcomeId:o.outcomeId,pick:pickLabel(type,o),odds:o.odds,marketType:type,confidence:c,confidenceLabel:c>=85?"Very High":c>=75?"High":c>=65?"Good":"Moderate"}}
+function collect(fixtures,dates,leagues,types,selections,minConfidence=0){const out=[];for(const f of fixtures){if(!dates.includes(localDayKey(f.startTimeMs))||leagues.length&&!leagues.includes(f.league))continue;for(const m of f.markets)for(const type of types.length?types:["ou","1x2","btts","handicap","corners","cards"])if(marketMatches(m,type))for(const o of m.outcomes)if(o.isActive&&Number.isFinite(o.odds)&&o.odds>1&&(!selections.length||selections.some(s=>selectionRequested(o,s)))){const row=makeRow(f,m,o,type);if(row.confidence>=minConfidence)out.push(row)}}return out}
+function uniqueBest(rows,limit){const map=new Map();for(const r of rows){const k=r.eventId+"|"+r.marketId+"|"+r.specifier+"|"+r.outcomeId;if(!map.has(k)||map.get(k).confidence<r.confidence)map.set(k,r)}const q=[...map.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs),events=new Set(),out=[];for(const r of q){if(events.has(r.eventId))continue;events.add(r.eventId);out.push(r);if(out.length>=limit)break}return{qualified:q,predictions:out}}
 app.get("/api/health",(_,r)=>r.json({ok:true,service:"Omegaplus Pro AI",liveSportyBet:true}));
-
-app.get("/api/markets",(_,r)=>r.json({markets:[
-  {id:"ou",name:"Goals Over/Under",type:"ou"},{id:"1x2",name:"1X2",type:"1x2"},
-  {id:"btts",name:"BTTS",type:"btts"},{id:"handicap",name:"Handicap",type:"handicap"},
-  {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}
-]}));
-
-app.get("/api/leagues",async(req,r)=>{
-  try{
-    const fixtures=await getSportyFixtures();
-    const requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const leagues=[...new Set(fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
-    r.json({ok:true,date:requestedDate,leagues});
-  }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
-});
-
-app.get("/api/predictions",async(req,r)=>{
-  try{
-    const fixtures=await getSportyFixtures(),requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const rows=fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).slice(0,1000).map(x=>({
-      id:x.eventId,league:x.league,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
-      home:x.home,away:x.away,market:"Live SportyBet markets",confidence:"Select an option to analyze",eventId:x.eventId
-    }));
-    r.json({predictions:rows,source:"SportyBet web feed",generatedAt:new Date().toISOString(),date:requestedDate});
-  }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
-});
-
-app.post("/api/predictions/analyze",async(req,r)=>{
-  try{
-    const body=req.body||{};
-    const requestedDate=String(body.date||localDayKey(Date.now()));
-    const leagues=Array.isArray(body.leagues)?body.leagues.filter(Boolean):[];
-    const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
-    const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
-    const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
-    const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=await getSportyFixtures(),results=[];
-    for(const fixture of fixtures){
-      if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
-      if(leagues.length&&!leagues.includes(fixture.league)) continue;
-      for(const market of fixture.markets){
-        const types=marketTypes.length?marketTypes:["ou"];
-        for(const type of types){
-          if(!marketMatches(market,type)) continue;
-          for(const outcome of market.outcomes){
-            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
-            const confidence=confidenceForOutcome(market,outcome);
-            if(confidence<minConfidence) continue;
-            results.push({
-              id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
-              eventId:fixture.eventId,league:fixture.league,category:fixture.category,
-              time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
-              startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
-              market:market.marketName,marketId:market.marketId,specifier:market.specifier,
-              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,
-              confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"
-            });
-          }
-        }
-      }
-    }
-    const dedupe=new Map();
-    for(const row of results){
-      const key=row.eventId+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
-      if(!dedupe.has(key)||dedupe.get(key).confidence<row.confidence) dedupe.set(key,row);
-    }
-    const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    const predictions=qualified.slice(0,maxGames);
-    r.json({ok:true,source:"SportyBet web feed",generatedAt:new Date().toISOString(),criteria:{date:requestedDate,leagues,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,predictions});
-  }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
-});
-
-app.post("/api/booking-code",async(req,r)=>{
-  try{
-    const selections=Array.isArray(req.body?.selections)?req.body.selections:[];
-    if(!selections.length) return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});
-    const fixtures=await getSportyFixtures();
-    for(const s of selections){
-      const f=fixtures.find(x=>x.eventId===s.eventId);
-      const m=f?.markets.find(x=>x.marketId===String(s.marketId)&&String(x.specifier||"")===String(s.specifier||""));
-      const o=m?.outcomes.find(x=>x.outcomeId===String(s.outcomeId)&&x.isActive);
-      if(!f||!m||!o) return r.status(409).json({ok:false,error:"One or more selections are no longer available. Refresh and analyze again."});
-    }
-    const payload={selections:selections.map(s=>({eventId:s.eventId,marketId:String(s.marketId),specifier:s.specifier??null,outcomeId:String(s.outcomeId)}))};
-    const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify(payload)});
-    const data=body.data||{};
-    if(!data.shareCode) return r.status(502).json({ok:false,error:"SportyBet did not return a booking code."});
-    r.json({ok:true,bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null});
-  }catch(e){r.status(502).json({ok:false,error:e.message})}
-});
-
+app.get("/api/markets",(_,r)=>r.json({markets:[{id:"ou",name:"Goals Over/Under",type:"ou"},{id:"1x2",name:"1X2",type:"1x2"},{id:"btts",name:"BTTS",type:"btts"},{id:"handicap",name:"Handicap",type:"handicap"},{id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}]}));
+app.get("/api/leagues",async(req,r)=>{try{const d=String(req.query.date||localDayKey(Date.now())),f=await getSportyFixtures(),l=[...new Set(f.filter(x=>localDayKey(x.startTimeMs)===d).map(x=>x.league).filter(Boolean))].sort(sortLeagues);r.json({ok:true,date:d,leagues:l})}catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}});
+app.get("/api/predictions",async(req,r)=>{try{const d=String(req.query.date||localDayKey(Date.now())),f=await getSportyFixtures(),rows=f.filter(x=>localDayKey(x.startTimeMs)===d).map(x=>({id:x.eventId,league:x.league,date:d,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),home:x.home,away:x.away,market:"Live SportyBet markets",confidence:"Select an option to analyze",eventId:x.eventId}));r.json({predictions:rows.slice(0,1000),source:"SportyBet web feed",generatedAt:new Date().toISOString(),date:d})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.post("/api/predictions/analyze",async(req,r)=>{try{const b=req.body||{},ds=[...new Set(Array.isArray(b.dates)?b.dates.filter(Boolean):[String(b.date||localDayKey(Date.now()))])].sort(),leagues=Array.isArray(b.leagues)?b.leagues.filter(Boolean):[],types=Array.isArray(b.marketTypes)?b.marketTypes.filter(Boolean):[],selections=Array.isArray(b.selections)?b.selections.filter(Boolean):[],limit=Math.max(1,Math.min(50,Number(b.maxGames)||20)),min=Math.max(0,Math.min(99,Number(b.minConfidence)||0)),rows=collect(await getSportyFixtures(),ds,leagues,types,selections,min),u=uniqueBest(rows,limit);r.json({ok:true,source:"SportyBet web feed",generatedAt:new Date().toISOString(),criteria:{dates:ds,leagues,marketTypes:types,selections,maxGames:limit,minConfidence:min},total:u.predictions.length,available:u.qualified.length,predictions:u.predictions})}catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}});
+app.get("/api/daily-predictions",async(req,r)=>{try{const d=String(req.query.date||localDayKey(Date.now())),u=uniqueBest(collect(await getSportyFixtures(),[d],[],[],[],0),10);const rows=u.predictions.map(x=>({key:"daily|"+x.date+"|"+x.id,...x,result:"pending",recordType:"daily",analyzedAt:new Date().toISOString()}));upsertHistory(rows);r.json({ok:true,date:d,predictions:u.predictions})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/history",(_,r)=>{try{const h=readHistory().sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.startTimeMs||0)-Number(a.startTimeMs||0));r.json({ok:true,history:h})}catch(e){r.status(500).json({ok:false,error:e.message,history:[]})}});
+app.post("/api/booking-code",async(req,r)=>{try{const s=Array.isArray(req.body?.selections)?req.body.selections:[];if(!s.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});const f=await getSportyFixtures();for(const x of s){const e=f.find(z=>z.eventId===x.eventId),m=e?.markets.find(z=>z.marketId===String(x.marketId)&&String(z.specifier||"")===String(x.specifier||"")),o=m?.outcomes.find(z=>z.outcomeId===String(x.outcomeId)&&z.isActive);if(!e||!m||!o)return r.status(409).json({ok:false,error:"One or more selections are no longer available. Refresh and analyze again."})}const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify({selections:s.map(x=>({eventId:x.eventId,marketId:String(x.marketId),specifier:x.specifier??null,outcomeId:String(x.outcomeId)})))}),code=body.data?.shareCode;if(!code)return r.status(502).json({ok:false,error:"SportyBet did not return a booking code."});r.json({ok:true,bookingCode:String(code),shareURL:body.data?.shareURL||null,deadline:body.data?.deadline||null})}catch(e){r.status(502).json({ok:false,error:e.message})}});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 app.listen(PORT,()=>console.log("Omegaplus Pro AI listening on "+PORT));
