@@ -27,7 +27,7 @@ let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
 
 async function sportyFetch(pathname,options={}){
-  const wait=Math.max(0,250-(Date.now()-lastSportyRequest));
+  const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
   if(wait) await sleep(wait);
   lastSportyRequest=Date.now();
   const controller=new AbortController();
