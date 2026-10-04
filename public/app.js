@@ -39,7 +39,7 @@ async function loadLeagues(){
 async function loadBase(){
   try{
     const d=await (await fetch("/api/predictions?dates="+encodeURIComponent(state.dates.join(",")))).json();
-    state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;
+    state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;renderRows();
     setStatus("Live feed ready for "+prettyDate(state.date)+".");
   }catch(e){state.rows=[];$("#predictionTotal").textContent="—";setStatus("Live SportyBet data is temporarily unavailable.")}
 }
@@ -94,6 +94,6 @@ $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().lengt
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
 $("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calAdd").onclick=()=>{const v=$("#calendarDate").value;if(v&&!state.dates.includes(v))state.dates=[...state.dates,v].sort();if(v)state.date=v;renderCalendarDates();renderDateChips()};$("#calLoad").onclick=loadCalendar;
-$("#predictionsDate").onchange=()=>{$("#predictionsStatus").textContent="Selected "+prettyDate($("#predictionsDate").value)+". Use the Fixture Analyzer on Home to analyze markets.";};$("#predictionsLoad").onclick=()=>{$("#predictionsStatus").textContent="Loaded date control for "+prettyDate($("#predictionsDate").value)+". Analyze from Home for confidence-ranked picks.";};
+$("#predictionsDate").onchange=()=>{$("#predictionsStatus").textContent="Selected "+prettyDate($("#predictionsDate").value)+". Use the Fixture Analyzer on Home to analyze markets.";};$("#predictionsLoad").onclick=async()=>{const v=$("#predictionsDate").value||state.date;try{const d=await (await fetch("/api/predictions?dates="+encodeURIComponent(v))).json();const rows=d.predictions||[];$("#predictionsStatus").textContent=rows.length?rows.length+" fixture(s) loaded for "+prettyDate(v):"No fixtures found for "+prettyDate(v)+".";$("#predictionsStatus").insertAdjacentHTML("afterend",rows.length?'<div id="dailyGames">'+rows.map(x=>'<article class="match"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.confidence)+'</b></div></div></article>').join("")+'</div>':'');}catch(e){$("#predictionsStatus").textContent="Unable to load fixtures."}};
 $("#historyDate").onchange=()=>{$("#historyStatus").textContent="Selected "+prettyDate($("#historyDate").value)+".";};$("#historyLoad").onclick=()=>{$("#historyStatus").textContent="History filter set to "+prettyDate($("#historyDate").value)+".";};
 const today=dateKey(new Date());setDate(today);renderDateChips();renderCalendarDates();if($("#predictionsDate"))$("#predictionsDate").value=today;if($("#historyDate"))$("#historyDate").value=today;renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
