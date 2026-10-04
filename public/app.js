@@ -48,7 +48,7 @@ function renderRows(){
   }).join("");
   $$(".select").forEach(b=>b.onclick=()=>{const row=state.rows.find(x=>x.id===b.dataset.id);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);else return alert("Maximum 50 selections.");renderRows();renderSlip()});
 }
-function renderSlip(){
+function saveHistory(){const key="omegaplus_prediction_history";let history=[];try{history=JSON.parse(localStorage.getItem(key)||"[]")}catch{};const item={id:Date.now(),savedAt:new Date().toISOString(),date:state.date,criteria:{leagues:selectedLeagues(),markets:[...state.markets],selections:[...state.selections]},predictions:state.rows.slice(0,50)};history=[item,...history].slice(0,100);localStorage.setItem(key,JSON.stringify(history));renderHistory()}function renderHistory(){const el=$("#historyList"),status=$("#historyStatus");if(!el||!status)return;let history=[];try{history=JSON.parse(localStorage.getItem("omegaplus_prediction_history")||"[]")}catch{};if(!history.length){status.textContent="No saved prediction history yet.";el.innerHTML="";return}status.textContent=history.length+" saved analysis"+(history.length===1?"":"es")+".";el.innerHTML=history.map(h=>'<article class="calendar-game"><div><small>'+esc(prettyDate(h.date))+" · "+esc(new Date(h.savedAt).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit"}))+'</small><b>'+h.predictions.length+' prediction(s)</b></div><button class="secondary" data-history-id="'+h.id+'">View</button></article>').join("");$("#historyList [data-history-id]").forEach(b=>b.onclick=()=>{const h=history.find(x=>String(x.id)===b.dataset.historyId);if(!h)return;state.date=h.date;state.rows=h.predictions||[];setDate(h.date);renderRows();renderSlip();showPage("home");setStatus("Loaded saved analysis for "+prettyDate(h.date)+".")})}function renderSlip(){
   const rows=[...state.selected.values()];$("#slipCount").textContent=rows.length;$("#selectedHome").textContent=rows.length;
   $("#slip").innerHTML=rows.length?rows.map(x=>'<div class="slipitem"><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><small>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</small></div>').join(""):"<p>Select analyzed matches to build your slip.</p>";
 }
@@ -58,7 +58,7 @@ async function analyze(){
   try{
     const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date:state.date,leagues,marketTypes,selections,maxGames})})).json();
     if(!d.ok)throw new Error(d.error||"Analysis failed");
-    state.rows=d.predictions||[];state.selected.clear();renderRows();renderSlip();
+    state.rows=d.predictions||[];state.selected.clear();renderRows();renderSlip();saveHistory();
     setStatus(d.total+" game(s) returned from "+d.available+" qualifying result(s), ranked by highest confidence · "+prettyDate(state.date));
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
@@ -89,5 +89,5 @@ $("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));$("#fixtureDate")
 $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
-$("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
-const today=dateKey(new Date());setDate(today);renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
+$("#calendarDate").onchange=()=>{setDate($("#calendarDate").value);loadCalendar()};$("#calPrev").onclick=()=>{const d=new Date($("#calendarDate").value+"T00:00:00");d.setDate(d.getDate()-1);$("#calendarDate").value=dateKey(d);loadCalendar()};$("#calNext").onclick=()=>{const d=new Date($("#calendarDate").value+"T00:00:00");d.setDate(d.getDate()+1);$("#calendarDate").value=dateKey(d);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());setDate($("#calendarDate").value);loadCalendar()};$("#calLoad").onclick=loadCalendar;$("#clearHistory").onclick=()=>{localStorage.removeItem("omegaplus_prediction_history");renderHistory()};
+const today=dateKey(new Date());setDate(today);renderMarketOptions();renderSelectionOptions();renderHistory();loadLeagues();loadBase();renderSlip();
