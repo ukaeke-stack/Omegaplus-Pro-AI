@@ -139,13 +139,13 @@ async function loadDailyBest(){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
   box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
   try{
-    const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:["Over 1.5","Over 2.5"],maxGames:10})})).json();
+    const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:[],maxGames:50,minConfidence:0})})).json();
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
-    const rows=(d.predictions||[]).slice(0,10);
+    const rows=(d.predictions||[]).filter(x=>/^over\\s+(1\\.5|2\\.5)$/i.test(String(x.pick||x.outcomeName||""))).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||Number(a.startTimeMs||0)-Number(b.startTimeMs||0)).slice(0,10);
     saveHistoryRows(rows.map(x=>({...x,date})),date);
     renderHistory(date);
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
-    $$("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
+    $("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){saveHistoryRows([],date);renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
