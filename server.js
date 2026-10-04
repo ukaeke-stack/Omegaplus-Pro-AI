@@ -49,13 +49,14 @@ async function sportyFetch(pathname,options={}){
 }
 
 async function getSportyFixtures(todayOnly=false){
-  const key=MARKET_IDS.join(",")+"|"+(todayOnly?"today":"future");
-  if(Date.now()-liveCache.at<300000&&liveCache.key===key) return liveCache.fixtures;
+  const marketKey=MARKET_IDS.join(",");
+  const cacheKey=marketKey+"|"+(todayOnly?"today":"future");
+  if(Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?10:50);page++){
-    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
+    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     const body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
@@ -89,7 +90,7 @@ async function getSportyFixtures(todayOnly=false){
     }
     if(pageCount<pageSize) break;
   }
-  liveCache={at:Date.now(),key,fixtures:all};
+  liveCache={at:Date.now(),key:cacheKey,fixtures:all};
   return all;
   })();
   try{return await liveFetchPromise}finally{liveFetchPromise=null}
