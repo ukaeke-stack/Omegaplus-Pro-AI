@@ -87,7 +87,7 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
-  if(type==="ou") return market.marketId==="18"||n.includes("over/under")||n.includes("total goals")||n.includes("goal line")||n.includes("goals");
+  if(type==="ou") return market.marketId==="18"||n.includes("over/under")||n.includes("total goals")||n.includes("goal line")||n.includes("goals")||market.outcomes.some(o=>/^(over|under)\\s*\\d+(?:\\.\\d+)?(?:\\s*goals?)?$/i.test(String(o.outcomeName||"")));
   if(type==="btts") return market.marketId==="29";
   if(type==="1x2") return market.marketId==="1";
   if(type==="handicap") return ["14","16"].includes(market.marketId);
