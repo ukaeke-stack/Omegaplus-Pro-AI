@@ -50,12 +50,22 @@ async function refreshHistory(date=historySelectedDate()){
   try{
     const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
     const live=new Map((data.predictions||[]).map(x=>[x.eventId,x]));
-    h.filter(x=>x.date===date).forEach(x=>{
+    const day=h.filter(x=>x.date===date)
+      .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
+      .slice(0,10);
+    day.forEach(x=>{
       const y=live.get(x.eventId);
       if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore;x.outcome=settleOutcome(x)}
     });
-  }catch{}
-  writeHistory(h);renderHistory(date);
+    const others=h.filter(x=>x.date!==date);
+    writeHistory([...others,...day]);
+  }catch{
+    const day=h.filter(x=>x.date===date)
+      .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
+      .slice(0,10);
+    writeHistory([...h.filter(x=>x.date!==date),...day]);
+  }
+  renderHistory(date);
 }
 function renderMarketOptions(){
   $("#marketOptions").innerHTML=Object.entries(marketNames).map(([id,name])=>'<label class="chip '+(state.markets.has(id)?"active":"")+'"><input type="checkbox" value="'+id+'" '+(state.markets.has(id)?"checked":"")+'><span>'+esc(name)+'</span></label>').join("");
