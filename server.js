@@ -224,3 +224,5 @@ app.post("/api/booking-code",async(req,r)=>{
 
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 app.listen(PORT,()=>console.log("Omegaplus Pro AI listening on "+PORT));
+
+// Deployment sync: ensure Vercel rebuilds the current main branch fixture-feed implementation.
