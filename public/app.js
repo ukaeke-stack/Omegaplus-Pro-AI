@@ -58,7 +58,13 @@ async function analyze(){
   try{
     const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date:state.date,leagues,marketTypes,selections,maxGames})})).json();
     if(!d.ok)throw new Error(d.error||"Analysis failed");
-    state.rows=d.predictions||[];state.selected.clear();renderRows();renderSlip();
+    const seenGames=new Set();
+    state.rows=(d.predictions||[]).filter(row=>{
+      if(seenGames.has(row.eventId)) return false;
+      seenGames.add(row.eventId);
+      return true;
+    });
+    state.selected.clear();renderRows();renderSlip();
     setStatus(d.total+" game(s) returned from "+d.available+" qualifying result(s), ranked by highest confidence · "+prettyDate(state.date));
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
@@ -85,6 +91,15 @@ $("#nextDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(1);$("#fixtur
 $("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));$("#fixtureDate").dispatchEvent(new Event("change"))};
 $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
+$("#selectAll").onclick=()=>{
+  state.selected.clear();
+  state.rows.slice(0,50).forEach(row=>state.selected.set(row.id,row));
+  renderRows();renderSlip();
+};
+$("#clearAll").onclick=()=>{
+  state.selected.clear();
+  renderRows();renderSlip();
+};
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
 $("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
 const today=dateKey(new Date());setDate(today);renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();loadBookmakers();renderSlip();

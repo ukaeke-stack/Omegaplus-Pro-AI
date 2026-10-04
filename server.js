@@ -115,7 +115,7 @@ function pickLabel(type,outcome){
 function selectionRequested(outcome,requested){
   if(!requested) return true;
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
-  return a===b||a.includes(b)||b.includes(a);
+  return a===b;
 }
 function leagueRank(name){
   const n=normalizeText(name);
@@ -203,7 +203,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     }
     const dedupe=new Map();
     for(const row of results){
-      const key=row.eventId+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
+      const key=row.eventId;
       if(!dedupe.has(key)||dedupe.get(key).confidence<row.confidence) dedupe.set(key,row);
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
