@@ -101,7 +101,7 @@ app.post("/api/booking-code",async(req,res)=>{
     const s=Array.isArray(req.body?.selections)?req.body.selections:[];if(!s.length)return res.status(400).json({ok:false,error:"Select at least one pick."});
     const f=await getFixtures();
     for(const x of s){const fixture=f.find(v=>v.eventId===x.eventId),m=fixture?.markets.find(v=>v.marketId===String(x.marketId)&&String(v.specifier||"")===String(x.specifier||"")),o=m?.outcomes.find(v=>v.outcomeId===String(x.outcomeId)&&v.isActive);if(!fixture||!m||!o)return res.status(409).json({ok:false,error:"A selection changed or is no longer available. Analyze again."})}
-    const body=await sporty("/orders/share",{method:"POST",body:JSON.stringify({selections:s.map(x=>({eventId:x.eventId,marketId:String(x.marketId),specifier:x.specifier??null,outcomeId:String(x.outcomeId)})))}});
+    const payload={selections:s.map(x=>({eventId:x.eventId,marketId:String(x.marketId),specifier:x.specifier??null,outcomeId:String(x.outcomeId)}))};\n    const body=await sporty("/orders/share",{method:"POST",body:JSON.stringify(payload)});
     if(!body.data?.shareCode)return res.status(502).json({ok:false,error:"SportyBet did not return a booking code."});
     res.json({ok:true,bookingCode:String(body.data.shareCode),shareURL:body.data.shareURL||null});
   }catch(e){res.status(502).json({ok:false,error:e.message})}
