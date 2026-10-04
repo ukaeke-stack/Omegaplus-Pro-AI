@@ -22,7 +22,7 @@ function saveHistoryRows(rows,replaceDate=null){
   const targetDate=replaceDate||state.date;
   const kept=history.filter(x=>x.date!==targetDate);
   const now=new Date().toISOString();
-  const fresh=rows.map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:now}));
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:now}));
   writeHistory([...kept,...fresh]);
 }
 
@@ -112,8 +112,7 @@ async function analyze(){
     }
     const seen=new Set();state.rows=all.filter(x=>{if(seen.has(x.eventId))return false;seen.add(x.eventId);return true});
     state.selected.clear();renderRows();renderSlip();
-     if(dates.length===1)saveHistoryRows(state.rows,dates[0]);
-     renderHistory(dates.length===1?dates[0]:historySelectedDate());
+    renderHistory(dates.length===1?dates[0]:historySelectedDate());
     setStatus(state.rows.length+" unique game(s) returned across "+dates.length+" selected date(s).");
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
