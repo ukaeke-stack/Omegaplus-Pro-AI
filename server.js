@@ -48,14 +48,14 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-async function getSportyFixtures(){
-  const key=MARKET_IDS.join(",");
+async function getSportyFixtures(todayOnly=false){
+  const key=MARKET_IDS.join(",")+"|"+(todayOnly?"today":"future");
   if(Date.now()-liveCache.at<300000&&liveCache.key===key) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
-  for(let page=1;page<=50;page++){
-    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
+  for(let page=1;page<=(todayOnly?10:50);page++){
+    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     const body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
@@ -155,8 +155,8 @@ app.get("/api/markets",(_,r)=>r.json({markets:[
 
 app.get("/api/leagues",async(req,r)=>{
   try{
-    const fixtures=await getSportyFixtures();
     const requestedDate=String(req.query.date||localDayKey(Date.now()));
+    const fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now()));
     const leagues=[...new Set(fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
     r.json({ok:true,date:requestedDate,leagues});
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
@@ -164,7 +164,7 @@ app.get("/api/leagues",async(req,r)=>{
 
 app.get("/api/predictions",async(req,r)=>{
   try{
-    const fixtures=await getSportyFixtures(),requestedDate=String(req.query.date||localDayKey(Date.now()));
+    const requestedDate=String(req.query.date||localDayKey(Date.now())),fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now()));
     const rows=fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).slice(0,1000).map(x=>({
       id:x.eventId,league:x.league,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
       home:x.home,away:x.away,market:"Live SportyBet markets",confidence:"Select an option to analyze",eventId:x.eventId,matchStatus:x.matchStatus,homeScore:x.homeScore,awayScore:x.awayScore
@@ -182,7 +182,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
     const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=await getSportyFixtures(),results=[];
+    const fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now())),results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagues.length&&!leagues.includes(fixture.league)) continue;
