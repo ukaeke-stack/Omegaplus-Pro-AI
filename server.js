@@ -80,16 +80,16 @@ async function getSportyFixtures(){
           away:String(event.awayTeamName||""),
           startTimeMs:Number(event.estimateStartTime||0),
           matchStatus:String(event.matchStatus||"Not start"),
-          markets:(event.markets||[]).map(m=>({
+          markets:(event.markets||[]).map(m => ({
             marketId:String(m.id||""),
             marketName:String(m.desc||m.name||m.title||m.id||""),
-            specifier:m.specifier??null,
+            specifier:m.specifier ?? null,
             status:m.status,
-            outcomes:(m.outcomes||[]).map(o=>({
+            outcomes:(m.outcomes||[]).map(o => ({
               outcomeId:String(o.id||""),
               outcomeName:String(o.desc||""),
               odds:Number(o.odds),
-              isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))
+              isActive:o.isActive===undefined ? true : Boolean(Number(o.isActive))
             }))
           }))
         });
