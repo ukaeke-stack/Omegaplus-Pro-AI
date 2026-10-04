@@ -65,10 +65,11 @@ async function analyze(){
     setStatus(d.total+" game(s) returned from "+d.available+" qualifying result(s), ranked by highest confidence · "+prettyDate(state.date));
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
+function renderCalendarDates(){const box=$("#calendarDates");if(!box)return;box.innerHTML=state.dates.map(v=>'<button type="button" class="date-chip" data-date="'+esc(v)+'">'+esc(prettyDate(v))+' ×</button>').join("");$("#calendarDates .date-chip").forEach(b=>b.onclick=()=>{state.dates=state.dates.filter(x=>x!==b.dataset.date);if(!state.dates.length)state.dates=[state.date];renderCalendarDates()})}
 async function loadCalendar(){
   const d=$("#calendarDate").value;
   try{
-    const data=await (await fetch("/api/predictions?date="+encodeURIComponent(d))).json(),rows=data.predictions||[];
+    const data=await (await fetch("/api/predictions?dates="+encodeURIComponent(d))).json(),rows=data.predictions||[];
     $("#calendarStatus").textContent=rows.length?rows.length+" fixture(s) found for "+prettyDate(d):"No fixtures found for "+prettyDate(d)+".";
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch(e){$("#calendarStatus").textContent="Unable to load fixtures for this date."}
@@ -92,5 +93,7 @@ $("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));await refreshDate
 $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
-$("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
-const today=dateKey(new Date());setDate(today);renderDateChips();renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
+$("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calAdd").onclick=()=>{const v=$("#calendarDate").value;if(v&&!state.dates.includes(v))state.dates=[...state.dates,v].sort();if(v)state.date=v;renderCalendarDates();renderDateChips()};$("#calLoad").onclick=loadCalendar;
+$("#predictionsDate").onchange=()=>{$("#predictionsStatus").textContent="Selected "+prettyDate($("#predictionsDate").value)+". Use the Fixture Analyzer on Home to analyze markets.";};$("#predictionsLoad").onclick=()=>{$("#predictionsStatus").textContent="Loaded date control for "+prettyDate($("#predictionsDate").value)+". Analyze from Home for confidence-ranked picks.";};
+$("#historyDate").onchange=()=>{$("#historyStatus").textContent="Selected "+prettyDate($("#historyDate").value)+".";};$("#historyLoad").onclick=()=>{$("#historyStatus").textContent="History filter set to "+prettyDate($("#historyDate").value)+".";};
+const today=dateKey(new Date());setDate(today);renderDateChips();renderCalendarDates();if($("#predictionsDate"))$("#predictionsDate").value=today;if($("#historyDate"))$("#historyDate").value=today;renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
