@@ -36,16 +36,30 @@ async function getFixtures(){
   if(Date.now()-cache.at<60000&&cache.fixtures.length)return cache.fixtures;
   if(requestPromise)return requestPromise;
   requestPromise=(async()=>{
-    const all=[]; const key=MARKETS.join(",");
-    for(let page=1;page<=12;page++){
-      const q=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:"100",pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
-      const body=await sporty("/factsCenter/pcUpcomingEvents?"+q);
-      const ts=body.data?.tournaments||[]; let count=0;
-      for(const t of ts) for(const e of t.events||[]){
-        count++; all.push({eventId:String(e.eventId||""),league:String(t.name||""),category:String(t.categoryName||""),home:String(e.homeTeamName||""),away:String(e.awayTeamName||""),startTimeMs:msValue(e.estimateStartTime),markets:(e.markets||[]).map(m=>({marketId:String(m.id||""),marketName:String(m.desc||m.name||m.title||m.id||""),specifier:m.specifier??null,outcomes:(m.outcomes||[]).map(o=>({outcomeId:String(o.id||""),outcomeName:String(o.desc||""),odds:Number(o.odds),isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))}))}))});
+    const allById=new Map();
+    const keys=[MARKETS.join(","),"18","1"];
+    for(const key of keys){
+      let addedThisQuery=0;
+      for(let page=1;page<=12;page++){
+        const q=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:"100",pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
+        const body=await sporty("/factsCenter/pcUpcomingEvents?"+q);
+        const ts=body.data?.tournaments||[]; let count=0;
+        for(const t of ts) for(const e of t.events||[]){
+          count++; addedThisQuery++;
+          const id=String(e.eventId||""); if(!id) continue;
+          const incoming={eventId:id,league:String(t.name||""),category:String(t.categoryName||""),home:String(e.homeTeamName||""),away:String(e.awayTeamName||""),startTimeMs:msValue(e.estimateStartTime),markets:(e.markets||[]).map(m=>({marketId:String(m.id||""),marketName:String(m.desc||m.name||m.title||m.id||""),specifier:m.specifier??null,outcomes:(m.outcomes||[]).map(o=>({outcomeId:String(o.id||""),outcomeName:String(o.desc||""),odds:Number(o.odds),isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))}))}))};
+          const existing=allById.get(id);
+          if(!existing) allById.set(id,incoming);
+          else {
+            const seen=new Set(existing.markets.map(m=>m.marketId+"|"+String(m.specifier??"")));
+            for(const m of incoming.markets){const k=m.marketId+"|"+String(m.specifier??"");if(!seen.has(k)){existing.markets.push(m);seen.add(k);}}
+          }
+        }
+        if(count<100 || (Number(body.data?.totalNum||0)&&page*100>=Number(body.data.totalNum)))break;
       }
-      if(count<100 || (Number(body.data?.totalNum||0)&&all.length>=Number(body.data.totalNum)))break;
+      if(addedThisQuery>0 && allById.size>0) break;
     }
+    const all=[...allById.values()];
     cache.at=Date.now();cache.fixtures=all;return all;
   })().finally(()=>{requestPromise=null});
   return requestPromise;
