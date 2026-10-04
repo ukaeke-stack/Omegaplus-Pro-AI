@@ -1,4 +1,4 @@
-const state={rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["Over 1.5"]),date:"",optionSets:{ou:["Over 0.5","Over 1.5","Over 2.5","Over 3.5","Over 4.5","Under 0.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5"],"1x2":["Home","Draw","Away"],btts:["Yes","No"],handicap:["Home","Away"],corners:["Over 7.5","Over 8.5","Over 9.5","Over 10.5","Over 11.5","Under 7.5","Under 8.5","Under 9.5","Under 10.5","Under 11.5"],cards:["Over 1.5","Over 2.5","Over 3.5","Over 4.5","Over 5.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5","Under 5.5"]}};
+const state={rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["Over 1.5"]),date:"",dates:[],optionSets:{ou:["Over 0.5","Over 1.5","Over 2.5","Over 3.5","Over 4.5","Under 0.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5"],"1x2":["Home","Draw","Away"],btts:["Yes","No"],handicap:["Home","Away"],corners:["Over 7.5","Over 8.5","Over 9.5","Over 10.5","Over 11.5","Under 7.5","Under 8.5","Under 9.5","Under 10.5","Under 11.5"],cards:["Over 1.5","Over 2.5","Over 3.5","Over 4.5","Over 5.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5","Under 5.5"]}};
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const marketNames={ou:"Goals Over/Under","1x2":"1X2",btts:"BTTS",handicap:"Handicap",corners:"Corners Over/Under",cards:"Cards/Bookings Over/Under"};
@@ -6,7 +6,10 @@ const pad=n=>String(n).padStart(2,"0");
 const dateKey=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
 const prettyDate=v=>v?new Date(v+"T00:00:00").toLocaleDateString("en-NG",{weekday:"short",day:"numeric",month:"short",year:"numeric"}):"—";
 function setStatus(t){$("#analysisStatus").textContent=t}
-function setDate(v){state.date=v;$("#fixtureDate").value=v;$("#calendarDate").value=v;$("#selectedDateMetric").textContent=v.slice(5).replace("-","/");}
+function setDate(v){state.date=v;if(!state.dates.includes(v))state.dates=[...state.dates,v].sort();if($("#fixtureDate"))$("#fixtureDate").value=v;if($("#calendarDate"))$("#calendarDate").value=v;$("#selectedDateMetric").textContent=state.dates.length>1?state.dates.length+" dates":v.slice(5).replace("-","/");renderDateChips();}
+function renderDateChips(){const box=$("#dateOptions");if(!box)return;box.innerHTML=state.dates.map(v=>'<button type="button" class="date-chip" data-date="'+esc(v)+'">'+esc(prettyDate(v))+' ×</button>').join("");$("#dateCount").textContent=state.dates.length+" selected";$("#dateOptions .date-chip").forEach(b=>b.onclick=()=>{state.dates=state.dates.filter(x=>x!==b.dataset.date);if(!state.dates.length)state.dates=[state.date||dateKey(new Date())];state.date=state.dates[0];renderDateChips();refreshDateData()})}
+async function refreshDateData(){state.selected.clear();renderSlip();await loadLeagues();await loadBase();}
+
 function shiftDate(days){const d=new Date(state.date+"T00:00:00");d.setDate(d.getDate()+days);return dateKey(d)}
 function selectedLeagues(){return $("#league")?[...$("#league").selectedOptions].map(o=>o.value):[]}
 function renderMarketOptions(){
@@ -25,7 +28,7 @@ function renderSelectionOptions(){
 }
 async function loadLeagues(){
   try{
-    const d=await (await fetch("/api/leagues?date="+encodeURIComponent(state.date))).json();
+    const d=await (await fetch("/api/leagues?dates="+encodeURIComponent(state.dates.join(",")))).json();
     const chosen=new Set(selectedLeagues());
     const leagues=d.leagues||[];
     $("#league").innerHTML=leagues.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join("");
@@ -35,7 +38,7 @@ async function loadLeagues(){
 }
 async function loadBase(){
   try{
-    const d=await (await fetch("/api/predictions?date="+encodeURIComponent(state.date))).json();
+    const d=await (await fetch("/api/predictions?dates="+encodeURIComponent(state.dates.join(",")))).json();
     state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;
     setStatus("Live feed ready for "+prettyDate(state.date)+".");
   }catch(e){state.rows=[];$("#predictionTotal").textContent="—";setStatus("Live SportyBet data is temporarily unavailable.")}
@@ -53,10 +56,10 @@ function renderSlip(){
   $("#slip").innerHTML=rows.length?rows.map(x=>'<div class="slipitem"><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><small>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</small></div>').join(""):"<p>Select analyzed matches to build your slip.</p>";
 }
 async function analyze(){
-  const leagues=selectedLeagues(),marketTypes=[...state.markets],selections=[...state.selections],maxGames=Math.max(1,Math.min(50,Number($("#gameLimit").value)||20));
+  const dates=state.dates.length?state.dates:[state.date],leagues=selectedLeagues(),marketTypes=[...state.markets],selections=[...state.selections],maxGames=Math.max(1,Math.min(50,Number($("#gameLimit").value)||20));
   $("#analyze").disabled=true;setStatus("Analyzing "+prettyDate(state.date)+" across "+(leagues.length?leagues.length+" leagues":"all leagues")+" and "+marketTypes.length+" markets...");
   try{
-    const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date:state.date,leagues,marketTypes,selections,maxGames})})).json();
+    const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date:state.date,dates,leagues,marketTypes,selections,maxGames})})).json();
     if(!d.ok)throw new Error(d.error||"Analysis failed");
     state.rows=d.predictions||[];state.selected.clear();renderRows();renderSlip();
     setStatus(d.total+" game(s) returned from "+d.available+" qualifying result(s), ranked by highest confidence · "+prettyDate(state.date));
@@ -82,12 +85,12 @@ $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$(
 $$("[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 $("#snapToggle").onclick=()=>{$("#snapBody").classList.toggle("open");$("#snapArrow").textContent=$("#snapBody").classList.contains("open")?"⌃":"⌄"};
 $("#fixtureFile").onchange=e=>$("#fileName").textContent=e.target.files[0]?"Selected: "+e.target.files[0].name:"";
-$("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";state.selected.clear();renderSlip();await loadLeagues();await loadBase()};
+$("#fixtureDate").onchange=async e=>{const v=e.target.value;if(!v)return;if(!state.dates.includes(v))state.dates=[...state.dates,v].sort();state.date=v;renderDateChips();await refreshDateData()};
 $("#prevDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(-1);$("#fixtureDate").dispatchEvent(new Event("change"))};
 $("#nextDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(1);$("#fixtureDate").dispatchEvent(new Event("change"))};
-$("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));$("#fixtureDate").dispatchEvent(new Event("change"))};
+$("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));await refreshDateData()};
 $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
 $("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
-const today=dateKey(new Date());setDate(today);renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
+const today=dateKey(new Date());setDate(today);renderDateChips();renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();renderSlip();
