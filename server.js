@@ -58,7 +58,7 @@ async function getSportyFixtures(){
           category:String(tournament.categoryName||""),
           home:String(event.homeTeamName||""),
           away:String(event.awayTeamName||""),
-          startTimeMs:Number(event.estimateStartTime||0),
+          startTimeMs:(Number(event.estimateStartTime||0)<100000000000?Number(event.estimateStartTime||0)*1000:Number(event.estimateStartTime||0)),
           matchStatus:String(event.matchStatus||"Not start"),
           markets:(event.markets||[]).map(m=>({
             marketId:String(m.id||""),
@@ -108,7 +108,9 @@ async function getFixturesForDates(dates){
   return {sporty:within,external,all:[...within,...external]};
 }
 function localDayKey(ms){
-  const d=new Date(ms+60*60*1000);
+  const n=Number(ms||0);
+  if(!Number.isFinite(n)||n<=0) return "";
+  const d=new Date(n+60*60*1000);
   return d.toISOString().slice(0,10);
 }
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
@@ -166,10 +168,11 @@ app.get("/api/markets",(_,r)=>r.json({markets:[
 
 app.get("/api/leagues",async(req,r)=>{
   try{
-    const fixtures=await getSportyFixtures();
-    const requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const leagues=[...new Set(fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
-    r.json({ok:true,date:requestedDate,leagues});
+    const requested=String(req.query.dates||req.query.date||localDayKey(Date.now())).split(",").filter(validDate);
+    const dates=[...new Set(requested.length?requested:[localDayKey(Date.now())])];
+    const bundle=await getFixturesForDates(dates);
+    const leagues=[...new Set(bundle.all.filter(x=>dates.includes(localDayKey(x.startTimeMs))).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
+    r.json({ok:true,date:dates[0],dates,leagues,fixtureSources:{sportyBet:bundle.sporty.length,external:bundle.external.length}});
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
 });
 
@@ -203,6 +206,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
     const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
     const bundle=await getFixturesForDates(dates),results=[];
+    const fixtures=bundle.sporty;
     for(const fixture of fixtures){
 
       if(leagues.length&&!leagues.includes(fixture.league)) continue;
