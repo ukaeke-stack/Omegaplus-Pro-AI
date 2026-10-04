@@ -95,7 +95,7 @@ async function getExternalFixtures(date){
     externalCache.set(date,rows);return rows;
   }finally{clearTimeout(timer)}
 }
-function validDate(v){return /^\\d{4}-\\d{2}-\\d{2}$/.test(String(v||""));}
+function validDate(v){return /^\d{4}-\d{2}-\d{2}$/.test(String(v||""));}
 async function getFixturesForDates(dates){
   const clean=[...new Set((Array.isArray(dates)?dates:[]).filter(validDate))];
   const sporty=await getSportyFixtures();
@@ -173,7 +173,7 @@ app.get("/api/leagues",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
 });
 
-app.get("/api/predictions",async(req,r)=>{
+function requestedDates(req){\n  const raw=req.query.dates||req.query.date;\n  const dates=String(raw||localDayKey(Date.now())).split(",").filter(validDate);\n  return [...new Set(dates.length?dates:[localDayKey(Date.now())])];\n}\n\napp.get("/api/predictions",async(req,r)=>{
   try{
     const raw=req.query.dates||req.query.date||localDayKey(Date.now());
     const dates=[...new Set(String(raw).split(",").filter(validDate))];
@@ -190,15 +190,15 @@ app.get("/api/predictions",async(req,r)=>{
 app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
-    const requestedDate=String(body.date||localDayKey(Date.now()));
+    const dates=[...new Set((Array.isArray(body.dates)?body.dates:[body.date||localDayKey(Date.now())]).filter(validDate))];
     const leagues=Array.isArray(body.leagues)?body.leagues.filter(Boolean):[];
     const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
     const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=await getSportyFixtures(),results=[];
+    const bundle=await getFixturesForDates(dates),results=[];
     for(const fixture of fixtures){
-      if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
+
       if(leagues.length&&!leagues.includes(fixture.league)) continue;
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
