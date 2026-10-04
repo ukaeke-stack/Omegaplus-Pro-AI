@@ -141,7 +141,7 @@ async function loadDailyBest(){
   try{
     const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:[],maxGames:50,minConfidence:0})})).json();
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
-    const rows=(d.predictions||[]).filter(x=>/^over\\s+(1\\.5|2\\.5)$/i.test(String(x.pick||x.outcomeName||""))).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||Number(a.startTimeMs||0)-Number(b.startTimeMs||0)).slice(0,10);
+    const rows=(d.predictions||[]).filter(x=>/^over\s+(1\.5|2\.5)$/i.test(String(x.pick||x.outcomeName||""))).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||Number(a.startTimeMs||0)-Number(b.startTimeMs||0)).slice(0,10);
     saveHistoryRows(rows.map(x=>({...x,date})),date);
     renderHistory(date);
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
