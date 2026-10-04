@@ -175,12 +175,15 @@ app.get("/api/leagues",async(req,r)=>{
 
 app.get("/api/predictions",async(req,r)=>{
   try{
-    const fixtures=await getSportyFixtures(),requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const rows=fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).slice(0,1000).map(x=>({
+    const raw=req.query.dates||req.query.date||localDayKey(Date.now());
+    const dates=[...new Set(String(raw).split(",").filter(validDate))];
+    if(!dates.length) dates.push(localDayKey(Date.now()));
+    const bundle=await getFixturesForDates(dates);
+    const rows=bundle.all.filter(x=>dates.includes(localDayKey(x.startTimeMs))).slice(0,2000).map(x=>({
       id:x.eventId,league:x.league,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
-      home:x.home,away:x.away,market:x.markets.length?"Live SportyBet markets":"Fixture source only",confidence:x.markets.length?"Select an option to analyze":"SportyBet odds not available yet",eventId:x.eventId,fixtureSource:x.fixtureSource||"SportyBet",sportyBetAvailable:Boolean(x.markets.length)
+      home:x.home,away:x.away,market:x.markets.length?"Live SportyBet markets":"Fixture source only",confidence:x.markets.length?"Select an option to analyze":"SportyBet odds not available yet",eventId:x.eventId,fixtureSource:x.fixtureSource||"SportyBet",sportyBetAvailable:Boolean(x.markets.length),date:localDayKey(x.startTimeMs)
     }));
-    r.json({predictions:rows,source:"SportyBet web feed",generatedAt:new Date().toISOString(),date:requestedDate});
+    r.json({predictions:rows,source:"SportyBet web feed + fixture discovery",generatedAt:new Date().toISOString(),dates,fixtureSources:{sportyBet:bundle.sporty.length,external:bundle.external.length}});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
