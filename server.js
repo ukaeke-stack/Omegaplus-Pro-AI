@@ -24,6 +24,7 @@ const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
+let liveFetchPromise=null;
 
 async function sportyFetch(pathname,options={}){
   const wait=Math.max(0,250-(Date.now()-lastSportyRequest));
@@ -49,7 +50,9 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(){
   const key=MARKET_IDS.join(",");
-  if(Date.now()-liveCache.at<30000&&liveCache.key===key) return liveCache.fixtures;
+  if(Date.now()-liveCache.at<300000&&liveCache.key===key) return liveCache.fixtures;
+  if(liveFetchPromise) return liveFetchPromise;
+  liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=50;page++){
     const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
@@ -88,6 +91,8 @@ async function getSportyFixtures(){
   }
   liveCache={at:Date.now(),key,fixtures:all};
   return all;
+  })();
+  try{return await liveFetchPromise}finally{liveFetchPromise=null}
 }
 
 function localDayKey(ms){

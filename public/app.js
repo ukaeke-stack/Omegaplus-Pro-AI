@@ -17,11 +17,15 @@ function renderDateChips(){
 function historyKey(){return "omegaplus_history_v3"}
 function readHistory(){try{return JSON.parse(localStorage.getItem(historyKey())||"[]")}catch{return[]}}
 function writeHistory(rows){localStorage.setItem(historyKey(),JSON.stringify(rows.slice(-2000)))}
-function saveHistoryRows(rows){
-  const history=readHistory(),seen=new Set(history.map(x=>x.id+"|"+x.date));
-  rows.forEach(x=>{const item={id:x.id,date:x.date||state.date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:new Date().toISOString()};const key=item.id+"|"+item.date;if(!seen.has(key)){history.push(item);seen.add(key)}});
-  writeHistory(history);
+function saveHistoryRows(rows,replaceDate=null){
+  const history=readHistory();
+  const targetDate=replaceDate||state.date;
+  const kept=history.filter(x=>x.date!==targetDate);
+  const now=new Date().toISOString();
+  const fresh=rows.map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:now}));
+  writeHistory([...kept,...fresh]);
 }
+
 function settleOutcome(x){
   const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return /ended|finished|closed|complete/i.test(String(x.status))?"Finished":"Pending";
@@ -107,7 +111,9 @@ async function analyze(){
       all.push(...(d.predictions||[]).map(x=>({...x,date})));
     }
     const seen=new Set();state.rows=all.filter(x=>{if(seen.has(x.eventId))return false;seen.add(x.eventId);return true});
-    state.selected.clear();renderRows();renderSlip();saveHistoryRows(state.rows);renderHistory();
+    state.selected.clear();renderRows();renderSlip();
+     if(dates.length===1)saveHistoryRows(state.rows,dates[0]);
+     renderHistory(dates.length===1?dates[0]:historySelectedDate());
     setStatus(state.rows.length+" unique game(s) returned across "+dates.length+" selected date(s).");
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
