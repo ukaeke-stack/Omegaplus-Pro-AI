@@ -1,44 +1,10 @@
-<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#06100b"><title>Omegaplus Pro AI</title><link rel="stylesheet" href="/styles.css"></head>
-<body>
-<div class="app">
-  <aside id="side">
-    <div class="side-brand"><div class="logo">⚽</div><div><b>PREDICTIX</b><span>AI FOOTBALL ANALYTICS</span></div><button id="sideClose">×</button></div>
-    <nav class="side-nav">
-      <button class="active" data-page="home"><i>⌂</i>Home</button>
-      <button data-page="predictions"><i>▥</i>Predictions</button>
-      <button data-page="calendar"><i>□</i>Calendar</button>
-      <button data-page="history"><i>◴</i>History</button>
-      <button data-page="stats"><i>♕</i>Stats</button>
-    </nav>
-    <div class="side-engine"><small>AI ENGINE</small><strong>Football Intelligence</strong><p>Prediction engine ready.</p></div>
-  </aside>
-  <div id="backdrop"></div>
-  <main>
-    <header class="topbar">
-      <div class="brand"><div class="logo">⚽</div><div><b>PREDICTIX</b><span>AI FOOTBALL ANALYTICS</span></div></div>
-      <button class="mic">♩</button><button id="menu" class="menu">☰</button>
-    </header>
-    <section class="content">
-      <div class="hero-title"><h1>AI FOOTBALL<br><em>PREDICTIONS</em></h1><p>Advanced AI analysis for accurate football predictions.<br>Real-time data from 50+ leagues worldwide.</p></div>
-      <div class="snap" id="snap">
-        <div class="snap-head"><div class="snap-icon">▣</div><div><h2>SNAP PREDICT</h2><p>Upload a fixture screenshot — AI predicts all games</p></div><span class="new">NEW</span><button id="snapToggle">⌄</button></div>
-        <div class="upload" id="upload"><input id="fixtureFile" type="file" accept="image/png,image/jpeg,image/webp"><div class="upload-icon">↥</div><strong>Drop a fixture screenshot here</strong><span>or click to browse · PNG, JPG, WEBP</span></div>
-      </div>
-      <div class="analysis"><span class="live">◉ LIVE</span><div><strong>AI Analysis Running</strong><p>Scanning 200+ matches across 50 leagues</p></div></div>
-      <div class="stats">
-        <div><label>Win Rate <b>％</b></label><strong>78%</strong><small>+3.2%</small></div>
-        <div><label>Predictions <b>◎</b></label><strong>1,241</strong><small>+24 today</small></div>
-        <div><label>Streak <b>↗</b></label><strong>12W</strong><small>Best: 18W</small></div>
-        <div><label>Accuracy <b>♕</b></label><strong>82%</strong><small>Top 5%</small></div>
-      </div>
-      <div class="picks-head"><div><h2>TODAY'S PICKS</h2><p id="todayDate"></p></div><button id="analyze" class="analyze">✧ &nbsp;Analyze Today</button></div>
-      <div class="filters" id="filters"><button class="active" data-league="all">🌐 All Leagues</button></div>
-      <div id="matches"></div>
-      <button id="viewAll" class="view-all">View All Predictions <span>→</span></button>
-    </section>
-  </main>
-  <nav class="bottom-nav">
-    <button class="active" data-page="home"><i>⌂</i><span>Home</span></button><button data-page="predictions"><i>▥</i><span>Predictions</span></button><button data-page="calendar"><i>□</i><span>Calendar</span></button><button data-page="history"><i>◴</i><span>History</span></button><button data-page="stats"><i>♕</i><span>Stats</span></button>
-  </nav>
-</div><script src="/app.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#050d09"><title>Omegaplus Pro AI</title><link rel="stylesheet" href="/styles.css"></head><body>
+<div class="app-shell"><aside id="side" class="side"><div class="side-head"><div class="logo">⚽</div><div><strong>Omegaplus</strong><small>PRO AI</small></div><button id="sideClose" class="close-side">×</button></div><nav class="side-nav"><button class="active" data-page="home">⌂ <span>Home</span></button><button data-page="predictions">▥ <span>Predictions</span></button><button data-page="calendar">▣ <span>Calendar</span></button><button data-page="history">◷ <span>History</span></button><button data-page="stats">♜ <span>Stats</span></button></nav></aside><div id="backdrop"></div>
+<main><header class="topbar"><div class="top-brand"><div class="logo">⚽</div><div><strong>Omegaplus</strong><small>AI FOOTBALL ANALYTICS</small></div></div><button id="mic" class="icon-btn">♩</button><button id="menu" class="menu-btn">☰</button></header>
+<div id="page-home" class="page active-page"><section class="hero-home"><h1>AI FOOTBALL<br><em>PREDICTIONS</em></h1><p>Advanced AI analysis for accurate football predictions.<br>Real-time data from 50+ leagues worldwide.</p></section>
+<section class="snap-card"><button id="snapToggle" class="snap-head"><span class="feature-icon">▣</span><span class="snap-copy"><strong>SNAP PREDICT</strong><small>Upload a fixture screenshot — AI predicts all games</small></span><b class="new-badge">NEW</b><span id="snapArrow">⌄</span></button><div id="snapBody" class="snap-body"><label class="upload-box" for="fixtureFile"><span class="upload-icon">⇧</span><strong>Drop a fixture screenshot here</strong><small>or click to browse · PNG, JPG, WEBP</small><input id="fixtureFile" type="file" accept="image/png,image/jpeg,image/webp"></label><div id="fileName"></div></div></section>
+<section class="live-card"><span class="live-badge">◉ LIVE</span><div><strong>AI Analysis Running</strong><small>Scanning 200+ matches across 50 leagues</small></div></section>
+<section class="stats-row"><div class="metric"><span>Win Rate</span><b>78%</b><em>+3.2%</em><i>％</i></div><div class="metric"><span>Predictions</span><b id="predictionTotal">—</b><em>+24 today</em><i>◎</i></div></section><section class="stats-row"><div class="metric"><span>Leagues</span><b>50+</b><em>Worldwide</em><i>◫</i></div><div class="metric"><span>Selected</span><b id="selectedHome">0</b><em>Current slip</em><i>◎</i></div></section></div>
+<div id="page-predictions" class="page"><section class="page-title"><small>OMEGAPLUS PRO AI</small><h2>Predictions</h2><p>AI-ranked fixtures and confidence levels.</p></section><div class="prediction-tools"><select id="league"><option value="all">All leagues</option></select><button class="primary" id="analyze">Analyze</button></div><div id="matches"></div><div class="slip-card"><h3>Prediction Slip</h3><div id="slip"><p>Select matches to build your slip.</p></div><button class="primary full" id="booking">Generate booking code</button><button class="secondary full" id="sporty">Open SportyBet</button></div></div>
+<div id="page-calendar" class="page placeholder"><section class="page-title"><small>FIXTURE PLANNER</small><h2>Calendar</h2><p>Your football fixture calendar will appear here.</p></section></div><div id="page-history" class="page placeholder"><section class="page-title"><small>TRACK RECORD</small><h2>History</h2><p>Prediction history and results will appear here.</p></section></div><div id="page-stats" class="page placeholder"><section class="page-title"><small>PERFORMANCE</small><h2>Stats</h2><p>AI performance statistics will appear here.</p></section></div>
+<nav class="bottom-nav"><button class="active" data-page="home"><span>⌂</span>Home</button><button data-page="predictions"><span>▥</span>Predictions</button><button data-page="calendar"><span>▣</span>Calendar</button><button data-page="history"><span>◷</span>History</button><button data-page="stats"><span>♜</span>Stats</button></nav></main></div><script src="/app.js"></script></body></html>
