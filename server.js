@@ -51,8 +51,8 @@ async function getSportyFixtures(){
   const key=MARKET_IDS.join(",");
   if(Date.now()-liveCache.at<30000&&liveCache.key===key) return liveCache.fixtures;
   const all=[],pageSize=100;
-  for(let page=1;page<=20;page++){
-    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"48",_t:String(Date.now())});
+  for(let page=1;page<=50;page++){
+    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:key,pageSize:String(pageSize),pageNum:String(page),todayGames:"false",timeline:"720",_t:String(Date.now())});
     const body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
@@ -89,8 +89,8 @@ async function getSportyFixtures(){
 }
 
 function localDayKey(ms){
-  const d=new Date(ms+60*60*1000);
-  return d.toISOString().slice(0,10);
+  const d=new Date(ms);
+  return d.toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});
 }
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
