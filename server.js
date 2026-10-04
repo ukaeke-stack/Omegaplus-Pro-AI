@@ -1,0 +1,13 @@
+import express from "express";
+import path from "node:path";
+import {fileURLToPath} from "node:url";
+const app=express(),__dirname=path.dirname(fileURLToPath(import.meta.url)),PORT=process.env.PORT||3000;
+app.use(express.json());app.use(express.static(path.join(__dirname,"public")));
+const matches=[["m1","Premier League","15:00","Liverpool","Fulham",88,2.8],["m2","Premier League","17:30","Arsenal","Brighton",84,2.6],["m3","La Liga","18:00","Barcelona","Getafe",86,2.9],["m4","Bundesliga","19:30","Bayern Munich","Mainz",89,3.1],["m5","Serie A","20:45","Inter","Torino",82,2.5],["m6","Ligue 1","21:00","PSG","Nantes",87,3]].map(([id,league,time,home,away,p,xg])=>({id,league,time,home,away,p,xg,market:"Over 1.5 Goals",confidence:p>=86?"Very High":"High"}));
+app.get("/api/health",(_,r)=>r.json({ok:true,service:"Omegaplus Pro AI"}));
+app.get("/api/matches",(_,r)=>r.json({matches}));
+app.get("/api/predictions",(_,r)=>r.json({predictions:matches}));
+app.post("/api/predictions/analyze",(q,r)=>r.json({predictions:matches.filter(x=>(q.body?.matchIds||[]).includes(x.id)),generatedAt:new Date().toISOString()}));
+app.post("/api/booking-code",(_,r)=>r.status(501).json({ok:false,error:"Verified live SportyBet booking-code provider integration is not configured. No fake code is generated."}));
+app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
+app.listen(PORT,()=>console.log("Omegaplus Pro AI listening on "+PORT));
