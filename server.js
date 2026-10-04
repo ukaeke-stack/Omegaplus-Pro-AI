@@ -92,8 +92,8 @@ function marketMatches(market,type){
     return market.marketId==="18" ||
       n.includes("over under") || n.includes("over/under") || n.includes("total goals") ||
       n.includes("goal line") || n.includes("goals") ||
-      names.some(x=>/^(over|under)(?:\\s+\\d+(?:\\.\\d+)?)?$/.test(x)) ||
-      ((names.includes("over")||names.includes("under")) && /(?:total|line|points|value)=?[+-]?\\d+(?:\\.\\d+)?/i.test(String(market.specifier||"")));
+      names.some(x=>/^(over|under)(?:\s+\d+(?:\.\d+)?)?$/.test(x)) ||
+      ((names.includes("over")||names.includes("under")) && /(?:total|line|points|value)=?[+-]?\d+(?:\.\d+)?/i.test(String(market.specifier||"")));
   }
   if(type==="btts"){
     return market.marketId==="29" ||
@@ -130,12 +130,12 @@ function selectionRequested(outcome,requested,market={}){
   if(!requested) return true;
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
   if(a===b||a.includes(b)||b.includes(a)) return true;
-  const wanted=b.match(/^(over|under)\\s*(\\d+(?:\\.\\d+)?)/);
+  const wanted=b.match(/^(over|under)\s*(\d+(?:\.\d+)?)/);
   if(!wanted) return false;
   const side=wanted[1],line=wanted[2];
   if(a===side||a.startsWith(side+" ")){
     const spec=String(market.specifier||"");
-    const m=spec.match(/(?:total|line|points|value)=?([+-]?\\d+(?:\\.\\d+)?)/i);
+    const m=spec.match(/(?:total|line|points|value)=?([+-]?\d+(?:\.\d+)?)/i);
     return !!m&&m[1]===line;
   }
   return false;
