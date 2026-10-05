@@ -43,7 +43,7 @@ function renderHistory(date=historySelectedDate(),fallbackRows=[]){
     : "No prediction records saved for "+prettyDate(date)+".";
   box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
 }
-async function refreshHistory(date=historySelectedDate()){
+async function refreshHistory(date=historySelectedDate(),force=false){
   let h=readHistory(),fallback=[];
   try{
     const archived=getArchivedDay(date);const data=(!force&&archived?.predictions)?{predictions:archived.predictions}:await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();if(data.predictions&&!archived)saveArchivedDay(date,{predictions:data.predictions});
