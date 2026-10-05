@@ -51,9 +51,9 @@ function writeHistory(rows){try{localStorage.setItem(historyKey(),JSON.stringify
 function saveHistoryRows(rows,replaceDate=null){
   const history=readHistory();
   const targetDate=replaceDate||state.date;
-  const kept=history.filter(x=>x.date!==targetDate);
+  const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
   const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,sport:x.sport||state.sport,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
   return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
@@ -90,7 +90,7 @@ function historySelectedDate(){
 function renderHistory(date=historySelectedDate(),fallbackRows=[]){
   const box=$("#historyList");if(!box)return;
   const all=readHistory();
-  let h=all.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
+  let h=all.filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
   if(!h.length&&fallbackRows.length){
     const now=new Date().toISOString();
     h=fallbackRows.slice(0,10).map(x=>({...x,id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||settleOutcome(x),recordedAt:now}));
@@ -102,7 +102,7 @@ function renderHistory(date=historySelectedDate(),fallbackRows=[]){
 async function refreshHistory(date=historySelectedDate()){
   let h=readHistory(),fallback=[];
   try{
-    const archiveResponse=await (await fetch("/api/history?date="+encodeURIComponent(date))).json();
+    const archiveResponse=await (await fetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
     const archive=archiveResponse.ok&&archiveResponse.archive?archiveResponse.archive:null;
     let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date}));
     if(!day.length){
@@ -124,7 +124,7 @@ async function refreshHistory(date=historySelectedDate()){
     day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId}x.outcome=settleOutcome(x)});
     writeHistory([...h.filter(x=>x.date!==date),...day]);
     archiveDay(date,{history:day,results:resultRows});
-    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,predictions:day,results:resultRows})});}catch{}
+    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,results:resultRows})});}catch{}
     renderHistory(date,day);
   }catch{
     const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
@@ -233,14 +233,14 @@ async function loadDailyBest(){
     rows=rows.map(x=>({...x,outcome:byId.get(x.id)?.outcome||"Pending"}));
     updateOutcomeSummary(rows,"daily");
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
-    saveHistoryRows(rows.map(x=>({...x,date})),date);
+    saveHistoryRows(rows.map(x=>({...x,date,sport:state.sport})),date);
     archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     renderHistory(date,rows);
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
-async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bookmaker,selections:rows.map(x=>({eventId:x.eventId,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
+async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,bookmaker,selections:rows.map(x=>({eventId:x.eventId,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
 function resetFilters(){const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set([first]);$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();setStatus("Filters reset. Choose your options and Analyze.")}
 function showPage(n){
   $$(".page").forEach(p=>p.classList.remove("active-page"));$("#page-"+n)?.classList.add("active-page");
