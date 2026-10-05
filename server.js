@@ -8,7 +8,8 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.2.1";
+const APP_VERSION="1.2.2";
+const DAILY_PREDICTION_MIN_ODDS=1.10;
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -303,7 +304,7 @@ async function buildDailyBest(date){
     for(const market of fixture.markets){
       if(market.marketId!=="18") continue;
       for(const outcome of market.outcomes){
-        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<1.10) continue;
+        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<DAILY_PREDICTION_MIN_ODDS) continue;
         const label=pickLabel("ou",outcome);
         if(!/^over\s*(1\.5|2\.5)$/i.test(label)) continue;
         const confidence=confidenceForOutcome(market,outcome);
@@ -348,7 +349,7 @@ app.get("/api/best-picks",async(req,r)=>{
     r.json({ok:true,date,limit,market,predictions,generatedAt:new Date().toISOString(),source:"SportyBet market model + independent statistics"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.predictions?.length)return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date);const archive=await readPersistentArchive(date)||{date,predictions:[],results:[]};archive.predictions=predictions;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive);r.json({ok:true,date,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.predictions?.length&&existing.predictions.slice(0,10).every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS)return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date);const archive=await readPersistentArchive(date)||{date,predictions:[],results:[]};archive.predictions=predictions;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive);r.json({ok:true,date,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
