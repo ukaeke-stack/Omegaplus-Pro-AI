@@ -77,6 +77,7 @@ export async function initAuthDb(){
         billing_period text not null default 'monthly',
         features jsonb not null default '[]'::jsonb,
         is_active boolean not null default true,
+        paystack_plan_code text,
         created_at timestamptz not null default now()
       );
       create table if not exists subscriptions(
@@ -120,11 +121,11 @@ export async function initAuthDb(){
         unique(provider,provider_reference)
       );
       create index if not exists payments_user_idx on payments(user_id,created_at desc);
-      insert into plans(id,name,description,price_ngn,billing_period,features)
+      insert into plans(id,name,description,price_ngn,billing_period,features,paystack_plan_code)
       values
-        ('free','Free','Visitor and registered free access',0,'monthly','["limited predictions","basic history"]'),
-        ('pro','Pro','Full prediction access',5000,'monthly','["full predictions","Daily Best 10","football","basketball","history","booking tools"]'),
-        ('premium','Premium','Advanced access for serious users',10000,'monthly','["everything in Pro","priority features","advanced analytics"]')
+        ('free','Free','Visitor and registered free access',0,'monthly','["limited predictions","basic history"]',null),
+        ('pro','Pro','Full prediction access',5000,'monthly','["full predictions","Daily Best 10","football","basketball","history","booking tools"]',null),
+        ('premium','Premium','Advanced access for serious users',10000,'monthly','["everything in Pro","priority features","advanced analytics"]',null)
       on conflict(id) do nothing;
       delete from sessions where expires_at < now();
     `);
