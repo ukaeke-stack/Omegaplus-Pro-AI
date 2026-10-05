@@ -206,6 +206,25 @@ app.get("/api/predictions",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
+async function buildDailyBest(date){
+  const fixtures=(await getDayFixtures(date,false)).fixtures,rows=[];
+  for(const fixture of fixtures){
+    if(localDayKey(fixture.startTimeMs)!==date) continue;
+    for(const market of fixture.markets){
+      if(market.marketId!=="18") continue;
+      for(const outcome of market.outcomes){
+        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+        const label=pickLabel("ou",outcome);
+        if(!/^over\s*(1\.5|2\.5)$/i.test(label)) continue;
+        const confidence=confidenceForOutcome(market,outcome);
+        rows.push({id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick:label,odds:outcome.odds,marketType:"ou",confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date});
+      }
+    }
+  }
+  const dedupe=new Map();for(const row of rows){if(!dedupe.has(row.eventId)||dedupe.get(row.eventId).confidence<row.confidence)dedupe.set(row.eventId,row)}
+  return [...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,10);
+}
+app.get("/api/daily-best",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.predictions?.length)return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date);const archive=await readPersistentArchive(date)||{date,predictions:[],results:[]};archive.predictions=predictions;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive);r.json({ok:true,date,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
