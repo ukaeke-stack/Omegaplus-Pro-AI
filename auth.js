@@ -215,7 +215,7 @@ export async function logoutUser(req){
   if(raw)await q("delete from sessions where token_hash=$1",[sessionHash(raw)]).catch(()=>{});
 }
 export async function adminUsers({page=1,limit=50,search=""}={}){
-  const offset=(Math.max(1,page)-1)*Math.min(100,Math.max(1,limit)),size=Math.min(100,Math.max(1,limit));
+  const pageNum=Math.max(1,Number(page)||1),size=Math.min(100,Math.max(1,Number(limit)||50)),offset=(pageNum-1)*size;
   const term=String(search||"").trim().toLowerCase();
   const r=term
     ?await q("select id,email,name,role,plan,is_active,email_verified,created_at,last_login_at from users where lower(email) like $1 or lower(name) like $1 order by created_at desc limit $2 offset $3",["%"+term+"%",size,offset])
