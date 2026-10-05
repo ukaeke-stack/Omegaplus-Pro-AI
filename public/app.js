@@ -31,11 +31,20 @@ function saveHistoryRows(rows,replaceDate=null){
 }
 
 function settleOutcome(x){
+  const status=String(x.status||x.matchStatus||"").toLowerCase();
+  if(/postpon|cancel|void|abandon|suspend/.test(status))return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
+  const finished=/finished|full.?time|ended|closed|complete|final|\bft\b|after extra|penalt(y|ies)/i.test(status);
+  // A 0-0 (or any current score) from a scheduled/live fixture is NOT a final result.
+  // Only settle a prediction after the provider explicitly reports a completed match.
+  if(!finished)return "Pending";
   const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
-  if(!Number.isFinite(hs)||!Number.isFinite(as))return /ended|finished|closed|complete/i.test(String(x.status))?"Finished":"Pending";
+  if(!Number.isFinite(hs)||!Number.isFinite(as))return "Pending";
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(m)return total>Number(m[1])?"Won":"Lost";if(u)return total<Number(u[1])?"Won":"Lost";
-  if(pick.includes("home"))return hs>as?"Won":"Lost";if(pick.includes("away"))return as>hs?"Won":"Lost";if(pick.includes("draw"))return hs===as?"Won":"Lost";
+  if(m)return total>Number(m[1])?"Won":"Lost";
+  if(u)return total<Number(u[1])?"Won":"Lost";
+  if(pick.includes("home"))return hs>as?"Won":"Lost";
+  if(pick.includes("away"))return as>hs?"Won":"Lost";
+  if(pick.includes("draw"))return hs===as?"Won":"Lost";
   return "Finished";
 }
 function historySelectedDate(){
