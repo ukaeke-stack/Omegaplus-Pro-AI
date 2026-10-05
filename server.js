@@ -25,6 +25,8 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
+const dayCache=new Map();
+const DAY_CACHE_TTL=24*60*60*1000;
 
 async function sportyFetch(pathname,options={}){
   const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
@@ -48,10 +50,10 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-async function getSportyFixtures(todayOnly=false){
+async function getSportyFixtures(todayOnly=false,force=false){
   const marketKey=MARKET_IDS.join(",");
   const cacheKey=marketKey+"|"+(todayOnly?"today":"future");
-  if(Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
+  if(!force&&Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
@@ -123,7 +125,8 @@ function pickLabel(type,outcome){
 function selectionRequested(outcome,requested){
   if(!requested) return true;
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
-  return a===b;
+  if(a===b)return true;
+  return a.replace(/\\s+/g,"")===b.replace(/\\s+/g,"");
 }
 function leagueRank(name){
   const n=normalizeText(name);
@@ -154,10 +157,16 @@ app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}
 ]}));
 
+function snapshotForDate(fixtures,date){return fixtures.filter(x=>localDayKey(x.startTimeMs)===date)}
+function archiveSnapshot(date,fixtures){const rows=snapshotForDate(fixtures,date);dayCache.set(date,{date,createdAt:Date.now(),fixtures:rows});return rows}
+async function getDaySnapshot(date,force=false){const cached=dayCache.get(date);if(!force&&cached&&Date.now()-cached.createdAt<DAY_CACHE_TTL)return cached.fixtures;const fixtures=await getSportyFixtures(date===localDayKey(Date.now()),force);return archiveSnapshot(date,fixtures)}
+
+app.get("/api/scan",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const fixtures=await getDaySnapshot(date,true);const leagues=[...new Set(fixtures.map(x=>x.league).filter(Boolean))].sort(sortLeagues);r.json({ok:true,date,scannedAt:new Date().toISOString(),leagues,fixtures})}catch(e){r.status(502).json({ok:false,error:e.message,leagues:[],fixtures:[]})}});
+
 app.get("/api/leagues",async(req,r)=>{
   try{
     const requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now()));
+    const fixtures=await getDaySnapshot(requestedDate,false);
     const leagues=[...new Set(fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
     r.json({ok:true,date:requestedDate,leagues});
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
