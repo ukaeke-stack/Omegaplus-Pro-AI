@@ -176,7 +176,7 @@ async function booking(){const rows=[...state.selected.values()];if(!rows.length
 function resetFilters(){state.markets=new Set(["ou"]);state.selections=new Set(["Over 1.5"]);$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();setStatus("Filters reset. Choose your options and Analyze.")}
 function showPage(n){
   $$(".page").forEach(p=>p.classList.remove("active-page"));$("#page-"+n)?.classList.add("active-page");
-  $("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===n));closeSide();scrollTo({top:0,behavior:"smooth"});
+  document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===n));closeSide();scrollTo({top:0,behavior:"smooth"});
   if(n==="calendar"){$("#calendarDate").value=state.date;loadCalendar()}
   if(n==="predictions")prepareDailyPage();
   if(n==="history"){const d=historySelectedDate();$("#historyDate").value=d;refreshHistory(d)}
