@@ -1,4 +1,4 @@
-const BASE="https://api.sportmonks.com/v3/football";
+// Sportmonks result provider: authenticated server-side only.\nconst BASE="https://api.sportmonks.com/v3/football";
 const TOKEN=process.env.SPORTMONKS_API_TOKEN||"";
 const cache=new Map();
 const ttl=Number(process.env.SPORTMONKS_CACHE_MS||15000);
