@@ -239,7 +239,7 @@ async function loadDailyBest(){
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
-async async function loadCorrectScores(date=$("#csDate")?.value||state.date){
+async function loadCorrectScores(date=$("#csDate")?.value||state.date){
   const box=$("#correctScores");if(!box)return;
   $("#csStatus").textContent="Analyzing one best correct score for every match…";
   box.innerHTML='<div class="empty">Building the score probability matrix…</div>';
