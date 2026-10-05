@@ -143,7 +143,7 @@ function predictionReasons(p){
   const reasons=[];
   const market=Number(p?.marketConfidence), independent=Number(p?.independentConfidence);
   if(Number.isFinite(market)) reasons.push("Market probability signal: "+Math.round(market)+"%.");
-  if(Number.isFinite(independent)) reasons.push("Independent statistics signal: "+Math.round(independent)+"%.");
+  if(p?.independentConfidence!=null&&Number.isFinite(independent)) reasons.push("Independent statistics signal: "+Math.round(independent)+"%.");
   const sources=Array.isArray(p?.independentSources)?p.independentSources:[];
   if(sources.length) reasons.push("Independent sources: "+sources.join(", ")+".");
   const form=p?.independentStats?.sofascore?.form;
