@@ -225,8 +225,12 @@ async function loadDailyBest(){
   try{
     const limit=10,market="all";const d=await jsonFetch("/api/daily-best?date="+encodeURIComponent(date));
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
-    const rows=(d.predictions||[]).slice(0,10);
-    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
+    let rows=(d.predictions||[]).slice(0,10);
+    const saved=readHistory().filter(x=>x.date===date);
+    const byId=new Map(saved.map(x=>[x.id,x]));
+    rows=rows.map(x=>({...x,outcome:byId.get(x.id)?.outcome||"Pending"}));
+    updateOutcomeSummary(rows,"daily");
+    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
     saveHistoryRows(rows.map(x=>({...x,date})),date);
     archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     renderHistory(date,rows);
