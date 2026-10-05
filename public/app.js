@@ -26,14 +26,7 @@ function saveHistoryRows(rows,replaceDate=null){
   return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
-function settleOutcome(x){
-  const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
-  if(!Number.isFinite(hs)||!Number.isFinite(as))return /ended|finished|closed|complete/i.test(String(x.status))?"Finished":"Pending";
-  const total=hs+as,m=pick.match(/overs+(d+(?:.d+)?)/),u=pick.match(/unders+(d+(?:.d+)?)/);
-  if(m)return total>Number(m[1])?"Won":"Lost";if(u)return total<Number(u[1])?"Won":"Lost";
-  if(pick.includes("home"))return hs>as?"Won":"Lost";if(pick.includes("away"))return as>hs?"Won":"Lost";if(pick.includes("draw"))return hs===as?"Won":"Lost";
-  return "Finished";
-}
+function settleOutcome(x){const status=String(x.status||x.matchStatus||"").toLowerCase();if(/void|cancel|cancelled|canceled/.test(status))return "Void";if(/postpon|resched|abandon/.test(status))return "Postponed";const hs=Number(x.homeScore),as=Number(x.awayScore);if(!Number.isFinite(hs)||!Number.isFinite(as))return /finished|ended|closed|complete/.test(status)?"Finished":"Pending";const pick=String(x.pick||"").toLowerCase().replace(/\\s+/g," ");const over=pick.match(/over\\s+(\\d+(?:\\.\\d+)?)/),under=pick.match(/under\\s+(\\d+(?:\\.\\d+)?)/);const total=hs+as;if(over)return total>Number(over[1])?"Won":"Lost";if(under)return total<Number(under[1])?"Won":"Lost";if(/home/.test(pick))return hs>as?"Won":"Lost";if(/away/.test(pick))return as>hs?"Won":"Lost";if(/draw/.test(pick))return hs===as?"Won":"Lost";return "Finished"}
 function historySelectedDate(){
   return $("#historyDate")?.value||dateKey(new Date());
 }
