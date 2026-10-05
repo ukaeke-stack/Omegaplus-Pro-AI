@@ -164,18 +164,20 @@ function independentConfidence(stats,type){
   const f=stats?.sofascore?.form,u=stats?.understat;
   const vals=[];
   if(f){
-    let p=(f.homeOver15+f.awayOver15)/2*100;
-    if(type==="over1.5")vals.push(p);
+    if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
     if(type==="over2.5")vals.push((f.homeOver25+f.awayOver25)/2*100);
     if(type==="btts")vals.push((f.homeBtts+f.awayBtts)/2*100);
     if(type==="home")vals.push(f.homeWinRate*100);
     if(type==="away")vals.push(f.awayWinRate*100);
   }
   if(u?.home?.xg!=null&&u?.away?.xg!=null&&u?.home?.xga!=null&&u?.away?.xga!=null){
-    const expected=u.home.xg+u.away.xg;
-    if(type==="over1.5")vals.push(clamp((expected-0.8)/1.8*100));
-    if(type==="over2.5")vals.push(clamp((expected-1.3)/1.7*100));
-    if(type==="btts")vals.push(clamp((Math.min(u.home.xg,1.8)+Math.min(u.away.xg,1.8))/3*100));
+    const eh=Math.max(0,(u.home.xg+u.away.xga)/2);
+    const ea=Math.max(0,(u.away.xg+u.home.xga)/2);
+    const lambda=eh+ea;
+    const poissonOver=(threshold)=>1-Math.exp(-lambda)*[1,1+lambda,1+lambda+(lambda*lambda/2)][threshold];
+    if(type==="over1.5")vals.push(clamp(poissonOver(1)*100));
+    if(type==="over2.5")vals.push(clamp(poissonOver(2)*100));
+    if(type==="btts")vals.push(clamp((1-Math.exp(-eh))*(1-Math.exp(-ea))*100));
   }
   return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
 }
