@@ -249,7 +249,7 @@ export async function createOrUpdatePlan(body){
   if(!id)throw new Error("Plan ID is required.");
   const r=await q(`insert into plans(id,name,description,price_ngn,billing_period,features,is_active)
     values($1,$2,$3,$4,$5,$6,$7)
-    on conflict(id) do update set name=excluded.name,description=excluded.description,price_ngg=excluded.price_ngg`,[id,String(body.name||id),String(body.description||""),Math.max(0,Math.round(Number(body.priceNgn)||0)),String(body.billingPeriod||"monthly"),JSON.stringify(Array.isArray(body.features)?body.features:[]),body.isActive!==false]);
+    on conflict(id) do update set name=excluded.name,description=excluded.description,price_ngn=excluded.price_ngn`,[id,String(body.name||id),String(body.description||""),Math.max(0,Math.round(Number(body.priceNgn)||0)),String(body.billingPeriod||"monthly"),JSON.stringify(Array.isArray(body.features)?body.features:[]),body.isActive!==false]);
   return r.rows[0]||{id};
 }
 export async function activateSubscription(userId,planId,days=30,provider="admin"){
