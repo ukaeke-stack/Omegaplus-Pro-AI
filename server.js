@@ -186,11 +186,40 @@ app.get("/api/results",async(req,r)=>{
 });
 app.get("/api/results/live",async(_,r)=>{try{const x=await getLatestResults();if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",results:x.data,updatedAt:x.updatedAt})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}});
 
+function leagueCountry(name,category=""){
+  const c=String(category||"").trim();
+  if(c) return c;
+  const n=normalizeText(name);
+  const map=[
+    ["premier league","England"],["la liga","Spain"],["laliga","Spain"],["bundesliga","Germany"],
+    ["serie a","Italy"],["ligue 1","France"],["eredivisie","Netherlands"],["primeira liga","Portugal"],
+    ["super lig","Turkey"],["scottish premiership","Scotland"],["premiership","Scotland"],
+    ["championship","England"],["major league soccer","USA"],["mls","USA"],["saudi pro league","Saudi Arabia"]
+  ];
+  const hit=map.find(([k])=>n.includes(k));
+  return hit?hit[1]:"International";
+}
+function leagueGroup(name,category=""){
+  const rank=leagueRank(name);
+  if(rank<100) return "Top Leagues";
+  if(rank===100) return "European Competitions";
+  if(rank===200) return "International";
+  return "Other Leagues";
+}
 app.get("/api/leagues",async(req,r)=>{
   try{
     const requestedDate=String(req.query.date||localDayKey(Date.now()));
     const {fixtures}=await getDayFixtures(requestedDate,false);
-    const leagues=[...new Set(fixtures.map(x=>x.league).filter(Boolean))].sort(sortLeagues);
+    const map=new Map();
+    for(const f of fixtures){
+      if(!f.league) continue;
+      if(!map.has(f.league)) map.set(f.league,{name:f.league,country:leagueCountry(f.league,f.category),group:leagueGroup(f.league,f.category)});
+    }
+    const leagues=[...map.values()].sort((a,b)=>{
+      const ga=["Top Leagues","European Competitions","International","Other Leagues"];
+      const ai=ga.indexOf(a.group),bi=ga.indexOf(b.group);
+      return (ai-bi)||leagueRank(a.name)-leagueRank(b.name)||a.country.localeCompare(b.country)||a.name.localeCompare(b.name);
+    });
     r.json({ok:true,date:requestedDate,leagues});
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
 });
