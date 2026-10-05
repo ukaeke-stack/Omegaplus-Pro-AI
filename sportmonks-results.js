@@ -42,7 +42,7 @@ function statusOf(f){
 async function fetchJson(url){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
   try{
-    const res=await fetch(url,{headers:{Accept:"application/json",Authorization:"Bearer "+TOKEN},signal:controller.signal});
+    const res=await fetch(url,{headers:{Accept:"application/json},signal:controller.signal});
     const text=await res.text(); let body=null; try{body=text?JSON.parse(text):null}catch{}
     if(!res.ok) throw new Error(body?.message||("Sportmonks HTTP "+res.status));
     return body||{};
@@ -52,7 +52,7 @@ async function getDateResults(date,force=false){
   if(!TOKEN) return {configured:false,data:[],error:"SPORTMONKS_API_TOKEN is not configured."};
   const k=keyFor(date),hit=cache.get(k);
   if(!force&&hit&&Date.now()-hit.at<ttl)return {configured:true,data:hit.data,cached:true,updatedAt:hit.at};
-  const url=BASE+"/fixtures/date/"+encodeURIComponent(date)+"?include=participants;scores;state;events";
+  const url=BASE+"/fixtures/date/"+encodeURIComponent(date)+"?api_token="+encodeURIComponent(TOKEN)+"&include=participants;scores;state;events";
   const body=await fetchJson(url);
   const data=(body.data||[]).map(f=>{
     const p=participantsOf(f),s=scoreOf(f);
@@ -63,7 +63,7 @@ async function getDateResults(date,force=false){
 }
 async function getLatestResults(){
   if(!TOKEN)return {configured:false,data:[],error:"SPORTMONKS_API_TOKEN is not configured."};
-  const body=await fetchJson(BASE+"/livescores/latest?include=participants;scores;state;events");
+  const body=await fetchJson(BASE+"/livescores/latest?api_token="+encodeURIComponent(TOKEN)+"&include=participants;scores;state;events");
   const data=(body.data||[]).map(f=>{
     const p=participantsOf(f),s=scoreOf(f);
     return {providerId:String(f.id||""),date:dayOf(Number(f.starting_at)*1000),startingAt:f.starting_at,home:p.home,away:p.away,homeKey:norm(p.home),awayKey:norm(p.away),homeScore:s.homeScore,awayScore:s.awayScore,status:statusOf(f),state:String(f.state?.name||""),resultInfo:String(f.result_info||"")};
