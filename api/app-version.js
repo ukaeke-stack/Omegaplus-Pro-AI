@@ -1,0 +1,1 @@
+module.exports=async function(req,res){res.setHeader('Cache-Control','no-store');res.status(200).json({latestVersion:'1.0.0',updateAvailable:false,releaseNotes:[],checkedAt:new Date().toISOString()});};
