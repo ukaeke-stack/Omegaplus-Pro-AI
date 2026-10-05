@@ -1,5 +1,5 @@
 (()=> {
-  const APP_VERSION="1.1.0";
+  const APP_VERSION="1.2.0";
   const KEY="omegaplus_settings_v2";
   const defaults={
     games:20,minConfidence:70,defaultMarket:"ou",defaultSelection:"Over 1.5",
@@ -64,6 +64,11 @@
         <div class="settings-actions"><button class="settings-button" id="checkUpdates">Check for updates</button><button class="settings-button primary-settings" id="applyUpdate" hidden>Apply update</button></div>
       </div>
       <div class="settings-section">
+        <strong>System Diagnostics</strong>
+        <small id="diagnosticStatus">Provider and prediction-engine health can be checked without leaving Settings.</small>
+        <button class="settings-button" id="runDiagnostics">Run diagnostics</button>
+      </div>
+      <div class="settings-section">
         <strong>Data & Privacy</strong><small>Prediction preferences are saved locally on this device. Clearing history does not affect the live SportyBet feed.</small>
         <button class="settings-button" id="clearSettingsHistory">Clear prediction history</button>
       </div>
@@ -107,6 +112,10 @@
     }catch{status.textContent="Could not check for updates. Check your internet connection and try again."}
   };
   $("#applyUpdate").onclick=()=>location.href=location.pathname+"?update="+Date.now();
+  $("#runDiagnostics").onclick=async()=>{
+    const box=$("#diagnosticStatus");box.textContent="Checking providers and engine…";
+    try{const r=await fetch("/api/health?ts="+Date.now(),{cache:"no-store"}),d=await r.json(),i=d.independentStats||{};box.textContent="Engine: healthy · SportyBet: "+(d.liveSportyBet?"connected":"unavailable")+" · Sofascore: "+(i.sofascore?"healthy":"unavailable")+" · Understat: "+(i.understat?"healthy":"unavailable")+" · v"+(d.version||APP_VERSION)}catch{box.textContent="Diagnostics could not reach the server."}
+  };
   $("#clearSettingsHistory").onclick=()=>{
     if(confirm("Clear all saved prediction history on this device?")){
       localStorage.removeItem("omegaplus_prediction_history");localStorage.removeItem("omegaplus_history_v3");localStorage.removeItem("omegaplus_day_archive_v1");
