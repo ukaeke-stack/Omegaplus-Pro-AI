@@ -66,46 +66,32 @@ function renderHistory(date=historySelectedDate(),fallbackRows=[]){
 async function refreshHistory(date=historySelectedDate()){
   let h=readHistory(),fallback=[];
   try{
-    const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
-    const liveRows=data.predictions||[];
-    const live=new Map(liveRows.map(x=>[x.eventId,x]));
-    let resultRows=[];
-    try{const rr=await (await fetch("/api/results?date="+encodeURIComponent(date))).json();if(rr.ok)resultRows=rr.results||[];}catch{}
-    const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
-    let day=h.filter(x=>x.date===date)
-      .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
-      .slice(0,10);
-
-    // A fresh browser may have no local history. Generate the same daily
-    // predictions used by the Predictions page so History has real picks.
+    const archiveResponse=await (await fetch("/api/history?date="+encodeURIComponent(date))).json();
+    const archive=archiveResponse.ok&&archiveResponse.archive?archiveResponse.archive:null;
+    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date}));
     if(!day.length){
-      try{
-        const analyzed=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:["Over 1.5"],maxGames:10})})).json();
-        fallback=(analyzed.predictions||[]).slice(0,10).map(x=>({...x,date}));
-      }catch{}
-      if(!fallback.length){
-        fallback=liveRows.slice(0,10).map(x=>({...x,date,pick:"Fixture",market:"Fixture",confidence:0,odds:"—"}));
+      const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
+      const liveRows=data.predictions||[];
+      day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
+      if(!day.length){
+        try{const analyzed=await (await fetch("/api/daily-best?date="+encodeURIComponent(date))).json();fallback=(analyzed.predictions||[]).slice(0,10).map(x=>({...x,date}));}catch{}
+        if(!fallback.length)fallback=liveRows.slice(0,10).map(x=>({...x,date,pick:"Fixture",market:"Fixture",confidence:0,odds:"—"}));
+        day=fallback;
       }
-      saveHistoryRows(fallback,date);
-      h=readHistory();
-      day=h.filter(x=>x.date===date).slice(0,10);
-      if(!day.length)day=fallback;
     }
-
-    day.forEach(x=>{
-      const y=live.get(x.eventId),z=findResult(x);
-      if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}
-      if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.outcome=settleOutcome(x)}
-      else if(!z&&x.outcome!=="Won"&&x.outcome!=="Lost"&&x.outcome!=="Void"&&x.outcome!=="Postponed")x.outcome=settleOutcome(x);
-    });
+    let resultRows=Array.isArray(archive?.results)?archive.results:[];
+    try{const rr=await (await fetch("/api/results?date="+encodeURIComponent(date))).json();if(rr.ok)resultRows=rr.results||resultRows;}catch{}
+    const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+    const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
+    const liveData=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json().catch(()=>({predictions:[]}));
+    const live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
+    day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId}x.outcome=settleOutcome(x)});
     writeHistory([...h.filter(x=>x.date!==date),...day]);
     archiveDay(date,{history:day,results:resultRows});
+    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,predictions:day,results:resultRows})});}catch{}
     renderHistory(date,day);
   }catch{
-    const day=h.filter(x=>x.date===date)
-      .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
-      .slice(0,10);
+    const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
     renderHistory(date,day);
   }
 }
@@ -184,16 +170,15 @@ async function loadDailyBest(){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
   box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
   try{
-    const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:["Over 1.5","Over 2.5"],maxGames:10})})).json();
+    const d=await (await fetch("/api/daily-best?date="+encodeURIComponent(date))).json();
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
     const rows=(d.predictions||[]).slice(0,10);
-    // Render first; local history is only a cache and must never block the UI.
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
     saveHistoryRows(rows.map(x=>({...x,date})),date);
     archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     renderHistory(date,rows);
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
-  }catch(e){saveHistoryRows([],date);renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
+  }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
 async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bookmaker,selections:rows.map(x=>({eventId:x.eventId,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
