@@ -15,7 +15,7 @@
       '<label>Language<select id="set-language"><option>English</option></select></label>'+
       '</div><div class="settings-checks"><label><input id="set-notify" type="checkbox"> Enable notifications</label></div>'+
       '<div class="settings-links"><button data-action="diagnostics">Connection & Diagnostics</button><button data-action="privacy">Data & Privacy</button><button data-action="about">About Omegaplus AI</button></div>'+
-      '<div class="settings-foot"><span>Omegaplus AI v1.0.0</span><button class="update-btn" data-action="update">Check for Update</button><button class="save-settings">Save Settings</button></div></div>';
+      '<div class="settings-foot"><span>Omegaplus AI v1.1.0</span><button class="update-btn" data-action="update">Check for Update</button><button class="save-settings">Save Settings</button></div></div>';
     document.body.appendChild(modal);
     modal.querySelector('#set-market').value=s.defaultMarket; modal.querySelector('#set-confidence').value=s.minConfidence; modal.querySelector('#set-games').value=s.maxGames; modal.querySelector('#set-theme').value=s.theme; modal.querySelector('#set-font').value=s.fontSize; modal.querySelector('#set-language').value=s.language; modal.querySelector('#set-notify').checked=s.notifications;
     const close=()=>modal.remove(); modal.querySelector('.settings-close').onclick=close;
@@ -23,11 +23,11 @@
     modal.querySelector('[data-action="update"]').onclick=checkUpdate;
     modal.querySelector('[data-action="diagnostics"]').onclick=()=>alert('Connection diagnostics: checking Omegaplus services…');
     modal.querySelector('[data-action="privacy"]').onclick=()=>alert('Your prediction preferences are stored locally on this device. Server-side prediction history remains available through your account/app services.');
-    modal.querySelector('[data-action="about"]').onclick=()=>alert('Omegaplus AI\nFootball prediction and analysis platform.\nVersion 1.0.0');
+    modal.querySelector('[data-action="about"]').onclick=()=>alert('Omegaplus AI\nFootball prediction and analysis platform.\nVersion 1.1.0');
   }
   function apply(){const s=get();document.documentElement.dataset.theme=s.theme;document.documentElement.dataset.fontSize=s.fontSize;}
   async function checkUpdate(){
-    try{const r=await fetch('/api/app-version?current=1.0.0',{cache:'no-store'}); if(!r.ok)throw 0; const d=await r.json(); if(d.updateAvailable){ if(confirm('Omegaplus AI '+d.latestVersion+' is available. Update now?')) location.reload(true); } else alert('You are using the latest Omegaplus AI version.');}
+    try{const r=await fetch('/api/app-version?current=1.1.0',{cache:'no-store'}); if(!r.ok)throw 0; const d=await r.json(); if(d.updateAvailable){ if(confirm('Omegaplus AI '+d.latestVersion+' is available. Update now?')) { if(window.AndroidUpdater&&window.AndroidUpdater.startUpdate){ window.AndroidUpdater.startUpdate(d.apkUrl,d.latestVersion); } else { alert('A new version is available. Open this app on Android to install the update.'); window.open(d.apkUrl,'_blank'); } } } else alert('You are using the latest Omegaplus AI version.');}
     catch(e){alert('Update check is temporarily unavailable. The current app will continue working.');}
   }
   window.OmegaSettings={open,checkUpdate,get,save}; apply();
