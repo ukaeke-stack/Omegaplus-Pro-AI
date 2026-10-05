@@ -159,7 +159,7 @@ async function loadDailyBest(force=false){
     const rows=(d.predictions||[]).slice(0,10);
     // Render first; local history is only a cache and must never block the UI.
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
-    saveHistoryRows(rows.map(x=>({...x,date})),date);
+    saveHistoryRows(rows.map(x=>({...x,date})),date);saveArchivedDay(date,{dailyBest:rows});
     renderHistory(date,rows);
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){saveHistoryRows([],date);renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
@@ -220,4 +220,5 @@ function scheduleMidnightReset(){
   const now=new Date(),next=new Date(now);next.setHours(24,0,0,0);
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
+const scanButton=document.createElement("button");scanButton.className="primary compact";scanButton.id="updateScan";scanButton.textContent="Update / Scan";document.querySelector(".topbar").appendChild(scanButton);scanButton.onclick=async()=>{scanButton.disabled=true;scanButton.textContent="Scanning…";try{const d=await (await fetch("/api/scan?date="+encodeURIComponent(state.date))).json();if(!d.ok)throw new Error(d.error||"Scan failed");saveArchivedDay(state.date,{leagues:d.leagues,fixtures:d.fixtures,scannedAt:d.scannedAt});await loadLeagues(false);await loadBase(false);await loadDailyBest(true);await refreshHistory(historySelectedDate(),true);setStatus("Updated live data for "+prettyDate(state.date)+".")}catch(e){setStatus(e.message||"Update failed")}finally{scanButton.disabled=false;scanButton.textContent="Update / Scan"}};
 const today=dateKey(new Date());setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);
