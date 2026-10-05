@@ -135,18 +135,40 @@ function selectionRequested(outcome,requested){
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
   return a===b;
 }
-function leagueRank(name){
+const TOP_LEAGUE_CATALOG=[
+  ["Africa Cup of Nations Qualification","Africa"],
+  ["UEFA Nations League","Europe"],
+  ["Int. Friendly Games","International"],
+  ["MLS","USA"],
+  ["Liga MX","Mexico"],
+  ["Premier League","England"],
+  ["LaLiga","Spain"],
+  ["Serie A","Italy"],
+  ["Bundesliga","Germany"],
+  ["Ligue 1","France"],
+  ["Liga Portugal","Portugal"],
+  ["Eredivisie","Netherlands"],
+  ["Super Lig","Turkey"],
+  ["Championship","England"],
+  ["Saudi Pro League","Saudi Arabia"],
+  ["Brasileiro Serie A","Brazil"],
+  ["J1 League","Japan"],
+  ["K-League 1","South Korea"],
+  ["Chinese Super League","China"],
+  ["UEFA Champions League","Europe"],
+  ["UEFA Europa League","Europe"],
+  ["UEFA Conference League","Europe"],
+  ["CONMEBOL Libertadores","South America"],
+  ["CONMEBOL Sudamericana","South America"]
+];
+const TOP_LEAGUE_KEYS=TOP_LEAGUE_CATALOG.map(([name])=>normalizeText(name));
+function topLeagueIndex(name){
   const n=normalizeText(name);
-  const top=[
-    "premier league","la liga","laliga","bundesliga","serie a","ligue 1",
-    "eredivisie","primeira liga","championship","super lig","belgium first",
-    "scottish premiership","mls","major league soccer","saudi pro league"
-  ];
-  const champions=["champions league","uefa champions","europa league","conference league","copa libertadores","afc champions"];
-  const international=["world cup","euro","nations league","africa cup","afcon","international","world","qualifiers"];
-  const i=top.findIndex(x=>n.includes(x)); if(i>=0) return i;
-  if(champions.some(x=>n.includes(x))) return 100;
-  if(international.some(x=>n.includes(x))) return 200;
+  return TOP_LEAGUE_KEYS.findIndex(k=>n===k||n.includes(k)||k.includes(n));
+}
+function leagueRank(name){
+  const topIndex=topLeagueIndex(name);
+  if(topIndex>=0) return topIndex;
   return 300;
 }
 function sortLeagues(a,b){
@@ -187,23 +209,14 @@ app.get("/api/results",async(req,r)=>{
 app.get("/api/results/live",async(_,r)=>{try{const x=await getLatestResults();if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",results:x.data,updatedAt:x.updatedAt})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}});
 
 function leagueCountry(name,category=""){
+  const topIndex=topLeagueIndex(name);
+  if(topIndex>=0) return TOP_LEAGUE_CATALOG[topIndex][1];
   const c=String(category||"").trim();
   if(c) return c;
-  const n=normalizeText(name);
-  const map=[
-    ["premier league","England"],["la liga","Spain"],["laliga","Spain"],["bundesliga","Germany"],
-    ["serie a","Italy"],["ligue 1","France"],["eredivisie","Netherlands"],["primeira liga","Portugal"],
-    ["super lig","Turkey"],["scottish premiership","Scotland"],["premiership","Scotland"],
-    ["championship","England"],["major league soccer","USA"],["mls","USA"],["saudi pro league","Saudi Arabia"]
-  ];
-  const hit=map.find(([k])=>n.includes(k));
-  return hit?hit[1]:"International";
+  return "International";
 }
 function leagueGroup(name,category=""){
-  const rank=leagueRank(name);
-  if(rank<100) return "Top Leagues";
-  if(rank===100) return "European Competitions";
-  if(rank===200) return "International";
+  if(topLeagueIndex(name)>=0) return "Top Leagues";
   return "Other Leagues";
 }
 app.get("/api/leagues",async(req,r)=>{
