@@ -1,4 +1,5 @@
 import express from "express";
+import {getDateResults,getLatestResults,norm as resultNorm} from "./sportmonks-results.js";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 
@@ -25,6 +26,9 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
+const dayCache=new Map();
+const DAY_CACHE_MS=24*60*60*1000;
+const resultCache=new Map();
 
 async function sportyFetch(pathname,options={}){
   const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
@@ -48,10 +52,10 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-async function getSportyFixtures(todayOnly=false){
+async function getSportyFixtures(todayOnly=false,force=false){
   const marketKey=MARKET_IDS.join(",");
   const cacheKey=marketKey+"|"+(todayOnly?"today":"future");
-  if(Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
+  if(!force&&Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
@@ -154,18 +158,54 @@ app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}
 ]}));
 
+async function getDayFixtures(date,force=false){
+  const hit=dayCache.get(date);
+  if(!force&&hit&&Date.now()-hit.at<DAY_CACHE_MS)return {fixtures:hit.fixtures,cached:true,scannedAt:hit.at};
+  const fixtures=await getSportyFixtures(date===localDayKey(Date.now()),force);
+  const day=fixtures.filter(x=>localDayKey(x.startTimeMs)===date);
+  dayCache.set(date,{at:Date.now(),fixtures:day});
+  return {fixtures:day,cached:false,scannedAt:Date.now()};
+}
+
+function resultKey(home,away){return resultNorm(home)+"|"+resultNorm(away)}
+function settleServer(row,result){
+  const hs=Number(result?.homeScore),as=Number(result?.awayScore),pick=String(row.pick||"").toLowerCase();
+  if(result?.status==="Postponed"||result?.status==="Void")return result.status;
+  if(!Number.isFinite(hs)||!Number.isFinite(as))return result?.status==="Finished"?"Finished":"Pending";
+  const total=hs+as,m=pick.match(/over\\s*(\\d+(?:\\.\\d+)?)/),u=pick.match(/under\\s*(\\d+(?:\\.\\d+)?)/);
+  if(m)return total>Number(m[1])?"Won":"Lost"; if(u)return total<Number(u[1])?"Won":"Lost";
+  if(pick.includes("home"))return hs>as?"Won":"Lost"; if(pick.includes("away"))return as>hs?"Won":"Lost"; if(pick.includes("draw"))return hs===as?"Won":"Lost";
+  return "Finished";
+}
+function matchResult(row,results){
+  const exact=results.find(x=>x.providerId&&row.resultProviderId&&String(x.providerId)===String(row.resultProviderId));
+  if(exact)return exact;
+  const key=resultKey(row.home,row.away),date=String(row.date||"");
+  return results.find(x=>resultKey(x.home,x.away)===key&&(!date||x.date===date))||results.find(x=>resultKey(x.home,x.away)===key);
+}
+
+app.get("/api/scan",async(req,r)=>{
+  try{const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true);r.json({ok:true,date,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
+});
+app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
+app.get("/api/results",async(req,r)=>{
+  try{const date=String(req.query.date||localDayKey(Date.now()));const force=String(req.query.refresh||"") === "1";const x=await getDateResults(date,force);if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",date,results:x.data,cached:x.cached,updatedAt:x.updatedAt});}
+  catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}
+});
+app.get("/api/results/live",async(_,r)=>{try{const x=await getLatestResults();if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",results:x.data,updatedAt:x.updatedAt})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}});
+
 app.get("/api/leagues",async(req,r)=>{
   try{
     const requestedDate=String(req.query.date||localDayKey(Date.now()));
-    const fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now()));
-    const leagues=[...new Set(fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).map(x=>x.league).filter(Boolean))].sort(sortLeagues);
+    const {fixtures}=await getDayFixtures(requestedDate,false);
+    const leagues=[...new Set(fixtures.map(x=>x.league).filter(Boolean))].sort(sortLeagues);
     r.json({ok:true,date:requestedDate,leagues});
   }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
 });
 
 app.get("/api/predictions",async(req,r)=>{
   try{
-    const requestedDate=String(req.query.date||localDayKey(Date.now())),fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now()));
+    const requestedDate=String(req.query.date||localDayKey(Date.now())),fixtures=(await getDayFixtures(requestedDate,false)).fixtures;
     const rows=fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).slice(0,1000).map(x=>({
       id:x.eventId,league:x.league,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
       home:x.home,away:x.away,market:"Live SportyBet markets",confidence:"Select an option to analyze",eventId:x.eventId,matchStatus:x.matchStatus,homeScore:x.homeScore,awayScore:x.awayScore
@@ -183,7 +223,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
     const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=await getSportyFixtures(requestedDate===localDayKey(Date.now())),results=[];
+    const fixtures=(await getDayFixtures(requestedDate,false)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagues.length&&!leagues.includes(fixture.league)) continue;
