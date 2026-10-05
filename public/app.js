@@ -96,9 +96,9 @@ function renderSelectionOptions(){
   $$("#selectionOptions input").forEach(i=>i.onchange=()=>{i.checked?state.selections.add(i.value):state.selections.delete(i.value);if(!state.selections.size){state.selections.add(i.value);i.checked=true}renderSelectionOptions()});
   $("#selectionCount").textContent=state.selections.size+" selected";
 }
-async function loadLeagues(){
+async function loadLeagues(force=false){
   try{
-    const d=await (await fetch("/api/leagues?date="+encodeURIComponent(state.date))).json();
+    let d=getArchivedDay(state.date);if(force||!d?.leagues){d=await (await fetch("/api/scan?date="+encodeURIComponent(state.date))).json();if(d.ok)saveArchivedDay(state.date,{leagues:d.leagues,fixtures:d.fixtures,scannedAt:d.scannedAt});}
     const chosen=new Set(selectedLeagues());
     const leagues=d.leagues||[];
     $("#league").innerHTML=leagues.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join("");
@@ -106,9 +106,9 @@ async function loadLeagues(){
     $("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
   }catch(e){setStatus("Could not load leagues for "+prettyDate(state.date)+".")}
 }
-async function loadBase(){
+async function loadBase(force=false){
   try{
-    const d=await (await fetch("/api/predictions?date="+encodeURIComponent(state.date))).json();
+    let d=getArchivedDay(state.date);if(force||!d?.predictions){d=await (await fetch("/api/predictions?date="+encodeURIComponent(state.date))).json();if(d.predictions)saveArchivedDay(state.date,{predictions:d.predictions});}
     state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;
     setStatus("Live feed ready for "+prettyDate(state.date)+".");
   }catch(e){state.rows=[];$("#predictionTotal").textContent="—";setStatus("Live SportyBet data is temporarily unavailable.")}
@@ -150,7 +150,7 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(force=false){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
   box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
   try{
