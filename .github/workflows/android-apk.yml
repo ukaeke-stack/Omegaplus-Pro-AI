@@ -34,6 +34,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="android-v1.0.0"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus AI Android v1.0.0" --notes "First installable Omegaplus AI Android build."
+          TAG="android-v1.1.0"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus AI Android v1.1.0" --notes "Omegaplus AI Android update with in-app APK updater support."
           gh release upload "$TAG" app/build/outputs/apk/debug/app-debug.apk --clobber
