@@ -42,7 +42,7 @@ function statusOf(f){
 async function fetchJson(url){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
   try{
-    const res=await fetch(url,{headers:{Accept:"application/json",Authorization:TOKEN},signal:controller.signal});
+    const res=await fetch(url,{headers:{Accept:"application/json",Authorization:"Bearer "+TOKEN},signal:controller.signal});
     const text=await res.text(); let body=null; try{body=text?JSON.parse(text):null}catch{}
     if(!res.ok) throw new Error(body?.message||("Sportmonks HTTP "+res.status));
     return body||{};
