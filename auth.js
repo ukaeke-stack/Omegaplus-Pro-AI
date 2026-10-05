@@ -80,6 +80,7 @@ export async function initAuthDb(){
         paystack_plan_code text,
         created_at timestamptz not null default now()
       );
+      alter table plans add column if not exists paystack_plan_code text;
       create table if not exists subscriptions(
         id uuid primary key default gen_random_uuid(),
         user_id uuid not null references users(id) on delete cascade,
