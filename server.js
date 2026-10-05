@@ -333,19 +333,18 @@ async function buildDailyBest(date){
   const enriched=decoratePredictions(await enrichPredictions(shortlist,{concurrency:4}));
   const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
+  // First guarantee market diversity: take the strongest available pick from each market type.
+  for(const type of types){
+    if(selected.length>=10) break;
+    const p=ranked.find(x=>x.marketType===type&&!usedEvents.has(x.eventId));
+    if(!p) continue;
+    selected.push(p); usedEvents.add(p.eventId); usedMarkets.add(type);
+  }
+  // Then fill the remaining slots strictly by model ranking, avoiding duplicate matches.
   for(const p of ranked){
     if(selected.length>=10) break;
     if(usedEvents.has(p.eventId)) continue;
-    const marketKey=p.marketType||"other";
-    if(usedMarkets.has(marketKey)&&selected.length<6) continue;
-    selected.push(p); usedEvents.add(p.eventId); usedMarkets.add(marketKey);
-  }
-  if(selected.length<10){
-    for(const p of ranked){
-      if(selected.length>=10) break;
-      if(usedEvents.has(p.eventId)) continue;
-      selected.push(p); usedEvents.add(p.eventId);
-    }
+    selected.push(p); usedEvents.add(p.eventId);
   }
   return selected.slice(0,10);
 }
