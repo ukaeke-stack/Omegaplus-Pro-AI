@@ -61,6 +61,11 @@ async function getDateResults(date,force=false){
   cache.set(k,{at:Date.now(),data});
   return {configured:true,data,cached:false,updatedAt:Date.now()};
 }
+async function getMyLeagues(){
+  if(!TOKEN)return {configured:false,data:[],error:"SPORTMONKS_API_TOKEN is not configured."};
+  const body=await fetchJson(BASE+"/../my/leagues?api_token="+encodeURIComponent(TOKEN));
+  return {configured:true,data:body.data||[],updatedAt:Date.now()};
+}
 async function getLatestResults(){
   if(!TOKEN)return {configured:false,data:[],error:"SPORTMONKS_API_TOKEN is not configured."};
   const body=await fetchJson(BASE+"/livescores/latest?api_token="+encodeURIComponent(TOKEN)+"&include=participants;scores;state;events");
@@ -70,4 +75,4 @@ async function getLatestResults(){
   });
   return {configured:true,data,cached:false,updatedAt:Date.now()};
 }
-export {getDateResults,getLatestResults,norm};
+export {getDateResults,getLatestResults,getMyLeagues,norm};
