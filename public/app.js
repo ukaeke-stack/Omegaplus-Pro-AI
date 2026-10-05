@@ -131,7 +131,7 @@ async function loadLeagues(){
       return '<optgroup label="'+esc(groupLabels[group])+'">'+items.map(x=>{
         const value=typeof x==="string"?x:(x.key||((x.name||"")+"|||"+(x.country||"")));
         const country=typeof x==="string"?"":x.country;
-        return '<option value="'+esc(value)+'">'+esc(value)+(country?" — "+esc(country):"")+'</option>';
+        return '<option value="'+esc(value)+'">'+esc(label)+(country?" — "+esc(country):"")+'</option>';
       }).join("")+'</optgroup>';
     }).join("");
     $("#league option").forEach(o=>o.selected=chosen.has(o.value));
