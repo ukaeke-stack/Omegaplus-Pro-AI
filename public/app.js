@@ -53,7 +53,7 @@ function saveHistoryRows(rows,replaceDate=null){
   const targetDate=replaceDate||state.date;
   const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
   const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,sport:x.sport||state.sport,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
   return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
