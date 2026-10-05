@@ -10,7 +10,7 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.3.0";
+const APP_VERSION="1.4.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
 const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
@@ -238,6 +238,7 @@ function sortLeagues(a,b){
 }
 
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
+app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"independent-stats-layer",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
