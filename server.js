@@ -160,7 +160,7 @@ function sortLeagues(a,b){
   return a.localeCompare(b);
 }
 
-app.get("/api/health",(_,r)=>r.json({ok:true,service:"Omegaplus Pro AI",liveSportyBet:true}));
+app.get("/api/health",(_,r)=>r.json({ok:true,service:"Omegaplus Pro AI",version:"1.1.0",liveSportyBet:true}));
 
 app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"ou",name:"Goals Over/Under",type:"ou"},{id:"1x2",name:"1X2",type:"1x2"},
