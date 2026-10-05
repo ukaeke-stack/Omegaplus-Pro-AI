@@ -1,7 +1,9 @@
-const state={rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["Over 1.5"]),date:"",dates:new Set(),optionSets:{ou:["Over 0.5","Over 1.5","Over 2.5","Over 3.5","Over 4.5","Under 0.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5"],"1x2":["Home","Draw","Away"],btts:["Yes","No"],handicap:["Home","Away"],corners:["Over 7.5","Over 8.5","Over 9.5","Over 10.5","Over 11.5","Under 7.5","Under 8.5","Under 9.5","Under 10.5","Under 11.5"],cards:["Over 1.5","Over 2.5","Over 3.5","Over 4.5","Over 5.5","Under 1.5","Under 2.5","Under 3.5","Under 4.5","Under 5.5"]}};
+const state={rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["Over 1.5"]),date:"",dates:new Set()};
+const marketCatalog=window.OMEGA_MARKET_OPTIONS||{};
+const marketNames=Object.fromEntries(Object.entries(marketCatalog).map(([id,x])=>[id,x.name]));
+const marketOptionSets=Object.fromEntries(Object.entries(marketCatalog).map(([id,x])=>[id,(x.options||[]).map(o=>o.label)]));
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const marketNames={ou:"Goals Over/Under","1x2":"1X2",btts:"BTTS",handicap:"Handicap",corners:"Corners Over/Under",cards:"Cards/Bookings Over/Under"};
 const pad=n=>String(n).padStart(2,"0");
 const dateKey=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
 const prettyDate=v=>v?new Date(v+"T00:00:00").toLocaleDateString("en-NG",{weekday:"short",day:"numeric",month:"short",year:"numeric"}):"—";
@@ -95,19 +97,26 @@ async function refreshHistory(date=historySelectedDate()){
     renderHistory(date,day);
   }
 }
+function renderDropdown(id,items,selectedSet){
+  const el=$(id);if(!el)return;
+  el.innerHTML=items.map(x=>'<option value="'+esc(x.value??x.label??x)+'" '+(selectedSet.has(x.value??x.label??x)?"selected":"")+'>'+esc(x.label??x)+'</option>').join("");
+}
 function renderMarketOptions(){
-  $("#marketOptions").innerHTML=Object.entries(marketNames).map(([id,name])=>'<label class="chip '+(state.markets.has(id)?"active":"")+'"><input type="checkbox" value="'+id+'" '+(state.markets.has(id)?"checked":"")+'><span>'+esc(name)+'</span></label>').join("");
-  $$("#marketOptions input").forEach(i=>i.onchange=()=>{i.checked?state.markets.add(i.value):state.markets.delete(i.value);if(!state.markets.size){state.markets.add("ou");i.checked=true}renderMarketOptions();renderSelectionOptions()});
+  const items=Object.entries(marketCatalog).map(([id,x])=>({value:id,label:x.name}));
+  renderDropdown("#marketOptions",items,state.markets);
   $("#marketCount").textContent=state.markets.size+" selected";
 }
 function renderSelectionOptions(){
-  const all=[...state.markets].flatMap(k=>state.optionSets[k]||[]);
-  const unique=[...new Set(all)];
-  state.selections=new Set([...state.selections].filter(x=>unique.includes(x)));
-  if(!state.selections.size)state.selections.add(unique.includes("Over 1.5")?"Over 1.5":unique[0]);
-  $("#selectionOptions").innerHTML=unique.map(x=>'<label class="chip '+(state.selections.has(x)?"active":"")+'"><input type="checkbox" value="'+esc(x)+'" '+(state.selections.has(x)?"checked":"")+'><span>'+esc(x)+'</span></label>').join("");
-  $$("#selectionOptions input").forEach(i=>i.onchange=()=>{i.checked?state.selections.add(i.value):state.selections.delete(i.value);if(!state.selections.size){state.selections.add(i.value);i.checked=true}renderSelectionOptions()});
+  const options=[...state.markets].flatMap(k=>(marketCatalog[k]?.options||[]).map(o=>({value:o.label,label:o.label})));
+  const seen=new Set(),unique=options.filter(o=>!seen.has(o.value)&&seen.add(o.value));
+  state.selections=new Set([...state.selections].filter(x=>unique.some(o=>o.value===x)));
+  if(!state.selections.size&&unique.length)state.selections.add(unique.some(o=>o.value==="Over 1.5")?"Over 1.5":unique[0].value);
+  renderDropdown("#selectionOptions",unique,state.selections);
   $("#selectionCount").textContent=state.selections.size+" selected";
+}
+function bindMarketDropdowns(){
+  $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add("ou");renderMarketOptions();renderSelectionOptions()};
+  $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const first=(marketCatalog[[...state.markets][0]]?.options||[])[0];if(first)state.selections.add(first.label)}renderSelectionOptions()};
 }
 async function loadLeagues(){
   try{
@@ -238,4 +247,4 @@ function scheduleMidnightReset(){
   const now=new Date(),next=new Date(now);next.setHours(24,0,0,0);
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
-const today=dateKey(new Date());setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(pending&&$("#historyDate")?.value)refreshHistory($("#historyDate").value)},30000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.configured?"Result provider: Sportmonks live results enabled.":"Result provider: Sportmonks token required for automatic settlement."}catch{}})();
+const today=dateKey(new Date());setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(pending&&$("#historyDate")?.value)refreshHistory($("#historyDate").value)},30000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.configured?"Result provider: Sportmonks live results enabled.":"Result provider: Sportmonks token required for automatic settlement."}catch{}})();
