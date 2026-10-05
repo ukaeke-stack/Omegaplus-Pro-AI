@@ -14,6 +14,7 @@ const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
+const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketball",name:"Basketball",sportId:"sr:sport:2"}];
 const BOOKMAKERS=[{id:"sportybet",name:"SportyBet",country:"ng",native:true},{id:"bet9ja",name:"Bet9ja",country:"ng"},{id:"msport",name:"MSport",country:"ng"},{id:"betking",name:"BetKing",country:"ng"},{id:"1xbet",name:"1xBet",country:"ng"},{id:"betano",name:"Betano",country:"ng"},{id:"22bet",name:"22Bet",country:"ng"}];
 const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/api/v1";
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
@@ -62,15 +63,16 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-async function getSportyFixtures(todayOnly=false,force=false){
+async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
+  const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
   const marketKey=MARKET_IDS.join(",");
-  const cacheKey=marketKey+"|"+(todayOnly?"today":"future");
+  const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?4:12);page++){
-    const params=new URLSearchParams({sportId:"sr:sport:1",marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
+    const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     let body;
     try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
@@ -118,6 +120,9 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
+  if(type==="basketball_total") return n.includes("total")||n.includes("over under")||n.includes("points");
+  if(type==="basketball_handicap") return n.includes("handicap")||n.includes("spread");
+  if(type==="basketball_moneyline") return n.includes("winner")||n.includes("moneyline")||n==="1x2"||n.includes("match result");
   if(type==="ou") return market.marketId==="18";
   if(type==="btts") return market.marketId==="29";
   if(type==="1x2") return market.marketId==="1";
@@ -215,6 +220,7 @@ function sortLeagues(a,b){
   return a.localeCompare(b);
 }
 
+app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"independent-stats-layer",liveSportyBet:true,independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
 app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
@@ -225,12 +231,13 @@ app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}
 ]}));
 
-async function getDayFixtures(date,force=false){
-  const hit=dayCache.get(date);
+async function getDayFixtures(date,force=false,sport="football"){
+  const cacheKey=date+"|"+(SPORTS.find(x=>x.id===sport)?.id||"football");
+  const hit=dayCache.get(cacheKey);
   if(!force&&hit&&Date.now()-hit.at<DAY_CACHE_MS)return {fixtures:hit.fixtures,cached:true,scannedAt:hit.at};
-  const fixtures=await getSportyFixtures(date===localDayKey(Date.now()),force);
+  const fixtures=await getSportyFixtures(date===localDayKey(Date.now()),force,sport);
   const day=fixtures.filter(x=>localDayKey(x.startTimeMs)===date);
-  dayCache.set(date,{at:Date.now(),fixtures:day});
+  dayCache.set(cacheKey,{at:Date.now(),fixtures:day});
   return {fixtures:day,cached:false,scannedAt:Date.now()};
 }
 
@@ -259,9 +266,10 @@ function leagueGroup(name,category=""){
   return "Other Leagues";
 }
 app.get("/api/leagues",async(req,r)=>{
+  const sport=String(req.query.sport||"football");
   const requestedDate=String(req.query.date||localDayKey(Date.now()));
   try{
-    const {fixtures}=await getDayFixtures(requestedDate,false);
+    const {fixtures}=await getDayFixtures(requestedDate,false,sport);
     const map=new Map();
     for(const [name,country] of TOP_LEAGUE_CATALOG){
       const key=name+"|||"+country;
@@ -289,18 +297,19 @@ app.get("/api/leagues",async(req,r)=>{
 
 app.get("/api/predictions",async(req,r)=>{
   try{
-    const requestedDate=String(req.query.date||localDayKey(Date.now())),fixtures=(await getDayFixtures(requestedDate,false)).fixtures;
+    const sport=String(req.query.sport||"football");
+    const requestedDate=String(req.query.date||localDayKey(Date.now())),fixtures=(await getDayFixtures(requestedDate,false,sport)).fixtures;
     const rows=fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).slice(0,1000).map(x=>({
       id:x.eventId,league:x.league,time:new Date(x.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
       home:x.home,away:x.away,market:"Live SportyBet markets",confidence:"Select an option to analyze",eventId:x.eventId,matchStatus:x.matchStatus,homeScore:x.homeScore,awayScore:x.awayScore
     }));
-    r.json({predictions:rows,source:"SportyBet web feed",generatedAt:new Date().toISOString(),date:requestedDate});
+    r.json({predictions:rows,source:"SportyBet web feed",sport,generatedAt:new Date().toISOString(),date:requestedDate});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
-async function buildDailyBest(date){
-  const fixtures=(await getDayFixtures(date,false)).fixtures,candidates=[];
-  const types=["ou","btts","1x2","handicap","corners","cards"];
+async function buildDailyBest(date,sport="football"){
+  const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
+  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline"]:["ou","btts","1x2","handicap","corners","cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets||[]){
@@ -348,8 +357,8 @@ async function buildDailyBest(date){
   }
   return selected.slice(0,10);
 }
-async function buildBestPicks(date,limit=25,requestedType="all"){
-  const fixtures=(await getDayFixtures(date,false)).fixtures,candidates=[];
+async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
+  const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
   const types=requestedType==="all"?["ou","btts","1x2","handicap","corners","cards"]:[requestedType];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
@@ -372,24 +381,26 @@ async function buildBestPicks(date,limit=25,requestedType="all"){
 }
 app.get("/api/best-picks",async(req,r)=>{
   try{
+    const sport=String(req.query.sport||"football");
     const date=String(req.query.date||localDayKey(Date.now()));
     const limit=Math.max(1,Math.min(25,Number(req.query.limit)||25));
     const market=String(req.query.market||"all");
-    const predictions=await buildBestPicks(date,limit,market);
-    r.json({ok:true,date,limit,market,predictions,generatedAt:new Date().toISOString(),source:"SportyBet market model + independent statistics"});
+    const predictions=await buildBestPicks(date,limit,market,sport);
+    r.json({ok:true,date,limit,market,sport,predictions,generatedAt:new Date().toISOString(),source:"SportyBet market model + independent statistics"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date);const archive=await readPersistentArchive(date)||{date,predictions:[],results:[]};archive.predictions=predictions;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive);r.json({ok:true,date,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date)||{date,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive);r.json({ok:true,date,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
+    const requestedSport=String(body.sport||"football");
     const requestedDate=String(body.date||localDayKey(Date.now()));
     const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
     const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
     const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false)).fixtures,results=[];
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>l.name===fixture.league&&(!l.country||l.country===leagueCountry(fixture.league,fixture.category)))) continue;
@@ -425,7 +436,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     const enriched=await enrichPredictions(candidates,{concurrency:3});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
-    r.json({ok:true,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
@@ -443,6 +454,7 @@ function serverSettlePrediction(p,result){
     const yes=/yes|gg|both.*score/.test(pick),actual=hs>0&&as>0;
     return actual===yes?"Won":"Lost";
   }
+  if(p.marketType==="basketball_moneyline"){ if(/home|1/.test(pick)) return hs>as?"Won":"Lost"; if(/away|2/.test(pick)) return as>hs?"Won":"Lost"; }
   if(p.marketType==="1x2"){
     if(/home|1x2.*1|\b1\b/.test(pick)) return hs>as?"Won":"Lost";
     if(/away|1x2.*2|\b2\b/.test(pick)) return as>hs?"Won":"Lost";
