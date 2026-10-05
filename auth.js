@@ -265,7 +265,7 @@ export async function adminStats(){
     (select count(*) from audit_logs where created_at>now()-interval '24 hours') as audits_24h`);
   return Object.fromEntries(Object.entries(r.rows[0]).map(([k,v])=>[k,Number(v)]));
 }
-export async function listPlans(){const r=await q("select id,name,description,price_ngn,billing_period,features,is_active from plans where is_active order by price_ngn");return r.rows}
+export async function listPlans(){const r=await q("select id,name,description,price_ngn,billing_period,features,is_active,paystack_plan_code from plans where is_active order by price_ngn");return r.rows}
 export async function createOrUpdatePlan(body){
   const id=String(body.id||"").trim().toLowerCase().replace(/[^a-z0-9_-]/g,"-").slice(0,40);
   if(!id)throw new Error("Plan ID is required.");
