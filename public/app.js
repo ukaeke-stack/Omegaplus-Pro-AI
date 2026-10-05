@@ -239,6 +239,20 @@ async function loadDailyBest(){
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
+async function loadCorrectScores(date=$("#csDate")?.value||state.date){
+  const box=$("#correctScores");if(!box)return;
+  $("#csStatus").textContent="Analyzing five daily score candidates from multiple sources…";
+  box.innerHTML='<div class="empty">Building the score probability matrix…</div>';
+  try{
+    const d=await jsonFetch("/api/correct-scores?sport=football&date="+encodeURIComponent(date));
+    const rows=d.predictions||[];
+    $("#csStatus").textContent=rows.length?"Top 5 daily score candidates · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
+    box.innerHTML=rows.length?rows.map((x,i)=>{
+      const scores=(x.topScores||[]).map((s,j)=>'<span class="score-chip '+(j===0?'best':'')+'">'+esc(s.score)+' <small>'+esc(s.probability)+'%</small></span>').join('');
+      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Most likely score</span><b>'+esc(x.topScores?.[0]?.score||'—')+' · '+esc(x.topScores?.[0]?.probability||0)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||'—')+' — '+esc(x.expectedGoals?.away||'—')+'</b></div><div class="score-list">'+scores+'</div><small class="muted">Sources: '+esc((x.sources||[]).join(', '))+'</small></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><small>top-score probability</small></div></article>';
+    }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
+  }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
+}
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
 async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,bookmaker,selections:rows.map(x=>({eventId:x.eventId,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
 function resetFilters(){const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set([first]);$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();setStatus("Filters reset. Choose your options and Analyze.")}
@@ -248,6 +262,7 @@ function showPage(n){
   if(n==="calendar"){$("#calendarDate").value=state.date;loadCalendar()}
   if(n==="predictions")prepareDailyPage();
   if(n==="history"){const d=historySelectedDate();$("#historyDate").value=d;refreshHistory(d)}
+  if(n==="correct-score"){const d=state.date;$("#csDate").value=d;loadCorrectScores(d)}
 }
 const side=$("#side"),backdrop=$("#backdrop");function closeSide(){side.classList.remove("open");backdrop.classList.remove("show")}function openSide(){side.classList.add("open");backdrop.classList.add("show")}
 $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$("#sideClose").onclick=closeSide;backdrop.onclick=closeSide;
@@ -272,7 +287,8 @@ $("#clearAll").onclick=()=>{
 };
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");$("#mic").onclick=()=>alert("Voice search integration is next.");
 $("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
-$("#historyDate").onchange=()=>refreshHistory($("#historyDate").value);
+$("#historyDate").onchange=()=>refreshHistory($("#historyDate").value);$("#csLoad").onclick=()=>loadCorrectScores($("#csDate").value);$("#csToday").onclick=()=>{$("#csDate").value=dateKey(new Date());loadCorrectScores($("#csDate").value)};$("#csPrev").onclick=()=>{const d=new Date($("#csDate").value+"T00:00:00");d.setDate(d.getDate()-1);$("#csDate").value=dateKey(d);loadCorrectScores($("#csDate").value)};$("#csNext").onclick=()=>{const d=new Date($("#csDate").value+"T00:00:00");d.setDate(d.getDate()+1);$("#csDate").value=dateKey(d);loadCorrectScores($("#csDate").value)};
+
 $("#historyPrev").onclick=()=>{const d=new Date(historySelectedDate()+"T00:00:00");d.setDate(d.getDate()-1);$("#historyDate").value=dateKey(d);refreshHistory($("#historyDate").value)};
 $("#historyNext").onclick=()=>{const d=new Date(historySelectedDate()+"T00:00:00");d.setDate(d.getDate()+1);$("#historyDate").value=dateKey(d);refreshHistory($("#historyDate").value)};
 $("#historyToday").onclick=()=>{$("#historyDate").value=dateKey(new Date());refreshHistory($("#historyDate").value)};
