@@ -8,7 +8,7 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.2.2";
+const APP_VERSION="1.3.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
@@ -298,26 +298,56 @@ app.get("/api/predictions",async(req,r)=>{
 });
 
 async function buildDailyBest(date){
-  const fixtures=(await getDayFixtures(date,false)).fixtures,rows=[];
+  const fixtures=(await getDayFixtures(date,false)).fixtures,candidates=[];
+  const types=["ou","btts","1x2","handicap","corners","cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
-    for(const market of fixture.markets){
-      if(market.marketId!=="18") continue;
-      for(const outcome of market.outcomes){
-        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<DAILY_PREDICTION_MIN_ODDS) continue;
-        const label=pickLabel("ou",outcome);
-        if(!/^over\s*(1\.5|2\.5)$/i.test(label)) continue;
-        const confidence=confidenceForOutcome(market,outcome);
-        rows.push({id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick:label,odds:outcome.odds,marketType:"ou",confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date});
+    for(const market of fixture.markets||[]){
+      for(const type of types){
+        if(!marketMatches(market,type)) continue;
+        for(const outcome of market.outcomes||[]){
+          if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<DAILY_PREDICTION_MIN_ODDS) continue;
+          const confidence=confidenceForOutcome(market,outcome);
+          if(confidence<60) continue;
+          candidates.push({
+            id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
+            eventId:fixture.eventId,league:fixture.league,category:fixture.category,
+            time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
+            startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
+            market:market.marketName,marketId:market.marketId,specifier:market.specifier,
+            outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,
+            confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date
+          });
+        }
       }
     }
   }
-  const dedupe=new Map();for(const row of rows){if(!dedupe.has(row.eventId)||dedupe.get(row.eventId).confidence<row.confidence)dedupe.set(row.eventId,row)}
-  const candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,30);
-  const enriched=await enrichPredictions(candidates,{concurrency:3});
-  return decoratePredictions(enriched).sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,10);
+  const seen=new Set();
+  const unique=candidates.filter(x=>{
+    const key=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;
+    if(seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
+  const enriched=decoratePredictions(await enrichPredictions(shortlist,{concurrency:4}));
+  const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
+  const selected=[],usedEvents=new Set(),usedMarkets=new Set();
+  for(const p of ranked){
+    if(selected.length>=10) break;
+    if(usedEvents.has(p.eventId)) continue;
+    const marketKey=p.marketType||"other";
+    if(usedMarkets.has(marketKey)&&selected.length<6) continue;
+    selected.push(p); usedEvents.add(p.eventId); usedMarkets.add(marketKey);
+  }
+  if(selected.length<10){
+    for(const p of ranked){
+      if(selected.length>=10) break;
+      if(usedEvents.has(p.eventId)) continue;
+      selected.push(p); usedEvents.add(p.eventId);
+    }
+  }
+  return selected.slice(0,10);
 }
-
 async function buildBestPicks(date,limit=25,requestedType="all"){
   const fixtures=(await getDayFixtures(date,false)).fixtures,candidates=[];
   const types=requestedType==="all"?["ou","btts","1x2","handicap","corners","cards"]:[requestedType];
@@ -442,7 +472,7 @@ app.get("/api/performance",async(req,r)=>{
 });
 app.post("/api/booking-code",async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
 
-app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);const prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.predictions?.length?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);const prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.predictions?.length&&todayArchive.predictions.length===10?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
 // Vercel invokes the Express app as a serverless function. Keep the local
