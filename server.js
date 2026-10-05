@@ -3,6 +3,7 @@ import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import path from "node:path";
+import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
 const app=express();
@@ -36,9 +37,19 @@ const dayCache=new Map();
 const DAY_CACHE_MS=24*60*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
+const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
 function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
-async function readPersistentArchive(date,sport="football"){try{const x=await get(archivePath(date,sport),{access:"private",useCache:false});return JSON.parse(await new Response(x.stream).text())}catch{return null}}
-async function writePersistentArchive(date,data,sport="football"){return put(archivePath(date,sport),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}
+function localArchivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return path.join(LOCAL_DATA_ROOT,ARCHIVE_PREFIX,date.slice(0,4),date.slice(5,7),date.slice(8,10)+suffix+".json")}
+const blobConfigured=Boolean(process.env.BLOB_READ_WRITE_TOKEN||(process.env.VERCEL_OIDC_TOKEN&&process.env.BLOB_STORE_ID));
+async function readPersistentArchive(date,sport="football"){
+  if(blobConfigured){try{const x=await get(archivePath(date,sport),{access:"private",useCache:false});return JSON.parse(await new Response(x.stream).text())}catch{}}
+  try{return JSON.parse(await fs.readFile(localArchivePath(date,sport),"utf8"))}catch{return null}
+}
+async function writePersistentArchive(date,data,sport="football"){
+  const payload=JSON.stringify(data);
+  if(blobConfigured){try{return await put(archivePath(date,sport),payload,{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}catch{}}
+  const file=localArchivePath(date,sport);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,payload,"utf8");return {url:"local://"+file};
+}
 
 
 async function sportyFetch(pathname,options={}){
@@ -179,6 +190,9 @@ function selectionRequested(outcome,requested){
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
   return a===b;
 }
+const BASKETBALL_LEAGUE_CATALOG=[
+  ["NBA","USA"],["WNBA","USA"],["NBA G League","USA"],["NCAA","USA"],["EuroLeague","Europe"],["EuroCup","Europe"],["ACB","Spain"],["BBL","United Kingdom"],["LNB Pro A","France"],["BBL Germany","Germany"],["Lega Basket Serie A","Italy"],["BSL","Turkey"],["NBL","Australia"],["CBA","China"],["B.League","Japan"]
+];
 const TOP_LEAGUE_CATALOG=[
   ["Africa Cup of Nations Qualification","Africa"],
   ["UEFA Nations League","Europe"],
@@ -272,14 +286,14 @@ app.get("/api/leagues",async(req,r)=>{
   try{
     const {fixtures}=await getDayFixtures(requestedDate,false,sport);
     const map=new Map();
-    for(const [name,country] of TOP_LEAGUE_CATALOG){
+    const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
+    for(const [name,country] of catalog){
       const key=name+"|||"+country;
       map.set(key,{name,country,group:"Top Leagues",key});
     }
     for(const f of fixtures){
       if(!f.league) continue;
-      const topIndex=topLeagueIndex(f.league);
-      if(topIndex>=0) continue;
+      if(sport==="football"&&topLeagueIndex(f.league)>=0) continue;
       const country=leagueCountry(f.league,f.category);
       const key=f.league+"|||"+country;
       if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key});
@@ -287,12 +301,13 @@ app.get("/api/leagues",async(req,r)=>{
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
       const ai=ga.indexOf(a.group),bi=ga.indexOf(b.group);
-      return (ai-bi)||leagueRank(a.name)-leagueRank(b.name)||a.country.localeCompare(b.country)||a.name.localeCompare(b.name);
+      return (ai-bi)||a.name.localeCompare(b.name)||a.country.localeCompare(b.country);
     });
-    r.json({ok:true,date:requestedDate,leagues});
+    r.json({ok:true,date:requestedDate,sport,leagues});
   }catch(e){
-    const leagues=TOP_LEAGUE_CATALOG.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country}));
-    r.status(200).json({ok:false,date:requestedDate,degraded:true,error:e.message,leagues});
+    const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
+    const leagues=catalog.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country}));
+    r.status(200).json({ok:false,date:requestedDate,sport,degraded:true,error:e.message,leagues});
   }
 });
 
