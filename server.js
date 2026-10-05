@@ -289,7 +289,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
 
 app.post("/api/booking-code",async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
 
-app.get("/api/daily-rollover",async(req,r)=>{
+app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});
   try{
     const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);
     const prevResults=await getDateResults(prev,true); const resultRows=prevResults.configured?prevResults.data:[];
