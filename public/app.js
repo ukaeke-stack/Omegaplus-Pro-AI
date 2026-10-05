@@ -30,7 +30,7 @@ async function jsonFetch(url,options={}){
     const preview=text.replace(/\s+/g," ").slice(0,180);
     throw new Error("Server returned a non-JSON response ("+res.status+"): "+preview);
   }
-  if(!res.ok)throw new Error(data?.error||data?.message||("Request failed ("+res.status+")"));
+  if(!res.ok){const err=new Error(data?.error||data?.message||("Request failed ("+res.status+")"));err.code=data?.code||"";if((err.code==="AUTH_REQUIRED"||err.code==="PAID_REQUIRED")&&window.omegaAuth)window.omegaAuth.open();throw err}
   return data;
 }
 function setDate(v){state.date=v;state.dates.add(v);$("#fixtureDate").value=v;$("#calendarDate").value=v;$("#selectedDateMetric").textContent=v.slice(5).replace("-","/");renderDateChips();}
