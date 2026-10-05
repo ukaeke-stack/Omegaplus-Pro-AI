@@ -239,17 +239,17 @@ async function loadDailyBest(){
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
-async function loadCorrectScores(date=$("#csDate")?.value||state.date){
+async async function loadCorrectScores(date=$("#csDate")?.value||state.date){
   const box=$("#correctScores");if(!box)return;
-  $("#csStatus").textContent="Analyzing five daily score candidates from multiple sources…";
+  $("#csStatus").textContent="Analyzing one best correct score for every match…";
   box.innerHTML='<div class="empty">Building the score probability matrix…</div>';
   try{
     const d=await jsonFetch("/api/correct-scores?sport=football&date="+encodeURIComponent(date));
     const rows=d.predictions||[];
-    $("#csStatus").textContent=rows.length?"Top 5 daily score candidates · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
+    $("#csStatus").textContent=rows.length?rows.length+" match(es) analyzed · one best score per match · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
     box.innerHTML=rows.length?rows.map((x,i)=>{
-      const scores=(x.topScores||[]).map((s,j)=>'<span class="score-chip '+(j===0?'best':'')+'">'+esc(s.score)+' <small>'+esc(s.probability)+'%</small></span>').join('');
-      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Most likely score</span><b>'+esc(x.topScores?.[0]?.score||'—')+' · '+esc(x.topScores?.[0]?.probability||0)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||'—')+' — '+esc(x.expectedGoals?.away||'—')+'</b></div><div class="score-list">'+scores+'</div><small class="muted">Sources: '+esc((x.sources||[]).join(', '))+'</small></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><small>top-score probability</small></div></article>';
+      const best=x.topScores?.[0];
+      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Correct score</span><b>'+esc(best?.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(best?.probability||0)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||"—")+' — '+esc(x.expectedGoals?.away||"—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", "))+'</small></div><div class="prob"><strong>'+esc(x.confidence||best?.probability||0)+'%</strong><small>best-score confidence</small></div></article>';
     }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
   }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
 }
