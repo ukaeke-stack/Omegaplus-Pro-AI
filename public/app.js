@@ -76,17 +76,26 @@ function settleOutcome(x){
 function historySelectedDate(){
   return $("#historyDate")?.value||dateKey(new Date());
 }
+function updateOutcomeSummary(rows,prefix){
+  const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost"].includes(x.outcome)).length;
+  const settled=won+lost,accuracy=settled?Math.round(won/settled*100):null;
+  const set=(id,v)=>{if($("#"+id))$("#"+id).textContent=v};
+  if(prefix==="history"){set("historyWon",won);set("historyLost",lost);set("historyPending",pending);set("historyAccuracy",accuracy===null?"—":accuracy+"%")}
+  if(prefix==="daily"){set("dailySelected",rows.length+"/10");set("dailyWon",won);set("dailyLost",lost);set("dailyAccuracy",accuracy===null?"—":accuracy+"%")}
+}
+function historySelectedDate(){
+  return $("#historyDate")?.value||dateKey(new Date());
+}
 function renderHistory(date=historySelectedDate(),fallbackRows=[]){
   const box=$("#historyList");if(!box)return;
   const all=readHistory();
   let h=all.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
   if(!h.length&&fallbackRows.length){
     const now=new Date().toISOString();
-    h=fallbackRows.slice(0,10).map(x=>({id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:settleOutcome(x),recordedAt:now}));
+    h=fallbackRows.slice(0,10).map(x=>({...x,id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||settleOutcome(x),recordedAt:now}));
   }
-  $("#historyStatus").textContent=h.length
-    ? h.length+" record(s) for "+prettyDate(date)+"."
-    : "No prediction records saved for "+prettyDate(date)+".";
+  updateOutcomeSummary(h,"history");
+  $("#historyStatus").textContent=h.length?h.length+" record(s) for "+prettyDate(date)+".":"No prediction records saved for "+prettyDate(date)+".";
   box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
 }
 async function refreshHistory(date=historySelectedDate()){
