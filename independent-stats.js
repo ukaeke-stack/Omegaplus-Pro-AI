@@ -33,7 +33,8 @@ async function cachedJson(cacheKey,url,headers={}){
     return{data,cached:false};
   }catch(e){
     if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
-    throw e;
+    cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
+    return{data:null,cached:true,error:e.message};
   }
 }
 async function mapLimit(items,limit,fn){
