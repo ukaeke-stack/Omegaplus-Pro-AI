@@ -178,6 +178,9 @@ function sortLeagues(a,b){
   return a.localeCompare(b);
 }
 
+const APP_VERSION="1.1.0";
+const APK_URL="https://github.com/ukaeke-stack/Omegaplus-Pro-AI/releases/download/android-v1.1.0/app-debug.apk";
+app.get("/api/app-version",(req,r)=>{const current=String(req.query.current||"0.0.0");r.set("Cache-Control","no-store");r.json({ok:true,currentVersion:current,latestVersion:APP_VERSION,updateAvailable:current!==APP_VERSION,apkUrl:APK_URL});});
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",liveSportyBet:true,independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
 app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
