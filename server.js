@@ -1,4 +1,5 @@
 import express from "express";
+import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -29,6 +30,11 @@ let liveFetchPromise=null;
 const dayCache=new Map();
 const DAY_CACHE_MS=24*60*60*1000;
 const resultCache=new Map();
+const ARCHIVE_PREFIX="omegaplus-history";
+function archivePath(date){return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+".json"}
+async function readPersistentArchive(date){try{const x=await get(archivePath(date),{access:"private",useCache:false});return JSON.parse(await new Response(x.stream).text())}catch{return null}}
+async function writePersistentArchive(date,data){return put(archivePath(date),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}
+
 
 async function sportyFetch(pathname,options={}){
   const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
@@ -170,6 +176,8 @@ async function getDayFixtures(date,force=false){
 app.get("/api/scan",async(req,r)=>{
   try{const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true);r.json({ok:true,date,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
+app.get("/api/history",async(req,r)=>{try{const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
+app.post("/api/history",async(req,r)=>{try{const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date)||{date,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
