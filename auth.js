@@ -157,9 +157,9 @@ export async function currentUser(req){
   try{
     const raw=readCookie(req,"omega_session")||String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
     if(!raw)return null;
-    const r=await q(`select u.*,coalesce(su.plan,u.plan) as plan,coalesce(su.status,'none') as subscription_status,su.expires_at as subscription_expires_at
+    const r=await q(`select u.*,case when su.status='active' and (su.expires_at is null or su.expires_at>now()) then su.plan else 'free' end as plan,case when su.status='active' and su.expires_at is not null and su.expires_at<=now() then 'expired' else coalesce(su.status,'none') end as subscription_status,su.expires_at as subscription_expires_at
       from sessions s join users u on u.id=s.user_id
-      left join lateral(select plan_id as plan,status,expires_at from subscriptions where user_id=u.id order by case when status='active' then 0 else 1 end,created_at desc limit 1) su on true
+      left join lateral(select plan_id as plan,status,expires_at from subscriptions where user_id=u.id order by case when status='active' and (expires_at is null or expires_at>now()) then 0 else 1 end,created_at desc limit 1) su on true
       where s.token_hash=$1 and s.expires_at>now() and u.is_active=true`,[sessionHash(raw)]);
     if(!r.rowCount)return null;
     await q("update sessions set last_seen_at=now() where token_hash=$1",[sessionHash(raw)]).catch(()=>{});
