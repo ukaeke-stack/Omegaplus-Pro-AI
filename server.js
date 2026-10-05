@@ -1,9 +1,10 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import path from "node:path";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
@@ -26,7 +27,7 @@ async function createSportyBooking(selections,sport="football"){const fixtures=a
 async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:target,country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[]}}
 
 
-app.use(express.json({limit:"1mb"}));
+app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
 initAuthDb().then(ok=>console.log("Account database:",ok?"ready":"not configured/unavailable"));
 app.use(express.static(path.join(__dirname,"public")));
 
@@ -245,13 +246,76 @@ app.post("/api/auth/register",async(req,r)=>{try{const user=await registerUser(r
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
 app.post("/api/auth/logout",async(req,r)=>{try{await logoutUser(req);clearSessionCookie(r);r.json({ok:true})}catch{clearSessionCookie(r);r.json({ok:true})}});
 app.get("/api/plans",async(_,r)=>{try{r.json({ok:true,plans:await listPlans()})}catch(e){r.status(503).json({ok:false,error:e.message,plans:[]})}});
-app.get("/api/account",requireAuth,async(req,r)=>r.json({ok:true,user:req.user}));
+
+app.get("/api/account",requireAuth,async(req,r)=>{try{r.json({ok:true,user:req.user,payments:await paymentHistory(req.user.id),access:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/subscription/settings",async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.post("/api/payments/paystack/initialize",requireAuth,async(req,r)=>{
+  try{
+    const key=process.env.PAYSTACK_SECRET_KEY||"";
+    if(!key)return r.status(503).json({ok:false,error:"Online payment is not configured yet. The administrator must add PAYSTACK_SECRET_KEY."});
+    const planId=String(req.body?.plan||"pro");
+    const plans=await listPlans();
+    const plan=plans.find(x=>x.id===planId&&x.is_active&&x.price_ngn>0);
+    if(!plan)throw new Error("Selected paid plan is unavailable.");
+    const callbackUrl=String(req.body?.callbackUrl||process.env.PAYSTACK_CALLBACK_URL||"").trim()||null;
+    const payload={email:req.user.email,amount:Math.round(Number(plan.price_ngn)*100),metadata:{userId:req.user.id,planId,planName:plan.name}};
+    if(callbackUrl)payload.callback_url=callbackUrl;
+    if(plan.paystack_plan_code)payload.plan=plan.paystack_plan_code;
+    const response=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.status)throw new Error(data.message||"Paystack could not initialize the payment.");
+    await createPaymentRecord({userId:req.user.id,planId,provider:"paystack",reference:data.data?.reference,amountNgn:plan.price_ngn,status:"pending",metadata:{accessCode:data.data?.access_code||null}});
+    await audit(req,"payment.initialize",planId,{provider:"paystack",reference:data.data?.reference||null});
+    r.json({ok:true,authorizationUrl:data.data?.authorization_url,reference:data.data?.reference,planId});
+  }catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/payments/paystack/verify/:reference",requireAuth,async(req,r)=>{
+  try{
+    const key=process.env.PAYSTACK_SECRET_KEY||"";
+    if(!key)return r.status(503).json({ok:false,error:"Paystack is not configured."});
+    const reference=String(req.params.reference||"");
+    const response=await fetch("https://api.paystack.co/transaction/verify/"+encodeURIComponent(reference),{headers:{Authorization:"Bearer "+key}});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.status||data.data?.status!=="success")throw new Error(data.message||"Payment has not been confirmed.");
+    const meta=data.data?.metadata||{};
+    if(String(meta.userId)!==String(req.user.id))throw new Error("Payment account mismatch.");
+    const planId=String(meta.planId||"");
+    const plan=(await listPlans()).find(x=>x.id===planId&&x.price_ngn>0);
+    if(!plan)throw new Error("Paid plan not found.");
+    const sub=await activateProviderSubscription(req.user.id,planId,"paystack",reference,30,{amountNgn:plan.price_ngn,channel:data.data?.channel,paidAt:data.data?.paid_at,transactionId:data.data?.id});
+    await audit(req,"payment.verified",reference,{provider:"paystack",planId});
+    r.json({ok:true,subscription:sub,user:await currentUser(req)});
+  }catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.post("/api/payments/paystack/webhook",async(req,r)=>{
+  const signature=String(req.headers["x-paystack-signature"]||"");
+  const secret=process.env.PAYSTACK_SECRET_KEY||"";
+  if(!secret||!signature||!req.rawBody)return r.status(401).send("Unauthorized");
+  const expected=crypto.createHmac("sha512",secret).update(req.rawBody).digest("hex");
+  if(!crypto.timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))return r.status(401).send("Invalid signature");
+  r.sendStatus(200);
+  const event=req.body||{};
+  try{
+    if(event.event==="charge.success"){
+      const meta=event.data?.metadata||{},userId=String(meta.userId||""),planId=String(meta.planId||"");
+      if(userId&&planId){
+        const plans=await listPlans(),plan=plans.find(x=>x.id===planId&&x.price_ngn>0);
+        if(plan)await activateProviderSubscription(userId,planId,"paystack",String(event.data?.reference||""),30,{amountNgn:plan.price_ngn,channel:event.data?.channel,paidAt:event.data?.paid_at,webhookEvent:event.event});
+      }
+    }
+  }catch(e){console.error("Paystack webhook processing failed:",e.message)}
+});
+
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const sub=await activateSubscription(req.params.id,String(req.body?.plan||"pro"),Number(req.body?.days)||30,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan:req.body?.plan||"pro",days:Number(req.body?.days)||30});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.delete("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{await revokeSubscription(req.params.id);await audit(req,"admin.subscription.revoke",req.params.id);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=await createOrUpdatePlan(req.body||{});await audit(req,"admin.plan.update",String(req.body?.id||""),req.body||{});r.json({ok:true,plan})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
 app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
 
