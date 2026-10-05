@@ -212,6 +212,17 @@ export async function requirePaid(req,res,next){
 export async function audit(req,action,target="",metadata={}){
   try{await q("insert into audit_logs(user_id,action,target,metadata,ip) values($1,$2,$3,$4,$5)",[req.user?.id||null,action,target,metadata,req.ip||null])}catch{}
 }
+export async function createAdminUser({email,password,name=""},req){
+  email=cleanEmail(email);
+  if(!email||!/^\S+@\S+\.\S+$/.test(email))throw new Error("Enter a valid email address.");
+  if(String(password||"").length<12)throw new Error("Administrator password must be at least 12 characters.");
+  const exists=await q("select id from users where email=$1",[email]);
+  if(exists.rowCount)throw new Error("An account with this email already exists. Promote the existing account instead.");
+  const {hash,salt}=hashPassword(password);
+  const r=await q("insert into users(email,password_hash,password_salt,name,role,plan,email_verified) values($1,$2,$3,$4,'admin','premium',true) returning id,email,name,role,plan,is_active,email_verified,created_at,last_login_at",[email,hash,salt,String(name||"").trim().slice(0,100)]);
+  await audit(req,"admin.account.create",r.rows[0].id,{email});
+  return r.rows[0];
+}
 export async function registerUser({email,password,name=""},req){
   email=cleanEmail(email);
   if(!email||!/^\S+@\S+\.\S+$/.test(email))throw new Error("Enter a valid email address.");
