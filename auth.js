@@ -324,3 +324,15 @@ export async function createPaymentRecord(data){
   const r=await q("insert into payments(user_id,plan_id,provider,provider_reference,amount_ngn,status,metadata) values($1,$2,$3,$4,$5,$6,$7) on conflict(provider,provider_reference) do update set status=excluded.status,metadata=excluded.metadata,updated_at=now() returning *",[data.userId,data.planId||null,data.provider,data.reference||null,Math.max(0,Number(data.amountNgn)||0),data.status||"pending",JSON.stringify(data.metadata||{})]);
   return r.rows[0];
 }
+
+export async function activateProviderSubscription(userId,planId,provider,reference,days=30,metadata={}){
+  if(!["pro","premium"].includes(planId))throw new Error("Only paid plans can be activated.");
+  const exists=await q("select id from plans where id=$1 and is_active",[planId]);
+  if(!exists.rowCount)throw new Error("Plan not found.");
+  const existing=reference?await q("select * from payments where provider=$1 and provider_reference=$2",[provider,reference]):{rowCount:0};
+  if(existing.rowCount && existing.rows[0].status==="success")return existing.rows[0];
+  const subscription=await q("insert into subscriptions(user_id,plan_id,status,provider,starts_at,expires_at) values($1,$2,'active',$3,now(),now()+make_interval(days=>$4)) returning *",[userId,planId,provider,Math.max(1,Math.min(3650,Number(days)||30))]);
+  await q("update users set plan=$1,updated_at=now() where id=$2",[planId,userId]);
+  const payment=await createPaymentRecord({userId,planId,provider,reference,amountNgn:metadata.amountNgn||0,status:"success",metadata:{...metadata,subscriptionId:subscription.rows[0].id}});
+  return {subscription:subscription.rows[0],payment};
+}
