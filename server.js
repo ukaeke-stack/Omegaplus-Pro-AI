@@ -167,23 +167,6 @@ async function getDayFixtures(date,force=false){
   return {fixtures:day,cached:false,scannedAt:Date.now()};
 }
 
-function resultKey(home,away){return resultNorm(home)+"|"+resultNorm(away)}
-function settleServer(row,result){
-  const hs=Number(result?.homeScore),as=Number(result?.awayScore),pick=String(row.pick||"").toLowerCase();
-  if(result?.status==="Postponed"||result?.status==="Void")return result.status;
-  if(!Number.isFinite(hs)||!Number.isFinite(as))return result?.status==="Finished"?"Finished":"Pending";
-  const total=hs+as,m=pick.match(/over\\s*(\\d+(?:\\.\\d+)?)/),u=pick.match(/under\\s*(\\d+(?:\\.\\d+)?)/);
-  if(m)return total>Number(m[1])?"Won":"Lost"; if(u)return total<Number(u[1])?"Won":"Lost";
-  if(pick.includes("home"))return hs>as?"Won":"Lost"; if(pick.includes("away"))return as>hs?"Won":"Lost"; if(pick.includes("draw"))return hs===as?"Won":"Lost";
-  return "Finished";
-}
-function matchResult(row,results){
-  const exact=results.find(x=>x.providerId&&row.resultProviderId&&String(x.providerId)===String(row.resultProviderId));
-  if(exact)return exact;
-  const key=resultKey(row.home,row.away),date=String(row.date||"");
-  return results.find(x=>resultKey(x.home,x.away)===key&&(!date||x.date===date))||results.find(x=>resultKey(x.home,x.away)===key);
-}
-
 app.get("/api/scan",async(req,r)=>{
   try{const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true);r.json({ok:true,date,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
