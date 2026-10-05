@@ -46,19 +46,29 @@ function renderHistory(date=historySelectedDate()){
   box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
 }
 async function refreshHistory(date=historySelectedDate()){
-  const h=readHistory();
+  let h=readHistory();
   try{
     const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
-    const live=new Map((data.predictions||[]).map(x=>[x.eventId,x]));
-    const day=h.filter(x=>x.date===date)
+    const liveRows=data.predictions||[];
+    const live=new Map(liveRows.map(x=>[x.eventId,x]));
+    let day=h.filter(x=>x.date===date)
       .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
       .slice(0,10);
+
+    // If this browser has no saved history for the selected date, seed it
+    // from the live fixtures so the History page is usable on a fresh device.
+    if(!day.length && liveRows.length){
+      const seeded=liveRows.slice().sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||Number(a.startTimeMs||0)-Number(b.startTimeMs||0)).slice(0,10);
+      saveHistoryRows(seeded.map(x=>({...x,date})),date);
+      h=readHistory();
+      day=h.filter(x=>x.date===date).slice(0,10);
+    }
+
     day.forEach(x=>{
       const y=live.get(x.eventId);
       if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore;x.outcome=settleOutcome(x)}
     });
-    const others=h.filter(x=>x.date!==date);
-    writeHistory([...others,...day]);
+    writeHistory([...h.filter(x=>x.date!==date),...day]);
   }catch{
     const day=h.filter(x=>x.date===date)
       .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
