@@ -1,8 +1,9 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
+import {analyzeCorrectScores} from "./correct-score.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -306,6 +307,7 @@ app.post("/api/payments/paystack/webhook",async(req,r)=>{
   }catch(e){console.error("Paystack webhook processing failed:",e.message)}
 });
 
+app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const user=await createAdminUser(req.body||{},req);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
@@ -484,6 +486,31 @@ app.get("/api/best-picks",async(req,r)=>{
     const market=String(req.query.market||"all");
     const predictions=await buildBestPicks(date,limit,market,sport);
     r.json({ok:true,date,limit,market,sport,predictions,generatedAt:new Date().toISOString(),source:"SportyBet market model + independent statistics"});
+  }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
+});
+app.get("/api/correct-scores",requirePaid,async(req,r)=>{
+  try{
+    const sport=String(req.query.sport||"football");
+    const date=String(req.query.date||localDayKey(Date.now()));
+    if(sport!=="football")return r.status(400).json({ok:false,error:"Correct-score analysis is currently available for football."});
+    const {fixtures}=await getDayFixtures(date,false,sport);
+    const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,20);
+    if(!candidates.length)return r.json({ok:true,date,predictions:[],sources:[],message:"No football fixtures found for this date."});
+    const base=candidates.map(f=>({id:f.eventId,eventId:f.eventId,home:f.home,away:f.away,league:f.league,time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,marketType:"1x2",pick:"Home",confidence:50,odds:1.5}));
+    const enriched=await enrichPredictions(base,{concurrency:3});
+    const ranked=enriched.sort((a,b)=>{
+      const as=(a.independentSources||[]).length,bs=(b.independentSources||[]).length;
+      return bs-as||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs;
+    });
+    const results=[];
+    for(const p of ranked.slice(0,8)){
+      const f=candidates.find(x=>x.eventId===p.eventId);
+      if(!f)continue;
+      const model=await analyzeCorrectScores(f,p.independentStats||{});
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
+    }
+    results.sort((a,b)=>b.confidence-a.confidence);
+    r.json({ok:true,date,sport,predictions:results.slice(0,5),generatedAt:new Date().toISOString(),method:"Multi-source score matrix: market signal + recent form/xG + independent fixture source"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
