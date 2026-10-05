@@ -27,7 +27,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 app.use(express.json({limit:"1mb"}));
 app.use(express.static(path.join(__dirname,"public")));
 
-const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301"];
+const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301","219","223","225","227","228"];
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
@@ -120,9 +120,10 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
-  if(type==="basketball_total") return n.includes("total")||n.includes("over under")||n.includes("points");
-  if(type==="basketball_handicap") return n.includes("handicap")||n.includes("spread");
-  if(type==="basketball_moneyline") return n.includes("winner")||n.includes("moneyline")||n==="1x2"||n.includes("match result");
+  if(type==="basketball_total") return ["225"].includes(market.marketId)||n.includes("total")||n.includes("over under");
+  if(type==="basketball_handicap") return ["223"].includes(market.marketId)||n.includes("handicap")||n.includes("spread");
+  if(type==="basketball_moneyline") return ["219"].includes(market.marketId)||n.includes("winner")||n.includes("moneyline")||n.includes("match result");
+  if(type==="basketball_team_total") return ["227","228"].includes(market.marketId)||n.includes("team total");
   if(type==="ou") return market.marketId==="18";
   if(type==="btts") return market.marketId==="29";
   if(type==="1x2") return market.marketId==="1";
@@ -309,7 +310,7 @@ app.get("/api/predictions",async(req,r)=>{
 
 async function buildDailyBest(date,sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline"]:["ou","btts","1x2","handicap","corners","cards"];
+  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets||[]){
