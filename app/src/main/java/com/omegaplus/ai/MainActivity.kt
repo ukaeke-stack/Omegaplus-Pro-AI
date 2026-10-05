@@ -12,7 +12,7 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
-    private val appUrl = "https://omegaplus-pro-4e2awp3oe-ukaeke-9967.vercel.app/"
+    private val appUrl = "https://omegaplus-pro-ai.vercel.app/"
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,9 +28,7 @@ class MainActivity : Activity() {
         webView.webChromeClient = WebChromeClient()
         webView.addJavascriptInterface(UpdateBridge(this), "AndroidUpdater")
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return false
-            }
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
                 if (request.isForMainFrame) Toast.makeText(this@MainActivity, "Unable to load Omegaplus. Check your internet connection.", Toast.LENGTH_LONG).show()
             }
