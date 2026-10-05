@@ -106,6 +106,20 @@ export async function initAuthDb(){
         value jsonb not null default '{}'::jsonb,
         updated_at timestamptz not null default now()
       );
+      create table if not exists payments(
+        id uuid primary key default gen_random_uuid(),
+        user_id uuid not null references users(id) on delete cascade,
+        plan_id text references plans(id),
+        provider text not null,
+        provider_reference text,
+        amount_ngn integer not null default 0,
+        status text not null default 'pending',
+        metadata jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now(),
+        unique(provider,provider_reference)
+      );
+      create index if not exists payments_user_idx on payments(user_id,created_at desc);
       insert into plans(id,name,description,price_ngn,billing_period,features)
       values
         ('free','Free','Visitor and registered free access',0,'monthly','["limited predictions","basic history"]'),
@@ -114,6 +128,11 @@ export async function initAuthDb(){
       on conflict(id) do nothing;
       delete from sessions where expires_at < now();
     `);
+    await q(`insert into app_settings(key,value) values
+      ('subscription_enabled','true'::jsonb),
+      ('free_trial_enabled','true'::jsonb),
+      ('free_trial_days','3'::jsonb)
+      on conflict(key) do nothing`);
     await ensureBootstrapAdmin();
     return true;
   })().catch(err=>{initPromise=null;console.error("Auth DB initialization failed:",err.message);return false});
@@ -182,7 +201,9 @@ export function requireRole(...roles){
 export async function requirePaid(req,res,next){
   const user=req.user||await currentUser(req);
   if(!user)return res.status(401).json({ok:false,error:"Login required.",code:"AUTH_REQUIRED"});
-  const paid=["pro","premium"].includes(user.plan)&&(["active","none"].includes(user.subscriptionStatus)||user.role==="admin");
+  const settings=await getAccessSettings();
+  if(settings.subscriptionEnabled===false || user.role==="admin"){req.user=user;return next();}
+  const paid=["pro","premium"].includes(user.plan)&&["active","none"].includes(user.subscriptionStatus);
   if(!paid)return res.status(402).json({ok:false,error:"An active paid plan is required for this feature.",code:"PAID_REQUIRED",plan:user.plan,subscriptionStatus:user.subscriptionStatus});
   req.user=user;next();
 }
@@ -262,4 +283,43 @@ export async function activateSubscription(userId,planId,days=30,provider="admin
 export async function revokeSubscription(userId){
   await q("update subscriptions set status='cancelled',updated_at=now() where user_id=$1 and status='active'",[userId]);
   await q("update users set plan='free',updated_at=now() where id=$1",[userId]);
+}
+
+export async function getAccessSettings(){
+  const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days')");
+  const map=Object.fromEntries(r.rows.map(x=>[x.key,x.value]));
+  const bool=v=>v===true||v==="true"||v===1||v==="1";
+  return {
+    subscriptionEnabled: map.subscription_enabled===undefined?true:bool(map.subscription_enabled),
+    freeTrialEnabled: map.free_trial_enabled===undefined?true:bool(map.free_trial_enabled),
+    freeTrialDays: Math.max(0,Math.min(365,Number(map.free_trial_days)||0))
+  };
+}
+export async function updateAccessSettings(body={}){
+  const current=await getAccessSettings();
+  const next={
+    subscriptionEnabled: typeof body.subscriptionEnabled==="boolean"?body.subscriptionEnabled:current.subscriptionEnabled,
+    freeTrialEnabled: typeof body.freeTrialEnabled==="boolean"?body.freeTrialEnabled:current.freeTrialEnabled,
+    freeTrialDays: body.freeTrialDays===undefined?current.freeTrialDays:Math.max(0,Math.min(365,Math.round(Number(body.freeTrialDays)||0)))
+  };
+  for(const [key,value] of [["subscription_enabled",next.subscriptionEnabled],["free_trial_enabled",next.freeTrialEnabled],["free_trial_days",next.freeTrialDays]]){
+    await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
+  }
+  return next;
+}
+export async function grantFreeTrial(userId,days){
+  const settings=await getAccessSettings();
+  if(!settings.freeTrialEnabled)throw new Error("Free trials are currently disabled by the administrator.");
+  const n=Math.max(1,Math.min(365,Number(days)||settings.freeTrialDays||3));
+  const r=await q("insert into subscriptions(user_id,plan_id,status,provider,starts_at,expires_at) values($1,'pro','active','admin_free_trial',now(),now()+make_interval(days=>$2)) returning *",[userId,n]);
+  await q("update users set plan='pro',updated_at=now() where id=$1",[userId]);
+  return r.rows[0];
+}
+export async function paymentHistory(userId){
+  const r=await q("select id,plan_id,provider,provider_reference,amount_ngn,status,metadata,created_at,updated_at from payments where user_id=$1 order by created_at desc limit 100",[userId]);
+  return r.rows;
+}
+export async function createPaymentRecord(data){
+  const r=await q("insert into payments(user_id,plan_id,provider,provider_reference,amount_ngn,status,metadata) values($1,$2,$3,$4,$5,$6,$7) on conflict(provider,provider_reference) do update set status=excluded.status,metadata=excluded.metadata,updated_at=now() returning *",[data.userId,data.planId||null,data.provider,data.reference||null,Math.max(0,Number(data.amountNgn)||0),data.status||"pending",JSON.stringify(data.metadata||{})]);
+  return r.rows[0];
 }
