@@ -1,5 +1,4 @@
 import express from "express";
-import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -29,23 +28,7 @@ let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
 const dayCache=new Map();
 const DAY_CACHE_MS=24*60*60*1000;
-const resultCache=new Map();\nconst ARCHIVE_PREFIX="omegaplus-history";
-function archivePath(date){return ARCHIVE_PREFIX+"/"+String(date).slice(0,4)+"/"+String(date).slice(5,7)+"/"+String(date).slice(8,10)+".json"}
-async function readPersistentArchive(date){
-  try{
-    const {stream}=await get(archivePath(date),{access:"private",useCache:false});
-    return JSON.parse(await new Response(stream).text());
-  }catch{return null}
-}
-async function writePersistentArchive(date,data){
-  return put(archivePath(date),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"});
-}
-async function archiveRecord(date,patch={}){
-  const existing=await readPersistentArchive(date)||{date,predictions:[],results:[],savedAt:null,updatedAt:null};
-  const next={...existing,...patch,date,updatedAt:new Date().toISOString(),savedAt:existing.savedAt||new Date().toISOString()};
-  await writePersistentArchive(date,next); return next;
-}
-
+const resultCache=new Map();
 
 async function sportyFetch(pathname,options={}){
   const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
@@ -187,12 +170,6 @@ async function getDayFixtures(date,force=false){
 app.get("/api/scan",async(req,r)=>{
   try{const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true);r.json({ok:true,date,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
-app.get("/api/history",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"});}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}
-});
-app.post("/api/history",async(req,r)=>{
-  try{const date=String(req.body?.date||localDayKey(Date.now()));const patch={};if(Array.isArray(req.body?.predictions))patch.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))patch.results=req.body.results;const archive=await archiveRecord(date,patch);r.json({ok:true,date,archive,storage:"vercel-blob"});}catch(e){r.status(500).json({ok:false,error:e.message})}
-});
 app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
@@ -221,26 +198,6 @@ app.get("/api/predictions",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
-async function buildDailyBest(date){
-  const fixtures=(await getDayFixtures(date,false)).fixtures,results=[];
-  for(const fixture of fixtures){
-    if(localDayKey(fixture.startTimeMs)!==date) continue;
-    for(const market of fixture.markets){
-      if(market.marketId!=="18") continue;
-      for(const outcome of market.outcomes){
-        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
-        const label=pickLabel("ou",outcome); if(!/^over\\s*(1\\.5|2\\.5)$/i.test(label)) continue;
-        const confidence=confidenceForOutcome(market,outcome);
-        results.push({id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick:label,odds:outcome.odds,marketType:"ou",confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date});
-      }
-    }
-  }
-  const dedupe=new Map(); for(const row of results){if(!dedupe.has(row.eventId)||dedupe.get(row.eventId).confidence<row.confidence)dedupe.set(row.eventId,row)}
-  return [...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,10);
-}
-app.get("/api/daily-best",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date);if(existing?.predictions?.length)return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date);const archive=await archiveRecord(date,{predictions,results:[]});r.json({ok:true,date,predictions,archived:true,archive:archive.savedAt});}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
-});
 app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
@@ -289,16 +246,5 @@ app.post("/api/predictions/analyze",async(req,r)=>{
 
 app.post("/api/booking-code",async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
 
-app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});
-  try{
-    const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);
-    const prevResults=await getDateResults(prev,true); const resultRows=prevResults.configured?prevResults.data:[];
-    const prevArchive=await readPersistentArchive(prev);
-    if(prevArchive){await archiveRecord(prev,{predictions:prevArchive.predictions||[],results:resultRows});}
-    const todayArchive=await readPersistentArchive(date); const predictions=todayArchive?.predictions?.length?todayArchive.predictions:await buildDailyBest(date);
-    await archiveRecord(date,{predictions,results:[]});
-    r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length});
-  }catch(e){r.status(500).json({ok:false,error:e.message})}
-});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 app.listen(PORT,()=>console.log("Omegaplus Pro AI listening on "+PORT));
