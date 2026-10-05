@@ -224,7 +224,7 @@ async function loadDailyBest(){
   box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
   try{
     const limit=10,market="all";const d=await jsonFetch("/api/daily-best?date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");try{await refreshHistory(date)}catch{}if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
     let rows=(d.predictions||[]).slice(0,10);
     const saved=readHistory().filter(x=>x.date===date);
     const byId=new Map(saved.map(x=>[x.id,x]));
