@@ -1,5 +1,5 @@
 (()=> {
-  const APP_VERSION="1.2.0";
+  const APP_VERSION="1.4.0";
   const KEY="omegaplus_settings_v2";
   const defaults={
     games:20,minConfidence:70,defaultMarket:"ou",defaultSelection:"Over 1.5",
