@@ -15,6 +15,10 @@ function renderDateChips(){
   $$("#selectedDates .date-chip").forEach(b=>b.onclick=()=>{state.dates.delete(b.dataset.date);if(!state.dates.size)state.dates.add(state.date);renderDateChips()});
 }
 function historyKey(){return "omegaplus_history_v3"}
+function archiveKey(){return "omegaplus_day_archive_v1"}
+function readArchive(){try{return JSON.parse(localStorage.getItem(archiveKey())||"{}")}catch{return{}}}
+function writeArchive(a){try{localStorage.setItem(archiveKey(),JSON.stringify(a));return true}catch{return false}}
+function archiveDay(date,payload={}){const a=readArchive();a[date]={...(a[date]||{}),...payload,savedAt:new Date().toISOString()};writeArchive(a)}
 function readHistory(){try{return JSON.parse(localStorage.getItem(historyKey())||"[]")}catch{return[]}}
 function writeHistory(rows){try{localStorage.setItem(historyKey(),JSON.stringify(rows.slice(-2000)));return true}catch{return false}}
 function saveHistoryRows(rows,replaceDate=null){
@@ -22,14 +26,14 @@ function saveHistoryRows(rows,replaceDate=null){
   const targetDate=replaceDate||state.date;
   const kept=history.filter(x=>x.date!==targetDate);
   const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:"Pending",recordedAt:now}));
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
   return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
 function settleOutcome(x){
   const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return /ended|finished|closed|complete/i.test(String(x.status))?"Finished":"Pending";
-  const total=hs+as,m=pick.match(/overs+(d+(?:.d+)?)/),u=pick.match(/unders+(d+(?:.d+)?)/);
+  const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(m)return total>Number(m[1])?"Won":"Lost";if(u)return total<Number(u[1])?"Won":"Lost";
   if(pick.includes("home"))return hs>as?"Won":"Lost";if(pick.includes("away"))return as>hs?"Won":"Lost";if(pick.includes("draw"))return hs===as?"Won":"Lost";
   return "Finished";
@@ -56,6 +60,10 @@ async function refreshHistory(date=historySelectedDate()){
     const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
     const liveRows=data.predictions||[];
     const live=new Map(liveRows.map(x=>[x.eventId,x]));
+    let resultRows=[];
+    try{const rr=await (await fetch("/api/results?date="+encodeURIComponent(date))).json();if(rr.ok)resultRows=rr.results||[];}catch{}
+    const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+    const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
     let day=h.filter(x=>x.date===date)
       .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time)))
       .slice(0,10);
@@ -77,10 +85,13 @@ async function refreshHistory(date=historySelectedDate()){
     }
 
     day.forEach(x=>{
-      const y=live.get(x.eventId);
-      if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore;x.outcome=settleOutcome(x)}
+      const y=live.get(x.eventId),z=findResult(x);
+      if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}
+      if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.outcome=settleOutcome(x)}
+      else if(!z&&x.outcome!=="Won"&&x.outcome!=="Lost"&&x.outcome!=="Void"&&x.outcome!=="Postponed")x.outcome=settleOutcome(x);
     });
     writeHistory([...h.filter(x=>x.date!==date),...day]);
+    archiveDay(date,{history:day,results:resultRows});
     renderHistory(date,day);
   }catch{
     const day=h.filter(x=>x.date===date)
@@ -117,7 +128,8 @@ async function loadBase(){
   try{
     const d=await (await fetch("/api/predictions?date="+encodeURIComponent(state.date))).json();
     state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;
-    setStatus("Live feed ready for "+prettyDate(state.date)+".");
+    archiveDay(state.date,{fixtures:state.rows});
+    setStatus("Daily archive ready for "+prettyDate(state.date)+".");
   }catch(e){state.rows=[];$("#predictionTotal").textContent="—";setStatus("Live SportyBet data is temporarily unavailable.")}
 }
 function renderRows(){
@@ -140,7 +152,9 @@ async function analyze(){
     for(const date of dates){
       const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues,marketTypes,selections,maxGames})})).json();
       if(!d.ok)throw new Error(d.error||("Analysis failed for "+prettyDate(date)));
-      all.push(...(d.predictions||[]).map(x=>({...x,date})));
+      const dated=(d.predictions||[]).map(x=>({...x,date}));
+      all.push(...dated);
+      archiveDay(date,{predictions:dated});
     }
     const seen=new Set();state.rows=all.filter(x=>{if(seen.has(x.eventId))return false;seen.add(x.eventId);return true});
     state.selected.clear();renderRows();renderSlip();
@@ -167,6 +181,7 @@ async function loadDailyBest(){
     // Render first; local history is only a cache and must never block the UI.
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
     saveHistoryRows(rows.map(x=>({...x,date})),date);
+    archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     renderHistory(date,rows);
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
   }catch(e){saveHistoryRows([],date);renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
