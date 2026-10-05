@@ -434,7 +434,7 @@ app.get("/api/performance",async(req,r)=>{
         rows.push({...p,date,outcome:serverSettlePrediction(p,result)});
       }
     }
-    const settled=rows.filter(x=>x.outcome==="Won"||x.outcome==="Lost"),won=settled.filter(x=>x.outcome==="Won").length;
+    const settled=rows.filter(x=>x.outcome==="Won"||x.outcome==="Lost"),won=settled.filter(x=>x.outcome==="Won").length,lost=settled.filter(x=>x.outcome==="Lost").length;
     const byMarket={}; for(const x of settled){const k=x.marketType||"other";byMarket[k]??={total:0,won:0,lost:0};byMarket[k].total++;if(x.outcome==="Won")byMarket[k].won++;else byMarket[k].lost++}
     r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket});
   }catch(e){r.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
