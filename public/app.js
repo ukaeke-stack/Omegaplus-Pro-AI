@@ -137,7 +137,7 @@ function renderDropdown(id,items,selectedSet){
 }
 function renderMarketOptions(){
   const allowed=(window.OMEGA_SPORT_MARKETS?.[state.sport])||Object.keys(marketCatalog);
-  const items=allowed.filter(id=>marketCatalog[id]).map(([id,x])=>({value:id,label:x.name}));
+  const items=allowed.filter(id=>marketCatalog[id]).map(id=>({value:id,label:marketCatalog[id].name}));
   renderDropdown("#marketOptions",items,state.markets);
   $("#marketCount").textContent=state.markets.size+" selected";
 }
@@ -150,7 +150,7 @@ function renderSelectionOptions(){
   $("#selectionCount").textContent=state.selections.size+" selected";
 }
 function bindMarketDropdowns(){
-  $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add("ou");renderMarketOptions();renderSelectionOptions()};
+  $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add(state.sport==="basketball"?"basketball_total":"ou");renderMarketOptions();renderSelectionOptions()};
   $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const first=(marketCatalog[[...state.markets][0]]?.options||[])[0];if(first)state.selections.add(first.label)}renderSelectionOptions()};
 }
 async function loadLeagues(){
