@@ -12,3 +12,8 @@ window.OMEGA_MARKET_OPTIONS={
     {label:"Over 1.5",key:"over_1_5"},{label:"Over 2.5",key:"over_2_5"},{label:"Over 3.5",key:"over_3_5"},{label:"Over 4.5",key:"over_4_5"},{label:"Over 5.5",key:"over_5_5"},
     {label:"Under 1.5",key:"under_1_5"},{label:"Under 2.5",key:"under_2_5"},{label:"Under 3.5",key:"under_3_5"},{label:"Under 4.5",key:"under_4_5"},{label:"Under 5.5",key:"under_5_5"}]}
 };
+
+window.OMEGA_SPORT_MARKETS={football:["ou","1x2","btts","handicap","corners","cards"],basketball:["basketball_total","basketball_handicap","basketball_moneyline"]};
+window.OMEGA_MARKET_OPTIONS.basketball_total={name:"Points Over/Under",options:[{label:"Over 150.5",key:"over_150_5"},{label:"Over 160.5",key:"over_160_5"},{label:"Over 170.5",key:"over_170_5"},{label:"Under 150.5",key:"under_150_5"},{label:"Under 160.5",key:"under_160_5"},{label:"Under 170.5",key:"under_170_5"}]};
+window.OMEGA_MARKET_OPTIONS.basketball_handicap={name:"Basketball Handicap / Spread",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.basketball_moneyline={name:"Basketball Winner",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
