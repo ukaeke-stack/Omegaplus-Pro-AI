@@ -26,6 +26,7 @@ class MainActivity : Activity() {
         webView.settings.allowFileAccess = false
         webView.settings.allowContentAccess = true
         webView.webChromeClient = WebChromeClient()
+        webView.addJavascriptInterface(UpdateBridge(this), "AndroidUpdater")
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 return false
