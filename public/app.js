@@ -212,6 +212,8 @@ function showPage(n){
 const side=$("#side"),backdrop=$("#backdrop");function closeSide(){side.classList.remove("open");backdrop.classList.remove("show")}function openSide(){side.classList.add("open");backdrop.classList.add("show")}
 $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$("#sideClose").onclick=closeSide;backdrop.onclick=closeSide;
 $$("[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
+$("#settingsButton").onclick=()=>window.OmegaSettings.open();
+$("#updateButton").onclick=()=>window.OmegaSettings.checkUpdate();
 $("#snapToggle").onclick=()=>{$("#snapBody").classList.toggle("open");$("#snapArrow").textContent=$("#snapBody").classList.contains("open")?"⌃":"⌄"};
 $("#fixtureFile").onchange=e=>$("#fileName").textContent=e.target.files[0]?"Selected: "+e.target.files[0].name:"";
 $("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";state.selected.clear();renderSlip();await loadLeagues();await loadBase()};
