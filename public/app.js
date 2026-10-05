@@ -46,7 +46,7 @@ function renderHistory(date=historySelectedDate(),fallbackRows=[]){
 async function refreshHistory(date=historySelectedDate()){
   let h=readHistory(),fallback=[];
   try{
-    const data=await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();
+    const archived=getArchivedDay(date);const data=(!force&&archived?.predictions)?{predictions:archived.predictions}:await (await fetch("/api/predictions?date="+encodeURIComponent(date))).json();if(data.predictions&&!archived)saveArchivedDay(date,{predictions:data.predictions});
     const liveRows=data.predictions||[];
     const live=new Map(liveRows.map(x=>[x.eventId,x]));
     let day=h.filter(x=>x.date===date)
@@ -152,7 +152,7 @@ async function loadCalendar(){
 }
 async function loadDailyBest(force=false){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';  const cached=getArchivedDay(date);if(!force&&cached?.dailyBest?.length){const rows=cached.dailyBest.slice(0,10);box.innerHTML=rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+'</span><b>'+esc(x.pick)+'</b></div></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong></div></article>').join("");return}
   try{
     const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues:[],marketTypes:["ou"],selections:["Over 1.5","Over 2.5"],maxGames:10})})).json();
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
