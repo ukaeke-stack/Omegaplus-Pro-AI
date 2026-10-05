@@ -42,7 +42,7 @@ async function sportyFetch(pathname,options={}){
   if(wait) await sleep(wait);
   lastSportyRequest=Date.now();
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),15000);
+  const timer=setTimeout(()=>controller.abort(),6000);
   try{
     const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
       ...options,
@@ -66,9 +66,9 @@ async function getSportyFixtures(todayOnly=false,force=false){
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
-  for(let page=1;page<=(todayOnly?10:50);page++){
+  for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:"sr:sport:1",marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
-    const body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+    let body;\n    try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
     for(const tournament of tournaments){
@@ -222,8 +222,8 @@ function leagueGroup(name,category=""){
   return "Other Leagues";
 }
 app.get("/api/leagues",async(req,r)=>{
+  const requestedDate=String(req.query.date||localDayKey(Date.now()));
   try{
-    const requestedDate=String(req.query.date||localDayKey(Date.now()));
     const {fixtures}=await getDayFixtures(requestedDate,false);
     const map=new Map();
     for(const [name,country] of TOP_LEAGUE_CATALOG){
@@ -244,7 +244,10 @@ app.get("/api/leagues",async(req,r)=>{
       return (ai-bi)||leagueRank(a.name)-leagueRank(b.name)||a.country.localeCompare(b.country)||a.name.localeCompare(b.name);
     });
     r.json({ok:true,date:requestedDate,leagues});
-  }catch(e){r.status(502).json({ok:false,error:e.message,leagues:[]})}
+  }catch(e){
+    const leagues=TOP_LEAGUE_CATALOG.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country}));
+    r.status(200).json({ok:false,date:requestedDate,degraded:true,error:e.message,leagues});
+  }
 });
 
 app.get("/api/predictions",async(req,r)=>{
