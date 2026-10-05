@@ -68,7 +68,8 @@ async function getSportyFixtures(todayOnly=false,force=false){
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:"sr:sport:1",marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
-    let body;\n    try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){if(all.length) break;throw e}
+    let body;
+    try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
     for(const tournament of tournaments){
