@@ -209,10 +209,10 @@ app.get("/api/results",async(req,r)=>{
 app.get("/api/results/live",async(_,r)=>{try{const x=await getLatestResults();if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",results:x.data,updatedAt:x.updatedAt})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}});
 
 function leagueCountry(name,category=""){
-  const topIndex=topLeagueIndex(name);
-  if(topIndex>=0) return TOP_LEAGUE_CATALOG[topIndex][1];
   const c=String(category||"").trim();
   if(c) return c;
+  const topIndex=topLeagueIndex(name);
+  if(topIndex>=0) return TOP_LEAGUE_CATALOG[topIndex][1];
   return "International";
 }
 function leagueGroup(name,category=""){
