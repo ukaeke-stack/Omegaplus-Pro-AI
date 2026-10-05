@@ -191,7 +191,7 @@ app.get("/api/history",async(req,r)=>{
   try{const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"});}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}
 });
 app.post("/api/history",async(req,r)=>{
-  try{const date=String(req.body?.date||localDayKey(Date.now()));const archive=await archiveRecord(date,{predictions:Array.isArray(req.body?.predictions)?req.body.predictions.slice(0,10):undefined,results:Array.isArray(req.body?.results)?req.body.results:undefined});r.json({ok:true,date,archive,storage:"vercel-blob"});}catch(e){r.status(500).json({ok:false,error:e.message})}
+  try{const date=String(req.body?.date||localDayKey(Date.now()));const patch={};if(Array.isArray(req.body?.predictions))patch.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))patch.results=req.body.results;const archive=await archiveRecord(date,patch);r.json({ok:true,date,archive,storage:"vercel-blob"});}catch(e){r.status(500).json({ok:false,error:e.message})}
 });
 app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
