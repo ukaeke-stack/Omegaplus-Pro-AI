@@ -2,3 +2,66 @@
 @media(min-width:1000px){body{padding-bottom:0}.side{transform:none}.bottom-nav{display:none}main{margin-left:270px}.menu-btn{display:none}.topbar{padding-left:35px}.hero-home{padding-top:90px}}@media(max-width:600px){.topbar{height:88px;padding:12px 14px}.top-brand strong{font-size:18px}.top-brand small{font-size:8px}.logo{width:48px;height:48px;font-size:23px}.icon-btn,.menu-btn{width:46px;height:46px}.hero-home{padding:48px 16px 48px}.hero-home h1{font-size:32px}.hero-home p{font-size:14px}.snap-card,.live-card,.stats-row,.page-title,.today-picks,.analysis-controls,.analysis-status{width:calc(100% - 20px)}.snap-head{padding:16px 14px}.snap-copy strong{font-size:17px}.snap-copy small{font-size:11px}.new-badge{display:none}.live-card{padding:20px 14px;margin-top:18px}.live-card strong{font-size:17px}.live-card small{font-size:12px}.stats-row{gap:8px;margin-top:10px}.metric{padding:15px 13px;min-height:100px}.metric>span{font-size:12px}.metric>b{font-size:22px;margin-top:8px}.metric>i{right:12px;top:15px;font-size:20px}.page-title{padding:28px 0 16px}.page-title h2{font-size:29px}.analysis-controls{gap:8px}.control-card{padding:11px}.control-card>label{font-size:13px}.chip span{padding:7px 9px;font-size:11px}.match{width:calc(100% - 20px);grid-template-columns:1fr;padding:13px}.prob{text-align:left}.calendar-game{width:calc(100% - 20px)}.calendar-picker input{max-width:none;flex:1}.calendar-picker .primary,.calendar-picker .secondary{flex:1}.bottom-nav{height:68px}.bottom-nav button span{font-size:21px}body{padding-bottom:68px}}
 .booking-result{margin-top:10px;padding:14px;border:1px solid #0a9f4a;border-radius:12px;background:#062b18;text-align:center}.booking-result small{display:block;color:#8fa39a;font-size:10px;letter-spacing:1.5px}.booking-result strong{display:block;color:var(--green);font-size:28px;letter-spacing:2px;margin:5px 0 9px;word-break:break-all}.copy-code{width:100%}.bookmaker-box{margin-top:10px;padding:13px;border:1px solid var(--line);background:var(--card2);border-radius:12px}.bookmaker-box label{display:block;font-weight:800;font-size:13px;margin-bottom:8px}.bookmaker-box select{width:100%;background:var(--card);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px}.bookmaker-box small{display:block;color:var(--muted);font-size:11px;margin-top:7px}
 .dynamic-select{width:100%;height:78px;min-height:78px;max-height:78px;overflow-y:auto;padding:5px 8px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(0,0,0,.22);color:inherit;font:inherit;line-height:1.35}.dynamic-select option{padding:4px 8px;background:#101814;color:inherit}.dynamic-select:focus{outline:2px solid rgba(255,255,255,.25);outline-offset:2px}
+
+
+/* Responsive Android/tablet hardening: prevent horizontal overflow on narrow and dynamic viewports */
+html{width:100%;overflow-x:hidden}
+body{width:100%;max-width:100vw;overflow-x:hidden;overflow-wrap:anywhere}
+main,.page,.active-page{min-width:0;max-width:100%}
+.topbar{width:100%;max-width:100vw;min-width:0}
+.top-brand{min-width:0;overflow:hidden}
+.top-brand>div:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.top-brand strong,.top-brand small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero-home,.page-title,.snap-card,.live-card,.stats-row,.analysis-controls,.analysis-status,.match,.calendar-game,.slip-card{max-width:calc(100% - 20px);min-width:0}
+.snap-head,.live-card,.calendar-game{min-width:0}
+.snap-copy{min-width:0;overflow:hidden}
+.snap-copy strong,.snap-copy small,.live-card strong,.live-card small,.teams,.meta,.pick,.calendar-game b{overflow-wrap:anywhere;word-break:break-word}
+.live-card{flex-wrap:wrap}
+.live-badge{flex:0 0 auto}
+.live-card>div{min-width:0;flex:1 1 180px}
+.stats-row{min-width:0}
+.metric{min-width:0;overflow:hidden}
+.metric>b{overflow-wrap:anywhere}
+.analysis-controls,.control-card,.control-actions,.date-row,.calendar-picker,.limit-row{min-width:0}
+.control-actions{flex-wrap:wrap}
+.control-actions>*{min-width:0}
+.date-row>*{min-width:0}
+.date-row input{width:100%}
+.match{min-width:0}
+.match>div{min-width:0}
+.pick{flex-wrap:wrap}
+.calendar-game{flex-wrap:wrap}
+.calendar-game>*{min-width:0}
+.bottom-nav{width:100%;max-width:100vw;overflow:hidden;padding-bottom:env(safe-area-inset-bottom);height:calc(68px + env(safe-area-inset-bottom))}
+.bottom-nav button{min-width:0;padding-left:2px;padding-right:2px;overflow:hidden}
+.bottom-nav button span{line-height:1}
+@media(max-width:380px){
+  .topbar{padding-left:10px;padding-right:10px}
+  .top-brand{gap:7px}
+  .top-brand strong{font-size:16px}
+  .top-brand small{font-size:7px;letter-spacing:1px}
+  .logo{width:42px;height:42px;font-size:20px}
+  .icon-btn,.menu-btn{width:42px;height:42px;font-size:22px;margin-left:5px}
+  .hero-home{padding-left:10px;padding-right:10px}
+  .hero-home h1{font-size:28px}
+  .hero-home p{font-size:13px}
+  .snap-head{padding-left:10px;padding-right:10px}
+  .feature-icon{width:42px;height:42px;font-size:20px;flex:0 0 42px}
+  .snap-copy strong{font-size:15px}
+  .snap-copy small{font-size:10px}
+  .live-card{padding:15px 11px}
+  .metric{padding:12px 10px}
+  .metric>span{font-size:11px}
+  .metric>b{font-size:20px}
+  .bottom-nav button{font-size:9px}
+  .bottom-nav button span{font-size:19px}
+}
+@media(min-width:601px) and (max-width:999px){
+  .hero-home h1{font-size:clamp(32px,5vw,43px)}
+  .hero-home p{font-size:clamp(14px,2vw,17px)}
+  .stats-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .live-card{flex-wrap:nowrap}
+}
+@media(min-width:1000px){
+  .hero-home,.page-title,.snap-card,.live-card,.stats-row,.analysis-controls,.analysis-status,.match,.calendar-game,.slip-card{max-width:950px}
+}
