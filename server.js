@@ -164,7 +164,7 @@ const TOP_LEAGUE_CATALOG=[
 const TOP_LEAGUE_KEYS=TOP_LEAGUE_CATALOG.map(([name])=>normalizeText(name));
 function topLeagueIndex(name){
   const n=normalizeText(name);
-  return TOP_LEAGUE_KEYS.findIndex(k=>n===k||n.includes(k)||k.includes(n));
+  return TOP_LEAGUE_KEYS.findIndex(k=>n===k);
 }
 function leagueRank(name){
   const topIndex=topLeagueIndex(name);
@@ -224,9 +224,17 @@ app.get("/api/leagues",async(req,r)=>{
     const requestedDate=String(req.query.date||localDayKey(Date.now()));
     const {fixtures}=await getDayFixtures(requestedDate,false);
     const map=new Map();
+    for(const [name,country] of TOP_LEAGUE_CATALOG){
+      const key=name+"|||"+country;
+      map.set(key,{name,country,group:"Top Leagues",key});
+    }
     for(const f of fixtures){
       if(!f.league) continue;
-      if(!map.has(f.league)){const country=leagueCountry(f.league,f.category);map.set(f.league,{name:f.league,country,group:leagueGroup(f.league,f.category),key:f.league+"|||"+country});}
+      const topIndex=topLeagueIndex(f.league);
+      if(topIndex>=0) continue;
+      const country=leagueCountry(f.league,f.category);
+      const key=f.league+"|||"+country;
+      if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key});
     }
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
