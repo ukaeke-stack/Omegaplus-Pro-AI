@@ -226,7 +226,7 @@ app.get("/api/leagues",async(req,r)=>{
     const map=new Map();
     for(const f of fixtures){
       if(!f.league) continue;
-      if(!map.has(f.league)) map.set(f.league,{name:f.league,country:leagueCountry(f.league,f.category),group:leagueGroup(f.league,f.category)});
+      if(!map.has(f.league)){const country=leagueCountry(f.league,f.category);map.set(f.league,{name:f.league,country,group:leagueGroup(f.league,f.category),key:f.league+"|||"+country});}
     }
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
@@ -271,7 +271,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
   try{
     const body=req.body||{};
     const requestedDate=String(body.date||localDayKey(Date.now()));
-    const leagues=Array.isArray(body.leagues)?body.leagues.filter(Boolean):[];
+    const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
     const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
@@ -279,7 +279,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     const fixtures=(await getDayFixtures(requestedDate,false)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
-      if(leagues.length&&!leagues.includes(fixture.league)) continue;
+      if(leagueFilters.length&&!leagueFilters.some(l=>l.name===fixture.league&&(!l.country||l.country===leagueCountry(fixture.league,fixture.category)))) continue;
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
@@ -309,7 +309,7 @@ app.post("/api/predictions/analyze",async(req,r)=>{
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=qualified.slice(0,maxGames);
-    r.json({ok:true,source:"SportyBet web feed",generatedAt:new Date().toISOString(),criteria:{date:requestedDate,leagues,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,predictions});
+    r.json({ok:true,source:"SportyBet web feed",generatedAt:new Date().toISOString(),criteria:{date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
