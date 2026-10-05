@@ -257,7 +257,7 @@ async function getDayFixtures(date,force=false,sport="football"){
 }
 
 app.get("/api/scan",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
+  try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
 app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
 app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
@@ -291,12 +291,14 @@ app.get("/api/leagues",async(req,r)=>{
       const key=name+"|||"+country;
       map.set(key,{name,country,group:"Top Leagues",key});
     }
-    for(const f of fixtures){
-      if(!f.league) continue;
-      if(sport==="football"&&topLeagueIndex(f.league)>=0) continue;
-      const country=leagueCountry(f.league,f.category);
-      const key=f.league+"|||"+country;
-      if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key});
+    if(sport==="football"){
+      for(const f of fixtures){
+        if(!f.league) continue;
+        if(topLeagueIndex(f.league)>=0) continue;
+        const country=leagueCountry(f.league,f.category);
+        const key=f.league+"|||"+country;
+        if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key});
+      }
     }
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
