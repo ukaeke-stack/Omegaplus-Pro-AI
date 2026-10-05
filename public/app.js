@@ -123,8 +123,18 @@ async function loadLeagues(){
     const d=await (await fetch("/api/leagues?date="+encodeURIComponent(state.date))).json();
     const chosen=new Set(selectedLeagues());
     const leagues=d.leagues||[];
-    $("#league").innerHTML=leagues.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join("");
-    $$("#league option").forEach(o=>o.selected=chosen.has(o.value));
+    const groups=["Top Leagues","European Competitions","International","Other Leagues"];
+    const groupLabels={"Top Leagues":"TOP LEAGUES","European Competitions":"EUROPEAN / CONTINENTAL","International":"INTERNATIONAL","Other Leagues":"OTHER LEAGUES"};
+    $("#league").innerHTML=groups.map(group=>{
+      const items=leagues.filter(x=>(typeof x==="string"?group:""+x.group)===group);
+      if(!items.length)return "";
+      return '<optgroup label="'+esc(groupLabels[group])+'">'+items.map(x=>{
+        const value=typeof x==="string"?x:x.name;
+        const country=typeof x==="string"?"":x.country;
+        return '<option value="'+esc(value)+'">'+esc(value)+(country?" — "+esc(country):"")+'</option>';
+      }).join("")+'</optgroup>';
+    }).join("");
+    $("#league option").forEach(o=>o.selected=chosen.has(o.value));
     $("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
   }catch(e){setStatus("Could not load leagues for "+prettyDate(state.date)+".")}
 }
