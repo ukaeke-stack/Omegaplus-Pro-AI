@@ -8,6 +8,17 @@ const pad=n=>String(n).padStart(2,"0");
 const dateKey=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
 const prettyDate=v=>v?new Date(v+"T00:00:00").toLocaleDateString("en-NG",{weekday:"short",day:"numeric",month:"short",year:"numeric"}):"—";
 function setStatus(t){$("#analysisStatus").textContent=t}
+async function jsonFetch(url,options={}){
+  const res=await fetch(url,options);
+  const text=await res.text();
+  let data=null;
+  try{data=text?JSON.parse(text):null}catch{
+    const preview=text.replace(/\s+/g," ").slice(0,180);
+    throw new Error("Server returned a non-JSON response ("+res.status+"): "+preview);
+  }
+  if(!res.ok)throw new Error(data?.error||data?.message||("Request failed ("+res.status+")"));
+  return data;
+}
 function setDate(v){state.date=v;state.dates.add(v);$("#fixtureDate").value=v;$("#calendarDate").value=v;$("#selectedDateMetric").textContent=v.slice(5).replace("-","/");renderDateChips();}
 function shiftDate(days){const d=new Date(state.date+"T00:00:00");d.setDate(d.getDate()+days);return dateKey(d)}
 function selectedLeagues(){return $("#league")?[...$("#league").selectedOptions].map(o=>o.value):[]}
@@ -120,7 +131,7 @@ function bindMarketDropdowns(){
 }
 async function loadLeagues(){
   try{
-    const d=await (await fetch("/api/leagues?date="+encodeURIComponent(state.date))).json();
+    const d=await jsonFetch("/api/leagues?date="+encodeURIComponent(state.date));
     const chosen=new Set(selectedLeagues());
     const leagues=d.leagues||[];
     const groups=["Top Leagues","European Competitions","International","Other Leagues"];
@@ -140,7 +151,7 @@ async function loadLeagues(){
 }
 async function loadBase(){
   try{
-    const d=await (await fetch("/api/predictions?date="+encodeURIComponent(state.date))).json();
+    const d=await jsonFetch("/api/predictions?date="+encodeURIComponent(state.date));
     state.rows=d.predictions||[];$("#predictionTotal").textContent=state.rows.length;
     archiveDay(state.date,{fixtures:state.rows});
     setStatus("Daily archive ready for "+prettyDate(state.date)+".");
@@ -164,7 +175,7 @@ async function analyze(){
   try{
     const all=[];
     for(const date of dates){
-      const d=await (await fetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues,marketTypes,selections,maxGames})})).json();
+      const d=await jsonFetch("/api/predictions/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({date,leagues,marketTypes,selections,maxGames})});
       if(!d.ok)throw new Error(d.error||("Analysis failed for "+prettyDate(date)));
       const dated=(d.predictions||[]).map(x=>({...x,date}));
       all.push(...dated);
