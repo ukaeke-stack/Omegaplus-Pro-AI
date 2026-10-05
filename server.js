@@ -8,7 +8,7 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.2.0";
+const APP_VERSION="1.2.1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -303,7 +303,7 @@ async function buildDailyBest(date){
     for(const market of fixture.markets){
       if(market.marketId!=="18") continue;
       for(const outcome of market.outcomes){
-        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+        if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<1.10) continue;
         const label=pickLabel("ou",outcome);
         if(!/^over\s*(1\.5|2\.5)$/i.test(label)) continue;
         const confidence=confidenceForOutcome(market,outcome);
@@ -326,7 +326,7 @@ async function buildBestPicks(date,limit=25,requestedType="all"){
       for(const type of types){
         if(!marketMatches(market,type)) continue;
         for(const outcome of market.outcomes||[]){
-          if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+          if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<1.10) continue;
           const confidence=confidenceForOutcome(market,outcome);
           if(confidence<60) continue;
           candidates.push({id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date});
