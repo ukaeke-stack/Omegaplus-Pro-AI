@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -329,7 +329,13 @@ app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=a
 app.post("/api/admin/sessions/revoke-all",requireRole("admin"),async(req,r)=>{try{const count=await revokeAllSessions();await audit(req,"admin.sessions.revoke_all","app",{count});r.json({ok:true,count})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.get("/api/app/settings",async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/app/settings",async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings(),predictionSettings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});\napp.get("/api/admin/prediction-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/admin/prediction-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updatePredictionSettings(req.body||{});await audit(req,"admin.prediction_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.get("/api/prediction-settings",async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/account/preferences",requireAuth,async(req,r)=>{try{r.json({ok:true,preferences:await getUserPreferences(req.user.id)})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/account/preferences",requireAuth,async(req,r)=>{try{const preferences=await updateUserPreferences(req.user.id,req.body||{});r.json({ok:true,preferences})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
+
 
 app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
