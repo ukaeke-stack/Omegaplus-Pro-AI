@@ -236,7 +236,7 @@ async function loadDailyBest(){
     saveHistoryRows(rows.map(x=>({...x,date,sport:state.sport})),date);
     archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     renderHistory(date,rows);
-    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);renderSlip();loadDailyBest()});
+    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date){
