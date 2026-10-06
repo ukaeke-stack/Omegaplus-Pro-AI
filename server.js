@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences,changePassword,adminResetPassword,deleteUser,revokeUserSessions,updateUserProfile,deleteOwnAccount} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -10,11 +10,14 @@ import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
 const app=express();
+const authRate=new Map();
+function rateLimitAuth(key,max=8,windowMs=10*60*1000){const now=Date.now(),v=authRate.get(key);if(!v||now-v.start>windowMs){authRate.set(key,{start:now,count:1});return true}v.count++;return v.count<=max}
+function authLimited(req,res,key,max=8){if(rateLimitAuth(key+":"+(req.ip||"unknown"),max))return false;res.status(429).json({ok:false,error:"Too many attempts. Please wait and try again later."});return true}
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
 const APP_VERSION="1.5.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="mixed-top10-v1";
+const DAILY_SELECTION_VERSION="mixed-top10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -24,8 +27,8 @@ const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
 async function betRelayFetch(pathname,options={}){if(!BETRELAY_API_KEY)throw new Error("Multi-bookmaker code service is not configured yet. Add BETRELAY_API_KEY to Railway.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const res=await fetch(BETRELAY_BASE+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","X-API-Key":BETRELAY_API_KEY,...(options.headers||{})},signal:controller.signal});const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}if(!res.ok)throw new Error(body?.message||("BetRelay HTTP "+res.status));if(!body)throw new Error("BetRelay returned an invalid response");return body}finally{clearTimeout(timer)}}
 function bookmakerById(id){return BOOKMAKERS.find(x=>x.id===String(id))}
-async function createSportyBooking(selections,sport="football"){const fixtures=await getSportyFixtures(false,true,sport);for(const s of selections){const f=fixtures.find(x=>x.eventId===s.eventId);const m=f?.markets.find(x=>x.marketId===String(s.marketId)&&String(x.specifier||"")===String(s.specifier||""));const o=m?.outcomes.find(x=>x.outcomeId===String(s.outcomeId)&&x.isActive);if(!f||!m||!o)throw new Error("One or more selections are no longer available. Refresh and analyze again.")}const payload={selections:selections.map(s=>({eventId:s.eventId,marketId:String(s.marketId),specifier:s.specifier??null,outcomeId:String(s.outcomeId)}))};const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify(payload)}),data=body.data||{};if(!data.shareCode)throw new Error("SportyBet did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null}}
-async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:target,country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[]}}
+async function createSportyBooking(selections,sport="football"){const requested=Array.isArray(selections)?selections:[];if(!requested.length)throw new Error("Select at least one match first.");if(requested.length>50)throw new Error("SportyBet allows a maximum of 50 selections per normal betslip.");const fixtures=await getSportyFixtures(false,true,sport);for(const s of requested){const f=fixtures.find(x=>x.eventId===s.eventId);const m=f?.markets.find(x=>x.marketId===String(s.marketId)&&String(x.specifier||"")===String(s.specifier||""));const o=m?.outcomes.find(x=>x.outcomeId===String(s.outcomeId)&&x.isActive);if(!f||!m||!o)throw new Error("One or more selections are no longer available. Refresh and analyze again.")}const payload={selections:requested.map(s=>({eventId:s.eventId,marketId:String(s.marketId),specifier:s.specifier??null,outcomeId:String(s.outcomeId)}))};const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify(payload)}),data=body.data||{};if(!data.shareCode)throw new Error("SportyBet did not return a booking code.");const accepted=Array.isArray(data.outcomes)?data.outcomes.length:null;const unavailable=Array.isArray(data.unavailableOutcomes)?data.unavailableOutcomes.length:0;if(accepted!==null&&accepted!==requested.length)throw new Error("SportyBet accepted only "+accepted+" of "+requested.length+" selected games. "+(unavailable?unavailable+" selection(s) were unavailable. ":"")+"Refresh and generate again.");if(unavailable)throw new Error("SportyBet marked "+unavailable+" selection(s) unavailable. Refresh and generate again.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null,requestedSelections:requested.length,acceptedSelections:accepted??requested.length,generatedAt:new Date().toISOString()}}
+async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:target,country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");const converted=Array.isArray(data.selections)?data.selections.length:null;if(converted!==null&&converted!==selections.length)throw new Error(targetBookie.name+" accepted only "+converted+" of "+selections.length+" selected games. Generate again after refreshing the selections.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[],requestedSelections:selections.length,acceptedSelections:converted??selections.length}}
 
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
@@ -57,25 +60,32 @@ async function writePersistentArchive(date,data,sport="football"){
 
 
 async function sportyFetch(pathname,options={}){
-  const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
-  if(wait) await sleep(wait);
-  lastSportyRequest=Date.now();
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),6000);
-  try{
-    const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
-      ...options,
-      headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},
-      signal:controller.signal
-    });
-    const text=await res.text();
-    let body=null;
-    try{body=text?JSON.parse(text):null}catch{}
-    if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
-    if(!body) throw new Error("SportyBet returned an invalid response");
-    if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
-    return body;
-  }finally{clearTimeout(timer)}
+  let lastError=null;
+  for(let attempt=0;attempt<3;attempt++){
+    const wait=Math.max(0,150-(Date.now()-lastSportyRequest));
+    if(wait) await sleep(wait);
+    lastSportyRequest=Date.now();
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),8000);
+    try{
+      const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
+        ...options,
+        headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},
+        signal:controller.signal
+      });
+      const text=await res.text();
+      let body=null;
+      try{body=text?JSON.parse(text):null}catch{}
+      if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
+      if(!body) throw new Error("SportyBet returned an invalid response");
+      if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
+      return body;
+    }catch(e){
+      lastError=e;
+      if(attempt<2) await sleep(400*(attempt+1));
+    }finally{clearTimeout(timer)}
+  }
+  throw lastError||new Error("SportyBet request failed");
 }
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
@@ -244,7 +254,17 @@ app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"integration-omegaplus-current",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
+app.post("/api/auth/login",async(req,r)=>{if(authLimited(req,r,"login",8))return;try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
+app.post("/api/auth/forgot-password",async(req,r)=>{if(authLimited(req,r,"reset",5))return;try{const result=await requestPasswordReset(req.body?.email,req);r.json({ok:true,...result})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.post("/api/auth/reset-password",async(req,r)=>{if(authLimited(req,r,"reset-complete",5))return;try{await resetPassword(req.body?.token,req.body?.password);r.json({ok:true,message:"Password changed successfully. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
+app.patch("/api/account/profile",requireAuth,async(req,r)=>{try{const user=await updateUserProfile(req.user.id,req.body||{});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/account",requireAuth,async(req,r)=>{try{await deleteOwnAccount(req.user.id);clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/auth/change-password",requireAuth,async(req,r)=>{try{authRateLimit(req,"change-password",5);await changePassword(req.user.id,req.body?.currentPassword,req.body?.newPassword);clearSessionCookie(r);r.json({ok:true,message:"Password changed. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/auth/change-password",requireAuth,async(req,r)=>{try{await changePassword(req.user.id,req.body?.currentPassword,req.body?.newPassword);clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.patch("/api/account/profile",requireAuth,async(req,r)=>{try{const name=String(req.body?.name||"").trim().slice(0,120),email=String(req.body?.email||"").trim().toLowerCase();if(!name||!email)throw new Error("Name and email are required.");const x=await (await import("./auth.js")).updateUserProfile(req.user.id,{name,email});r.json({ok:true,user:x})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/account",requireAuth,async(req,r)=>{try{await deleteUser(req.user.id,{user:req.user});clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
 app.post("/api/auth/logout",async(req,r)=>{try{await logoutUser(req);clearSessionCookie(r);r.json({ok:true})}catch{clearSessionCookie(r);r.json({ok:true})}});
 app.get("/api/plans",async(_,r)=>{try{r.json({ok:true,plans:await listPlans()})}catch(e){r.status(503).json({ok:false,error:e.message,plans:[]})}});
 
@@ -311,11 +331,29 @@ app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/reset-password",requireRole("admin"),async(req,r)=>{try{const user=await adminResetPassword(req.params.id,req.body?.password,req);r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/revoke-sessions",requireRole("admin"),async(req,r)=>{try{const count=await revokeUserSessions(req.params.id,req);r.json({ok:true,count})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{await deleteUser(req.params.id,req);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const sub=await activateSubscription(req.params.id,String(req.body?.plan||"pro"),Number(req.body?.days)||30,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan:req.body?.plan||"pro",days:Number(req.body?.days)||30});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/grant-premium",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(3650,Number(req.body?.days)||30));const sub=await activateSubscription(req.params.id,"premium",days,"admin_grant");await audit(req,"admin.premium.grant",req.params.id,{days,reason:String(req.body?.reason||"manual admin grant").slice(0,200)});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
 app.delete("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{await revokeSubscription(req.params.id);await audit(req,"admin.subscription.revoke",req.params.id);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=await createOrUpdatePlan(req.body||{});await audit(req,"admin.plan.update",String(req.body?.id||""),req.body||{});r.json({ok:true,plan})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/sessions/revoke-all",requireRole("admin"),async(req,r)=>{try{const count=await revokeAllSessions();await audit(req,"admin.sessions.revoke_all","app",{count});r.json({ok:true,count})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.get("/api/app/settings",async(req,r)=>{try{const settings=await getAccessSettings();let show=settings.announcementEnabled&&settings.announcement&&(!settings.announcementExpiresAt||new Date(settings.announcementExpiresAt)>new Date());if(show&&settings.announcementAudience!=="all"){const u=await currentUser(req);show=settings.announcementAudience==="premium"?Boolean(u&&["pro","premium"].includes(u.plan)):Boolean(!u||u.plan==="free")}r.json({ok:true,settings:{...settings,announcement:show?settings.announcement:""},predictionSettings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/admin/prediction-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/admin/prediction-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updatePredictionSettings(req.body||{});await audit(req,"admin.prediction_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.get("/api/prediction-settings",async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/account/preferences",requireAuth,async(req,r)=>{try{r.json({ok:true,preferences:await getUserPreferences(req.user.id)})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/account/preferences",requireAuth,async(req,r)=>{try{const preferences=await updateUserPreferences(req.user.id,req.body||{});r.json({ok:true,preferences})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
+
+
+app.post("/api/admin/users/:id/reset-password",requireRole("admin"),async(req,r)=>{try{const user=await adminResetPassword(req.params.id,req.body?.password,req);r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/revoke-sessions",requireRole("admin"),async(req,r)=>{try{const count=await revokeUserSessions(req.params.id,req);r.json({ok:true,count})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{await deleteUser(req.params.id,req);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
@@ -341,7 +379,7 @@ app.get("/api/scan",async(req,r)=>{
   try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
 app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
-app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,await getPredictionSettings().then(x=>x.dailyBestCount));if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
@@ -438,12 +476,13 @@ async function buildDailyBest(date,sport="football"){
     seen.add(key); return true;
   });
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
+  const predictionControls=await getPredictionSettings();
   const enriched=decoratePredictions(await enrichPredictions(shortlist,{concurrency:4}));
   const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
   // First guarantee market diversity: take the strongest available pick from each market type.
   for(const type of types){
-    if(selected.length>=10) break;
+    if(selected.length>=predictionControls.dailyBestCount) break;
     const p=ranked.find(x=>x.marketType===type&&!usedEvents.has(x.eventId));
     if(!p) continue;
     selected.push(p); usedEvents.add(p.eventId); usedMarkets.add(type);
@@ -454,7 +493,7 @@ async function buildDailyBest(date,sport="football"){
     if(usedEvents.has(p.eventId)) continue;
     selected.push(p); usedEvents.add(p.eventId);
   }
-  return selected.slice(0,10);
+  return selected.slice(0,predictionControls.dailyBestCount);
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
@@ -507,23 +546,24 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
       const f=candidates.find(x=>x.eventId===p.eventId);
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
-      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,score:model.score,sources:model.sources,confidence:Number((model.probability||0).toFixed(1)),analyzedAt:new Date().toISOString()});
     }
     results.sort((a,b)=>b.confidence-a.confidence);
-    r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"One best correct score per match from market signal + recent form/xG + independent fixture sources"});
+    r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"Single most likely correct-score outcome per match from market signal + recent form/xG + independent fixture sources"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===await getPredictionSettings().then(x=>x.dailyBestCount)&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
     const body=req.body||{};
+    const predictionControls=await getPredictionSettings();
     const requestedSport=String(body.sport||"football");
     const requestedDate=String(body.date||localDayKey(Date.now()));
     const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
     const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
-    const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
-    const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
+    const maxGames=Math.min(predictionControls.maxGames,Math.max(1,Math.min(50,Number(body.maxGames)||predictionControls.maxGames)));
+    const minConfidence=Math.max(predictionControls.minConfidence,Math.min(99,Number(body.minConfidence)||0));
     const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
@@ -532,8 +572,9 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
           if(!marketMatches(market,type)) continue;
+          if(requestedSport==="football"&&!predictionControls.allowedMarkets.includes(type)) continue;
           for(const outcome of market.outcomes){
-            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<predictionControls.minOdds) continue;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
@@ -557,7 +598,9 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const candidates=qualified.slice(0,Math.min(60,qualified.length));
-    const enriched=await enrichPredictions(candidates,{concurrency:3});
+    let enriched=await enrichPredictions(candidates,{concurrency:3});
+    const dataMinimum=predictionControls.minDataRequired;
+    if(dataMinimum>0) enriched=enriched.filter(x=>Array.isArray(x.sources)?x.sources.length>=dataMinimum:Number(x.independentConfidence!=null)+Number(x.modelProbability!=null)>=dataMinimum);
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
     r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
@@ -615,7 +658,7 @@ app.get("/api/performance",async(req,r)=>{
     r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket});
   }catch(e){r.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
 });
-app.post("/api/booking-code",requirePaid,async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
+app.post("/api/booking-code",requirePaid,async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");await audit(req,"booking.request","app",{count:selections.length,sport,target});if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});const uniqueKeys=new Set(selections.map(s=>String(s.eventId)+"|"+String(s.marketId)+"|"+String(s.specifier??"")+"|"+String(s.outcomeId)));if(uniqueKeys.size!==selections.length)return r.status(400).json({ok:false,error:"Duplicate selections detected. Remove duplicates and try again."});if(selections.length>50)return r.status(400).json({ok:false,error:"Maximum 50 selections per normal SportyBet betslip."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){const status=/maximum|duplicate|select at least|accepted only|unavailable|no longer available/i.test(String(e.message))?400:502;await audit(req,"booking.failure","app",{error:String(e.message).slice(0,200)}).catch(()=>{});r.status(status).json({ok:false,error:e.message})}});
 
 app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!prevArchive||!Array.isArray(prevArchive.predictions)||prevArchive.predictions.length!==10){try{const predictions=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,predictions:[],results:[]};prevArchive.predictions=predictions;prevArchive.dailySelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&todayArchive?.predictions?.length===10?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.dailySelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
