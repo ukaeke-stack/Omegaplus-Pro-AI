@@ -262,7 +262,8 @@ export async function requestPasswordReset(email,req){
   const key=String(process.env.RESEND_API_KEY||"");
   const from=String(process.env.RESEND_FROM||"");
   if(!key||!from)throw new Error("Password reset email service is not configured yet.");
-  const res=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({from,to:[email],subject:"Omegaplus Pro AI password reset",html:"<p>Hello "+String(r.rows[0].name||"there").replace(/[<>]/g,"")+",</p><p>We received a request to reset your Omegaplus Pro AI password.</p><p><a href=""+link+"">Reset your password</a></p><p>This link expires in 30 minutes. If you did not request this, you can ignore this email.</p>"})});
+  const html="<p>Hello "+String(r.rows[0].name||"there").replace(/[<>]/g,"")+",</p><p>We received a request to reset your Omegaplus Pro AI password.</p><p><a href='"+link+"'>Reset your password</a></p><p>This link expires in 30 minutes. If you did not request this, you can ignore this email.</p>";
+  const res=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({from,to:[email],subject:"Omegaplus Pro AI password reset",html})});
   if(!res.ok)throw new Error("Unable to send the password reset email right now.");
   await audit({user:{id:r.rows[0].id}},"account.password_reset.request",r.rows[0].id);
   return generic;
