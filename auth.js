@@ -298,6 +298,43 @@ export async function revokeSubscription(userId){
   await q("update users set plan='free',updated_at=now() where id=$1",[userId]);
 }
 
+export async function getAdminSettings(){
+  const r=await q("select key,value from app_settings where key like 'admin_%'");
+  const out={};
+  for(const row of r.rows){out[row.key.replace(/^admin_/,"")]=row.value}
+  return {
+    maintenanceMode: out.maintenance_mode===true,
+    registrationEnabled: out.registration_enabled!==false,
+    analyzerEnabled: out.analyzer_enabled!==false,
+    independentStatsEnabled: out.independent_stats_enabled!==false,
+    correctScoreEnabled: out.correct_score_enabled!==false,
+    bookingCodeEnabled: out.booking_code_enabled!==false,
+    maxAnalyzerGames: Math.max(1,Math.min(50,Number(out.max_analyzer_games)||50)),
+    minAnalyzerConfidence: Math.max(0,Math.min(99,Number(out.min_analyzer_confidence)||0))
+  };
+}
+export async function updateAdminSettings(body={}){
+  const current=await getAdminSettings();
+  const next={
+    maintenanceMode: typeof body.maintenanceMode==="boolean"?body.maintenanceMode:current.maintenanceMode,
+    registrationEnabled: typeof body.registrationEnabled==="boolean"?body.registrationEnabled:current.registrationEnabled,
+    analyzerEnabled: typeof body.analyzerEnabled==="boolean"?body.analyzerEnabled:current.analyzerEnabled,
+    independentStatsEnabled: typeof body.independentStatsEnabled==="boolean"?body.independentStatsEnabled:current.independentStatsEnabled,
+    correctScoreEnabled: typeof body.correctScoreEnabled==="boolean"?body.correctScoreEnabled:current.correctScoreEnabled,
+    bookingCodeEnabled: typeof body.bookingCodeEnabled==="boolean"?body.bookingCodeEnabled:current.bookingCodeEnabled,
+    maxAnalyzerGames: body.maxAnalyzerGames===undefined?current.maxAnalyzerGames:Math.max(1,Math.min(50,Math.round(Number(body.maxAnalyzerGames)||50))),
+    minAnalyzerConfidence: body.minAnalyzerConfidence===undefined?current.minAnalyzerConfidence:Math.max(0,Math.min(99,Math.round(Number(body.minAnalyzerConfidence)||0)))
+  };
+  const pairs=[
+    ["admin_maintenance_mode",next.maintenanceMode],["admin_registration_enabled",next.registrationEnabled],
+    ["admin_analyzer_enabled",next.analyzerEnabled],["admin_independent_stats_enabled",next.independentStatsEnabled],
+    ["admin_correct_score_enabled",next.correctScoreEnabled],["admin_booking_code_enabled",next.bookingCodeEnabled],
+    ["admin_max_analyzer_games",next.maxAnalyzerGames],["admin_min_analyzer_confidence",next.minAnalyzerConfidence]
+  ];
+  for(const [key,value] of pairs) await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
+  return next;
+}
+
 export async function getAccessSettings(){
   const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days')");
   const map=Object.fromEntries(r.rows.map(x=>[x.key,x.value]));
