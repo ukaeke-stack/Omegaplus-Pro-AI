@@ -349,8 +349,7 @@ app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const sub=await activateSubscription(req.params.id,String(req.body?.plan||"pro"),Number(req.body?.days)||30,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan:req.body?.plan||"pro",days:Number(req.body?.days)||30});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.delete("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{await revokeSubscription(req.params.id);await audit(req,"admin.subscription.revoke",req.params.id);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const plan=String(req.body?.plan||"pro"),days=Math.max(1,Math.min(3650,Number(req.body?.days)||30));const sub=await activateSubscription(req.params.id,plan,days,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan,days,grantedByAdmin:true});r.json({ok:true,subscription:sub,grantedByAdmin:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=await createOrUpdatePlan(req.body||{});await audit(req,"admin.plan.update",String(req.body?.id||""),req.body||{});r.json({ok:true,plan})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
@@ -559,7 +558,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const body=req.body||{}, admin=await getAdminSettings();
     if(!admin.analyzerEnabled)return r.status(503).json({ok:false,error:"Analyzer is temporarily disabled by the administrator.",code:"ANALYZER_DISABLED",predictions:[]});
     const requestedSport=String(body.sport||"football");
-    const requestedDate=/^\\d{4}-\\d{2}-\\d{2}$/.test(String(body.date||""))?String(body.date):localDayKey(Date.now());
+    const requestedDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.date||""))?String(body.date):localDayKey(Date.now());
     const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{
       const raw=String(value),parts=raw.split("|||"); return {name:parts[0].trim(),country:parts.slice(1).join("|||").trim()};
     });
@@ -607,7 +606,30 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
       const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
       if(!dedupe.has(key)||row.confidence>dedupe.get(key).confidence)dedupe.set(key,row);
     }
-    const candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    let candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    if(!candidates.length && selections.length){
+      for(const fixture of fixtures){
+        if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
+        for(const market of (fixture.markets||[])){
+          const types=marketTypes.length?marketTypes:["ou"];
+          for(const type of types){
+            if(!marketMatches(market,type))continue;
+            for(const outcome of (market.outcomes||[])){
+              const odds=Number(outcome.odds);
+              if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
+              const pick=pickLabel(type,outcome);
+              if(!selections.some(sel=>selectionRequested({...outcome,outcomeName:pick},sel,market)))continue;
+              const confidence=confidenceForOutcome(market,outcome);
+              if(confidence<minConfidence)continue;
+              const row={id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick,odds,marketType:type,confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"};
+              const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
+              if(!dedupe.has(key))dedupe.set(key,row);
+            }
+          }
+        }
+      }
+      candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    }
     const limited=candidates.slice(0,Math.min(80,candidates.length));
     let enriched=limited;
     if(admin.independentStatsEnabled && limited.length) enriched=await enrichPredictions(limited,{concurrency:4});
