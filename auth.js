@@ -297,6 +297,25 @@ export async function loginUser({email,password},req){
   await audit({user},"account.login");
   return {user,session};
 }
+export async function updateUserProfile(userId,{name,email}={}){
+  const nextName=String(name||"").trim().slice(0,100);
+  const nextEmail=cleanEmail(email);
+  if(!nextEmail||!/^\S+@\S+\.\S+$/.test(nextEmail))throw new Error("Enter a valid email address.");
+  const exists=await q("select id from users where lower(email)=lower($1) and id<>$2",[nextEmail,userId]);
+  if(exists.rowCount)throw new Error("That email address is already in use.");
+  const r=await q("update users set name=$1,email=$2,updated_at=now() where id=$3 and is_active=true returning id,email,name,role,plan,is_active,email_verified,created_at,last_login_at",[nextName,nextEmail,userId]);
+  if(!r.rowCount)throw new Error("Account not found.");
+  await audit({user:{id:userId}},"account.profile.update",userId,{email:nextEmail});
+  return safeUser(r.rows[0]);
+}
+export async function deleteOwnAccount(userId){
+  const r=await q("select id,role from users where id=$1",[userId]);
+  if(!r.rowCount)throw new Error("Account not found.");
+  if(r.rows[0].role==="admin")throw new Error("Administrator accounts cannot be self-deleted.");
+  await q("delete from users where id=$1",[userId]);
+  return {ok:true};
+}
+
 export async function changePassword(userId,currentPassword,newPassword){
   const password=String(newPassword||"");
   if(password.length<8)throw new Error("Password must be at least 8 characters.");
