@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences,changePassword,adminResetPassword,deleteUser,revokeUserSessions,updateUserProfile,deleteOwnAccount} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,changePassword,adminResetPassword,deleteUser,revokeUserSessions,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences,changePassword,adminResetPassword,deleteUser,revokeUserSessions,updateUserProfile,deleteOwnAccount} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -261,6 +261,10 @@ app.post("/api/auth/reset-password",async(req,r)=>{if(authLimited(req,r,"reset-c
 app.patch("/api/account/profile",requireAuth,async(req,r)=>{try{const user=await updateUserProfile(req.user.id,req.body||{});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.delete("/api/account",requireAuth,async(req,r)=>{try{await deleteOwnAccount(req.user.id);clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/change-password",requireAuth,async(req,r)=>{try{await changePassword(req.user.id,req.body?.currentPassword,req.body?.newPassword);clearSessionCookie(r);r.json({ok:true,message:"Password changed. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/auth/change-password",requireAuth,async(req,r)=>{try{await changePassword(req.user.id,req.body?.currentPassword,req.body?.newPassword);clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.patch("/api/account/profile",requireAuth,async(req,r)=>{try{const name=String(req.body?.name||"").trim().slice(0,120),email=String(req.body?.email||"").trim().toLowerCase();if(!name||!email)throw new Error("Name and email are required.");const x=await (await import("./auth.js")).updateUserProfile(req.user.id,{name,email});r.json({ok:true,user:x})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/account",requireAuth,async(req,r)=>{try{await deleteUser(req.user.id,{user:req.user});clearSessionCookie(r);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+
 app.post("/api/auth/logout",async(req,r)=>{try{await logoutUser(req);clearSessionCookie(r);r.json({ok:true})}catch{clearSessionCookie(r);r.json({ok:true})}});
 app.get("/api/plans",async(_,r)=>{try{r.json({ok:true,plans:await listPlans()})}catch(e){r.status(503).json({ok:false,error:e.message,plans:[]})}});
 
@@ -347,6 +351,9 @@ app.patch("/api/account/preferences",requireAuth,async(req,r)=>{try{const prefer
 
 
 
+app.post("/api/admin/users/:id/reset-password",requireRole("admin"),async(req,r)=>{try{const user=await adminResetPassword(req.params.id,req.body?.password,req);r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/revoke-sessions",requireRole("admin"),async(req,r)=>{try{const count=await revokeUserSessions(req.params.id,req);r.json({ok:true,count})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{await deleteUser(req.params.id,req);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
