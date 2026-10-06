@@ -139,10 +139,10 @@ function marketMatches(market,type){
   if(type==="basketball_handicap") return ["223"].includes(market.marketId)||n.includes("handicap")||n.includes("spread");
   if(type==="basketball_moneyline") return ["219"].includes(market.marketId)||n.includes("winner")||n.includes("moneyline")||n.includes("match result");
   if(type==="basketball_team_total") return ["227","228"].includes(market.marketId)||n.includes("team total");
-  if(type==="ou") return market.marketId==="18";
-  if(type==="btts") return market.marketId==="29";
-  if(type==="1x2") return market.marketId==="1";
-  if(type==="handicap") return ["14","16"].includes(market.marketId);
+  if(type==="ou") return market.marketId==="18"||n.includes("over under")||n.includes("total goals")||n.includes("goals total");
+  if(type==="btts") return market.marketId==="29"||n.includes("both teams to score")||n.includes("btts");
+  if(type==="1x2") return market.marketId==="1"||n.includes("1x2")||n.includes("match result")||n==="winner";
+  if(type==="handicap") return ["14","16"].includes(market.marketId)||n.includes("handicap")||n.includes("spread");
   if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card");
   return false;
