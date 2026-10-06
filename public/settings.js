@@ -98,7 +98,7 @@
   modal.addEventListener("click",e=>{if(e.target===modal)closeSettings()});
   $("#saveSettings").onclick=()=>{
     const s=read(); save(s);
-    localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());
+    localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());\n    if(window.omegaAuth?.user){fetch("/api/account/preferences",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({defaultMarket:s.defaultMarket,defaultSelection:s.defaultSelection,riskProfile:s.riskProfile,notifications:s.notifications,autoRefresh:s.autoRefresh})}).catch(()=>{})}
     if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(s);
     $("#settingsSaveStatus").textContent="Settings saved successfully.";
     setTimeout(()=>$("#settingsSaveStatus").textContent="",1800);
