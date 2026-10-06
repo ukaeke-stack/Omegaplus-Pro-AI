@@ -5,8 +5,20 @@ import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
+import android.webkit.JavascriptInterface;
+import android.content.Intent;
+import android.net.Uri;
+import android.content.pm.PackageInfo;
 
 public class MainActivity extends Activity {
+    public class AppBridge {
+        @JavascriptInterface public String getVersionName() { return BuildConfig.VERSION_NAME; }
+        @JavascriptInterface public int getVersionCode() { return BuildConfig.VERSION_CODE; }
+        @JavascriptInterface public void openPlayStore() {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id="+getPackageName()))); }
+            catch (Exception e) { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id="+getPackageName()))); }
+        }
+    }
     private static final String APP_URL = "https://omegaplus-pro-ai.vercel.app/";
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -18,6 +30,7 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(false);
         s.setSupportZoom(false);
+        web.addJavascriptInterface(new AppBridge(), "AndroidApp");
         web.loadUrl(APP_URL);
         setContentView(web);
     }
