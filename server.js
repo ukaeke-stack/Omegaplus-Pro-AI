@@ -57,25 +57,32 @@ async function writePersistentArchive(date,data,sport="football"){
 
 
 async function sportyFetch(pathname,options={}){
-  const wait=Math.max(0,100-(Date.now()-lastSportyRequest));
-  if(wait) await sleep(wait);
-  lastSportyRequest=Date.now();
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),6000);
-  try{
-    const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
-      ...options,
-      headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},
-      signal:controller.signal
-    });
-    const text=await res.text();
-    let body=null;
-    try{body=text?JSON.parse(text):null}catch{}
-    if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
-    if(!body) throw new Error("SportyBet returned an invalid response");
-    if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
-    return body;
-  }finally{clearTimeout(timer)}
+  let lastError=null;
+  for(let attempt=0;attempt<3;attempt++){
+    const wait=Math.max(0,150-(Date.now()-lastSportyRequest));
+    if(wait) await sleep(wait);
+    lastSportyRequest=Date.now();
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),8000);
+    try{
+      const res=await fetch(SPORTYBET_BASE+"/api/"+SPORTYBET_REGION+pathname,{
+        ...options,
+        headers:{Accept:"application/json","Content-Type":"application/json","Current-Country":COUNTRY,...(options.headers||{})},
+        signal:controller.signal
+      });
+      const text=await res.text();
+      let body=null;
+      try{body=text?JSON.parse(text):null}catch{}
+      if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
+      if(!body) throw new Error("SportyBet returned an invalid response");
+      if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
+      return body;
+    }catch(e){
+      lastError=e;
+      if(attempt<2) await sleep(400*(attempt+1));
+    }finally{clearTimeout(timer)}
+  }
+  throw lastError||new Error("SportyBet request failed");
 }
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
