@@ -117,6 +117,11 @@ export async function initAuthDb(){
         value jsonb not null default '{}'::jsonb,
         updated_at timestamptz not null default now()
       );
+      create table if not exists user_preferences(
+        user_id uuid primary key references users(id) on delete cascade,
+        preferences jsonb not null default '{}'::jsonb,
+        updated_at timestamptz not null default now()
+      );
       create table if not exists payments(
         id uuid primary key default gen_random_uuid(),
         user_id uuid not null references users(id) on delete cascade,
@@ -348,6 +353,50 @@ export async function activateSubscription(userId,planId,days=30,provider="admin
 export async function revokeSubscription(userId){
   await q("update subscriptions set status='cancelled',updated_at=now() where user_id=$1 and status='active'",[userId]);
   await q("update users set plan='free',updated_at=now() where id=$1",[userId]);
+}
+
+export async function getPredictionSettings(){
+  const r=await q("select key,value from app_settings where key like 'prediction_%'");
+  const map=Object.fromEntries(r.rows.map(x=>[x.key,x.value]));
+  const num=(v,d,min,max)=>Math.max(min,Math.min(max,Number(v===undefined?d:v)||d));
+  return {
+    minConfidence:num(map.prediction_min_confidence,60,0,100),
+    maxGames:num(map.prediction_max_games,20,1,50),
+    dailyBestCount:num(map.prediction_daily_best_count,10,1,25),
+    minOdds:num(map.prediction_min_odds,1.1,1,100),
+    correctScoreEnabled:map.prediction_correct_score_enabled===undefined?true:Boolean(map.prediction_correct_score_enabled),
+    allowedMarkets:Array.isArray(map.prediction_allowed_markets)?map.prediction_allowed_markets:["ou","btts","1x2","handicap","corners","cards"]
+  };
+}
+export async function updatePredictionSettings(body={}){
+  const current=await getPredictionSettings();
+  const allowed=["ou","btts","1x2","handicap","corners","cards"];
+  const next={
+    minConfidence:Math.max(0,Math.min(100,Math.round(Number(body.minConfidence??current.minConfidence)||0))),
+    maxGames:Math.max(1,Math.min(50,Math.round(Number(body.maxGames??current.maxGames)||20))),
+    dailyBestCount:Math.max(1,Math.min(25,Math.round(Number(body.dailyBestCount??current.dailyBestCount)||10))),
+    minOdds:Math.max(1,Math.min(100,Number(body.minOdds??current.minOdds)||1.1)),
+    correctScoreEnabled:typeof body.correctScoreEnabled==="boolean"?body.correctScoreEnabled:current.correctScoreEnabled,
+    allowedMarkets:Array.isArray(body.allowedMarkets)?body.allowedMarkets.filter(x=>allowed.includes(String(x))).map(String):current.allowedMarkets
+  };
+  for(const [key,value] of Object.entries({prediction_min_confidence:next.minConfidence,prediction_max_games:next.maxGames,prediction_daily_best_count:next.dailyBestCount,prediction_min_odds:next.minOdds,prediction_correct_score_enabled:next.correctScoreEnabled,prediction_allowed_markets:next.allowedMarkets}))
+    await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
+  return next;
+}
+export async function getUserPreferences(userId){
+  const r=await q("select preferences from user_preferences where user_id=$1",[userId]);
+  return r.rowCount?r.rows[0].preferences||{}:{};
+}
+export async function updateUserPreferences(userId,preferences={}){
+  const safe={
+    defaultMarket:String(preferences.defaultMarket||"ou").slice(0,30),
+    defaultSelection:String(preferences.defaultSelection||"Over 1.5").slice(0,60),
+    riskProfile:["Conservative","Balanced","Aggressive"].includes(preferences.riskProfile)?preferences.riskProfile:"Balanced",
+    notifications:Boolean(preferences.notifications),
+    autoRefresh:Boolean(preferences.autoRefresh)
+  };
+  await q("insert into user_preferences(user_id,preferences,updated_at) values($1,$2,now()) on conflict(user_id) do update set preferences=excluded.preferences,updated_at=now()",[userId,JSON.stringify(safe)]);
+  return safe;
 }
 
 export async function getAccessSettings(){
