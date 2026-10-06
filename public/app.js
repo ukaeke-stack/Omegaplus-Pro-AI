@@ -241,17 +241,15 @@ async function loadDailyBest(){
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date){
   const box=$("#correctScores");if(!box)return;
-  $("#csStatus").textContent="Analyzing 5 possible correct scores for every match…";
-  box.innerHTML='<div class="empty">Building the multi-source score probability matrix…</div>';
+  $("#csStatus").textContent="Analyzing the single most likely correct score for every match…";
+  box.innerHTML='<div class="empty">Building the multi-source score probability model…</div>';
   try{
     const d=await jsonFetch("/api/correct-scores?sport=football&date="+encodeURIComponent(date));
     const rows=d.predictions||[];
-    $("#csStatus").textContent=rows.length?rows.length+" match(es) analyzed · 5 ranked score possibilities per match · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
+    $("#csStatus").textContent=rows.length?rows.length+" match(es) analyzed · one most likely correct score per match · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
     box.innerHTML=rows.length?rows.map((x,i)=>{
-      const scores=Array.isArray(x.topScores)?x.topScores.slice(0,5):[];
-      const best=scores[0];
-      const scoreRows=scores.length?scores.map((s,j)=>'<div class="pick"><span>#'+(j+1)+' possible score</span><b>'+esc(s.score||"—")+' · '+esc(s.probability||0)+'%</b></div>').join(""):'<div class="empty">No score probabilities returned.</div>';
-      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Top prediction</span><b>'+esc(best?.score||"—")+'</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||"—")+' — '+esc(x.expectedGoals?.away||"—")+'</b></div><div class="score-options"><strong>5 analyzed possible scores</strong>'+scoreRows+'</div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", "))+'</small></div><div class="prob"><strong>'+esc(x.confidence||best?.probability||0)+'%</strong><small>top-score probability</small></div></article>';
+      const score=x.score||"—";
+      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Most likely correct score</span><b>'+esc(score)+'</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||"—")+' — '+esc(x.expectedGoals?.away||"—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", "))+'</small></div><div class="prob"><strong>'+esc(x.confidence||0)+'%</strong><small>score probability</small></div></article>';
     }).join(""):'<div class="empty">No score analysis is available for this date.</div>';
   }catch(e){
     $("#csStatus").textContent="Correct-score analysis unavailable.";
