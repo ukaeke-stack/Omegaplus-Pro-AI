@@ -1,5 +1,6 @@
 (()=> {
-  const APP_VERSION="1.4.0";
+  const APP_VERSION="1.5.0";
+  const APP_ID="com.omegaplus.proai";
   const KEY="omegaplus_settings_v2";
   const defaults={
     games:20,minConfidence:70,defaultMarket:"ou",defaultSelection:"Over 1.5",
@@ -105,16 +106,17 @@
   };
   $("#resetSettings").onclick=()=>{save({...defaults});fill();if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(get());$("#settingsSaveStatus").textContent="Settings reset to defaults."};
   $("#checkUpdates").onclick=async()=>{
-    const status=$("#updateStatus"),apply=$("#applyUpdate");status.textContent="Checking the latest version…";apply.hidden=true;
-    try{const r=await fetch("/api/health?ts="+Date.now(),{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error();
-      if(d.version&&d.version!==APP_VERSION){status.textContent="A newer version is available (v"+d.version+").";apply.hidden=false}
-      else status.textContent="You are using the latest version (v"+APP_VERSION+").";
+    const status=$("#updateStatus"),apply=$("#applyUpdate");status.textContent="Checking the latest release…";apply.hidden=true;
+    try{
+      const r=await fetch("/api/release/status?ts="+Date.now(),{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error();
+      if(d.version&&d.version!==APP_VERSION){status.textContent="A newer server release is available (v"+d.version+"). Restarting will load it.";apply.hidden=false}
+      else status.textContent="You are using the current release (v"+APP_VERSION+").";
     }catch{status.textContent="Could not check for updates. Check your internet connection and try again."}
   };
-  $("#applyUpdate").onclick=()=>location.href=location.pathname+"?update="+Date.now();
+  $("#applyUpdate").onclick=()=>{location.replace(location.pathname+"?update="+Date.now())};
   $("#runDiagnostics").onclick=async()=>{
     const box=$("#diagnosticStatus");box.textContent="Checking providers and engine…";
-    try{const r=await fetch("/api/health?ts="+Date.now(),{cache:"no-store"}),d=await r.json(),i=d.independentStats||{};box.textContent="Engine: healthy · SportyBet: "+(d.liveSportyBet?"connected":"unavailable")+" · Sofascore: "+(i.sofascore?"healthy":"unavailable")+" · Understat: "+(i.understat?"healthy":"unavailable")+" · v"+(d.version||APP_VERSION)}catch{box.textContent="Diagnostics could not reach the server."}
+    try{const r=await fetch("/api/health?ts="+Date.now(),{cache:"no-store"}),d=await r.json(),i=d.independentStats||{};box.textContent="Engine: healthy · SportyBet: "+(d.liveSportyBet?"connected":"unavailable")+" · Sofascore: "+(i.sofascore?"healthy":"unavailable")+" · Understat: "+(i.understat?"healthy":"unavailable")+" · App ID: "+APP_ID+" · v"+(d.version||APP_VERSION)}catch{box.textContent="Diagnostics could not reach the server."}
   };
   $("#clearSettingsHistory").onclick=()=>{
     if(confirm("Clear all saved prediction history on this device?")){
