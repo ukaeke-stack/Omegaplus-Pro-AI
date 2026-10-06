@@ -42,7 +42,7 @@ let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
 const dayCache=new Map();
-const DAY_CACHE_MS=24*60*60*1000;
+const DAY_CACHE_MS=5*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
 const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
@@ -567,7 +567,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const selections=[...(Array.isArray(body.selections)?body.selections:[])].map(String).filter(Boolean);
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[];
+    const fixtures=(await getDayFixtures(requestedDate,true,requestedSport)).fixtures||[];
     const results=[];
     const leagueMatch=(fixture)=>{
       if(!leagueFilters.length)return true;
