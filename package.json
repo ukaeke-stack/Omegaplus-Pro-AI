@@ -1,1 +1,1 @@
-{"name":"omegaplus-pro-ai","version":"1.0.0","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"start":"node server.js","dev":"node --watch server.js"},"dependencies":{"express":"^5.1.0","@vercel/blob":"^2.6.1","pg":"^8.16.3"}}
+{"name":"omegaplus-pro-ai","version":"1.0.0","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"start":"node server.js","dev":"node --watch server.js"},"dependencies":{"express":"^5.1.0","@vercel/blob":"^2.6.1","pg":"^8.16.3","serverless-http":"^3.2.0"}}
