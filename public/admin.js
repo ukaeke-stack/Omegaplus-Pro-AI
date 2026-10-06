@@ -11,8 +11,43 @@ $$("#usersBody [data-activate]").forEach(b=>b.onclick=async()=>{try{const days=M
 $$("#usersBody [data-revoke]").forEach(b=>b.onclick=async()=>{try{await api("/api/admin/users/"+b.dataset.revoke+"/subscription",{method:"DELETE"});await load();$("#status").textContent="Subscription revoked."}catch(e){$("#status").textContent=e.message}});
 $$("#usersBody [data-active]").forEach(b=>b.onclick=async()=>{try{await api("/api/admin/users/"+b.dataset.active,{method:"PATCH",body:JSON.stringify({isActive:b.textContent==="Enable"})});await load();$("#status").textContent="Account status updated."}catch(e){$("#status").textContent=e.message}});
 }
+
+async function loadPredictionSettings(){
+  const d=await api("/api/admin/prediction-settings");
+  const s=d.settings||{};
+  $("#predMinConfidence").value=s.minConfidence??60;
+  $("#predMaxGames").value=s.maxGames??20;
+  $("#predDailyCount").value=s.dailyBestCount??10;
+  $("#predMinOdds").value=s.minOdds??1.1;
+  $("#predCorrectScore").checked=s.correctScoreEnabled!==false;
+  $(".pred-market").forEach(x=>x.checked=(s.allowedMarkets||[]).includes(x.value));
+}
+async function loadHealth(){
+  const s=$("#healthStatus");s.textContent="Checking…";
+  try{
+    const d=await api("/api/health");
+    $("#healthDb").textContent=d.accountSystem?.ready?"READY":"UNAVAILABLE";
+    $("#healthSporty").textContent=d.liveSportyBet?"CONNECTED":"UNAVAILABLE";
+    const i=d.independentStats||{};
+    $("#healthStats").textContent=(i.sofascore?"SofaScore ":"")+(i.understat?"Understat":"")||"Limited";
+    $("#healthVersion").textContent="v"+(d.version||"—");
+    s.textContent="Health check completed.";
+  }catch(e){s.textContent=e.message}
+}
+$("#savePredictionSettings").onclick=async()=>{
+  try{
+    const allowed=$(".pred-market:checked").map(x=>x.value);
+    const d=await api("/api/admin/prediction-settings",{method:"PATCH",body:JSON.stringify({
+      minConfidence:Number($("#predMinConfidence").value)||60,maxGames:Number($("#predMaxGames").value)||20,
+      dailyBestCount:Number($("#predDailyCount").value)||10,minOdds:Number($("#predMinOdds").value)||1.1,
+      correctScoreEnabled:$("#predCorrectScore").checked,allowedMarkets:allowed
+    })});
+    $("#predictionSettingsStatus").textContent="Prediction controls saved.";
+  }catch(e){$("#predictionSettingsStatus").textContent=e.message}
+};
+$("#refreshHealth").onclick=loadHealth;
 $("#createAdmin").onclick=async()=>{try{const name=$("#adminName").value.trim(),email=$("#adminEmail").value.trim(),password=$("#adminPassword").value;if(!email||!password)throw new Error("Email and password are required.");const d=await api("/api/admin/create-admin",{method:"POST",body:JSON.stringify({name,email,password})});$("#adminCreateStatus").textContent="Administrator created: "+d.user.email;$("#adminName").value="";$("#adminEmail").value="";$("#adminPassword").value="";await load()}catch(e){$("#adminCreateStatus").textContent=e.message}};
 $("#saveAccess").onclick=async()=>{try{const d=await api("/api/admin/access-settings",{method:"PATCH",body:JSON.stringify({subscriptionEnabled:$("#subscriptionEnabled").checked,freeTrialEnabled:$("#freeTrialEnabled").checked,freeTrialDays:Number($("#freeTrialDays").value)||3,registrationEnabled:$("#registrationEnabled").checked,defaultUserPlan:$("#defaultUserPlan").value,announcement:$("#announcement").value})});$("#accessStatus").textContent="Saved. Subscription requirement is "+(d.settings.subscriptionEnabled?"ON":"OFF")+"; free trials are "+(d.settings.freeTrialEnabled?"ON":"OFF")+"."; }catch(e){$("#accessStatus").textContent=e.message}};
 $("#loginBtn").onclick=async()=>{try{const d=await api("/api/auth/login",{method:"POST",body:JSON.stringify({email:$("#email").value,password:$("#password").value})});if(d.user.role!=="admin")throw new Error("This account is not an administrator.");$("#login").classList.add("hidden");$("#panel").classList.remove("hidden");$("#who").textContent=d.user.email;await loadAccess();await load()}catch(e){$("#loginStatus").textContent=e.message}};
 $("#logout").onclick=async()=>{await api("/api/auth/logout",{method:"POST"}).catch(()=>{});location.reload()};$("#refreshUsers").onclick=load;$("#searchBtn").onclick=async()=>{try{const d=await api("/api/admin/users?search="+encodeURIComponent($("#search").value));$("#usersBody").innerHTML=(d.users||[]).map(userRow).join("");bindUsers()}catch(e){$("#status").textContent=e.message}};
-(async()=>{const d=await me();if(d.ok&&d.user?.role==="admin"){$("#login").classList.add("hidden");$("#panel").classList.remove("hidden");$("#who").textContent=d.user.email;try{await loadAccess();await load()}catch(e){$("#status").textContent=e.message}}})();})()
+(async()=>{const d=await me();if(d.ok&&d.user?.role==="admin"){$("#login").classList.add("hidden");$("#panel").classList.remove("hidden");$("#who").textContent=d.user.email;try{await loadAccess();await load();await loadPredictionSettings();await loadHealth()}catch(e){$("#status").textContent=e.message}}})();})()
