@@ -144,8 +144,8 @@ export async function initAuthDb(){
       ('free_trial_enabled','true'::jsonb),
       ('free_trial_days','3'::jsonb),
       ('registration_enabled','true'::jsonb),
-      ('announcement',''::jsonb),
-      ('default_user_plan','free'::jsonb)
+      ('announcement','""'::jsonb),
+      ('default_user_plan','"free"'::jsonb)
       on conflict(key) do nothing`);
     await ensureBootstrapAdmin();
     return true;
