@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,requestPasswordReset,resetPassword,revokeAllSessions,paymentHistory,createPaymentRecord,activateProviderSubscription,getPredictionSettings,updatePredictionSettings,getUserPreferences,updateUserPreferences,changePassword,adminResetPassword,deleteUser,revokeUserSessions} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -10,6 +10,9 @@ import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
 const app=express();
+const authRate=new Map();
+function rateLimitAuth(key,max=8,windowMs=10*60*1000){const now=Date.now(),v=authRate.get(key);if(!v||now-v.start>windowMs){authRate.set(key,{start:now,count:1});return true}v.count++;return v.count<=max}
+function authLimited(req,res,key,max=8){if(rateLimitAuth(key+":"+(req.ip||"unknown"),max))return false;res.status(429).json({ok:false,error:"Too many attempts. Please wait and try again later."});return true}
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
 const APP_VERSION="1.5.0";
@@ -251,10 +254,11 @@ app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"integration-omegaplus-current",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
-app.post("/api/auth/forgot-password",async(req,r)=>{try{const result=await requestPasswordReset(req.body?.email,req);r.json({ok:true,...result})}catch(e){r.status(503).json({ok:false,error:e.message})}});
-app.post("/api/auth/reset-password",async(req,r)=>{try{await resetPassword(req.body?.token,req.body?.password);r.json({ok:true,message:"Password changed successfully. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/auth/login",async(req,r)=>{if(authLimited(req,r,"login",8))return;try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
+app.post("/api/auth/forgot-password",async(req,r)=>{if(authLimited(req,r,"reset",5))return;try{const result=await requestPasswordReset(req.body?.email,req);r.json({ok:true,...result})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.post("/api/auth/reset-password",async(req,r)=>{if(authLimited(req,r,"reset-complete",5))return;try{await resetPassword(req.body?.token,req.body?.password);r.json({ok:true,message:"Password changed successfully. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
+app.post("/api/auth/change-password",requireAuth,async(req,r)=>{try{await changePassword(req.user.id,req.body?.currentPassword,req.body?.newPassword);clearSessionCookie(r);r.json({ok:true,message:"Password changed. Please log in again."})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/logout",async(req,r)=>{try{await logoutUser(req);clearSessionCookie(r);r.json({ok:true})}catch{clearSessionCookie(r);r.json({ok:true})}});
 app.get("/api/plans",async(_,r)=>{try{r.json({ok:true,plans:await listPlans()})}catch(e){r.status(503).json({ok:false,error:e.message,plans:[]})}});
 
@@ -321,6 +325,9 @@ app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/reset-password",requireRole("admin"),async(req,r)=>{try{const user=await adminResetPassword(req.params.id,req.body?.password,req);r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/revoke-sessions",requireRole("admin"),async(req,r)=>{try{const count=await revokeUserSessions(req.params.id,req);r.json({ok:true,count})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.delete("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{await deleteUser(req.params.id,req);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const sub=await activateSubscription(req.params.id,String(req.body?.plan||"pro"),Number(req.body?.days)||30,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan:req.body?.plan||"pro",days:Number(req.body?.days)||30});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/grant-premium",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(3650,Number(req.body?.days)||30));const sub=await activateSubscription(req.params.id,"premium",days,"admin_grant");await audit(req,"admin.premium.grant",req.params.id,{days,reason:String(req.body?.reason||"manual admin grant").slice(0,200)});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
@@ -329,7 +336,8 @@ app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=a
 app.post("/api/admin/sessions/revoke-all",requireRole("admin"),async(req,r)=>{try{const count=await revokeAllSessions();await audit(req,"admin.sessions.revoke_all","app",{count});r.json({ok:true,count})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.get("/api/app/settings",async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings(),predictionSettings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});\napp.get("/api/admin/prediction-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/app/settings",async(req,r)=>{try{const settings=await getAccessSettings();let show=settings.announcementEnabled&&settings.announcement&&(!settings.announcementExpiresAt||new Date(settings.announcementExpiresAt)>new Date());if(show&&settings.announcementAudience!=="all"){const u=await currentUser(req);show=settings.announcementAudience==="premium"?Boolean(u&&["pro","premium"].includes(u.plan)):Boolean(!u||u.plan==="free")}r.json({ok:true,settings:{...settings,announcement:show?settings.announcement:""},predictionSettings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.get("/api/admin/prediction-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/prediction-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updatePredictionSettings(req.body||{});await audit(req,"admin.prediction_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.get("/api/prediction-settings",async(_,r)=>{try{r.json({ok:true,settings:await getPredictionSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/account/preferences",requireAuth,async(req,r)=>{try{r.json({ok:true,preferences:await getUserPreferences(req.user.id)})}catch(e){r.status(503).json({ok:false,error:e.message})}});
