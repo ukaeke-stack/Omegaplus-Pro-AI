@@ -1,6 +1,7 @@
 (()=> {
   const APP_VERSION="1.5.0";
   const APP_ID="com.omegaplus.proai";
+  const nativeVersionCode=()=>{try{return Number(window.AndroidApp?.getVersionCode?.()||0)}catch{return 0}};
   const KEY="omegaplus_settings_v2";
   const defaults={
     games:20,minConfidence:70,defaultMarket:"ou",defaultSelection:"Over 1.5",
@@ -109,7 +110,9 @@
     const status=$("#updateStatus"),apply=$("#applyUpdate");status.textContent="Checking the latest release…";apply.hidden=true;
     try{
       const r=await fetch("/api/release/status?ts="+Date.now(),{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error();
-      if(d.version&&d.version!==APP_VERSION){status.textContent="A newer server release is available (v"+d.version+"). Restarting will load it.";apply.hidden=false}
+      const installed=nativeVersionCode();
+      if(d.versionCode&&installed&&Number(d.versionCode)>installed){status.textContent="A newer Android app build is available (build "+d.versionCode+").";apply.textContent="Open Play Store";apply.hidden=false;apply.onclick=()=>window.AndroidApp?.openPlayStore?.()}
+      else if(d.version&&d.version!==APP_VERSION){status.textContent="A newer server release is available (v"+d.version+"). Restarting will load it.";apply.textContent="Apply update";apply.hidden=false;apply.onclick=()=>location.replace(location.pathname+"?update="+Date.now())}
       else status.textContent="You are using the current release (v"+APP_VERSION+").";
     }catch{status.textContent="Could not check for updates. Check your internet connection and try again."}
   };
