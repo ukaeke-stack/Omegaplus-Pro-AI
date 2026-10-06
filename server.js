@@ -135,16 +135,18 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
-  if(type==="basketball_total") return ["225"].includes(market.marketId)||n.includes("total")||n.includes("over under");
-  if(type==="basketball_handicap") return ["223"].includes(market.marketId)||n.includes("handicap")||n.includes("spread");
-  if(type==="basketball_moneyline") return ["219"].includes(market.marketId)||n.includes("winner")||n.includes("moneyline")||n.includes("match result");
+  const outcomes=(market.outcomes||[]).map(o=>normalizeText(o.outcomeName));
+  const hasAny=patterns=>outcomes.some(o=>patterns.some(p=>o.includes(p)));
+  if(type==="basketball_total") return ["225"].includes(market.marketId)||n.includes("total")||n.includes("over under")||hasAny(["over ","under "]);
+  if(type==="basketball_handicap") return ["223"].includes(market.marketId)||n.includes("handicap")||n.includes("spread")||hasAny(["handicap","spread"]);
+  if(type==="basketball_moneyline") return ["219"].includes(market.marketId)||n.includes("winner")||n.includes("moneyline")||n.includes("match result")||hasAny(["home","away"]);
   if(type==="basketball_team_total") return ["227","228"].includes(market.marketId)||n.includes("team total");
-  if(type==="ou") return market.marketId==="18"||n.includes("over under")||n.includes("total goals")||n.includes("goals total");
-  if(type==="btts") return market.marketId==="29"||n.includes("both teams to score")||n.includes("btts");
-  if(type==="1x2") return market.marketId==="1"||n.includes("1x2")||n.includes("match result")||n==="winner";
-  if(type==="handicap") return ["14","16"].includes(market.marketId)||n.includes("handicap")||n.includes("spread");
-  if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner");
-  if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card");
+  if(type==="ou") return market.marketId==="18"||n.includes("over under")||n.includes("total goals")||n.includes("goals total")||hasAny(["over ","under "]);
+  if(type==="btts") return market.marketId==="29"||n.includes("both teams to score")||n.includes("btts")||hasAny(["both teams to score","yes","no"]);
+  if(type==="1x2") return market.marketId==="1"||n.includes("1x2")||n.includes("match result")||n==="winner"||hasAny(["home","draw","away"]);
+  if(type==="handicap") return ["14","16"].includes(market.marketId)||n.includes("handicap")||n.includes("spread")||hasAny(["handicap","spread"]);
+  if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner")||hasAny(["corner"]);
+  if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card")||hasAny(["card","booking"]);
   return false;
 }
 function confidenceForOutcome(market,outcome){
@@ -191,11 +193,16 @@ function pickLabel(type,outcome){
 }
 function selectionRequested(outcome,requested){
   if(!requested) return true;
-  const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
+  const a=normalizeText(outcome?.outcomeName),b=normalizeText(requested);
   if(a===b)return true;
-  const strip=v=>v.replace(/\\b(goals?|total)\\b/g," ").replace(/\\s+/g," ").trim();
-  const aa=strip(a),bb=strip(b);
-  return aa===bb||aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
+  const clean=v=>v.replace(/goals?|total|over|under/g," ").replace(/[^a-z0-9.]+/g," ").replace(/\\s+/g," ").trim();
+  const aa=clean(a),bb=clean(b);
+  if(aa===bb)return true;
+  if((a.includes("over")&&b.includes("over"))||(a.includes("under")&&b.includes("under"))){
+    const an=a.match(/(\\d+(?:\\.\\d+)?)/)?.[1],bn=b.match(/(\\d+(?:\\.\\d+)?)/)?.[1];
+    if(an&&bn&&an===bn)return true;
+  }
+  return aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
 }
 const BASKETBALL_LEAGUE_CATALOG=[
   ["NBA","USA"],["WNBA","USA"],["NBA G League","USA"],["NCAA","USA"],["EuroLeague","Europe"],["EuroCup","Europe"],["ACB","Spain"],["BBL","United Kingdom"],["LNB Pro A","France"],["BBL Germany","Germany"],["Lega Basket Serie A","Italy"],["BSL","Turkey"],["NBL","Australia"],["CBA","China"],["B.League","Japan"]
