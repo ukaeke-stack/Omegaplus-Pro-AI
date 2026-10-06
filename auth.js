@@ -315,6 +315,10 @@ export async function setUserAccess(id,{role,plan,isActive}){
   if(!r.rowCount)throw new Error("User not found.");
   return r.rows[0];
 }
+export async function revokeAllSessions(){
+  const r=await q("delete from sessions returning id");
+  return Number(r.rowCount||0);
+}
 export async function adminStats(){
   const r=await q(`select
     (select count(*) from users) as users,
