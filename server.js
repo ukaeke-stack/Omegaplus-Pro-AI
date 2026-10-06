@@ -537,12 +537,15 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
-    const body=req.body||{};\n    const predictionControls=await getPredictionSettings();\n    const requestedSport=String(body.sport||"football");
+    const body=req.body||{};
+    const predictionControls=await getPredictionSettings();
+    const requestedSport=String(body.sport||"football");
     const requestedDate=String(body.date||localDayKey(Date.now()));
     const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
     const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
-    const maxGames=Math.min(predictionControls.maxGames,Math.max(1,Math.min(50,Number(body.maxGames)||predictionControls.maxGames)));\n    const minConfidence=Math.max(predictionControls.minConfidence,Math.min(99,Number(body.minConfidence)||0));
+    const maxGames=Math.min(predictionControls.maxGames,Math.max(1,Math.min(50,Number(body.maxGames)||predictionControls.maxGames)));
+    const minConfidence=Math.max(predictionControls.minConfidence,Math.min(99,Number(body.minConfidence)||0));
     const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
@@ -550,7 +553,8 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
-          if(!marketMatches(market,type)) continue;\n          if(requestedSport==="football"&&!predictionControls.allowedMarkets.includes(type)) continue;
+          if(!marketMatches(market,type)) continue;
+          if(requestedSport==="football"&&!predictionControls.allowedMarkets.includes(type)) continue;
           for(const outcome of market.outcomes){
             if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<predictionControls.minOdds) continue;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
