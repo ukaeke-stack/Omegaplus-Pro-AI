@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - integration-omegaplus-current
+      - fix-analysis-selection-v1.4.0
   workflow_dispatch:
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-v1.2.0-debug-apk
+          name: Omegaplus-Pro-AI-v1.5.0-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -45,6 +45,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="android-v1.2.0"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus Pro AI Android v1.2.0" --notes "Current production Omegaplus Pro AI Android build."
+          TAG="android-v1.5.0"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus Pro AI Android v1.5.0" --notes "Current production Omegaplus Pro AI Android build."
           gh release upload "$TAG" android/app/build/outputs/apk/debug/app-debug.apk --clobber
