@@ -54,6 +54,9 @@
         <label class="settings-check"><input id="setAutoRefresh" type="checkbox"> Auto-refresh live scan</label>
       </div>
       <div class="settings-section">
+        <strong>Account</strong><small>Manage your password and account access.</small><div class="settings-actions"><button class="settings-button" id="changePasswordBtn">Change password</button><button class="settings-button" id="logoutAllBtn">Sign out all sessions</button></div><small id="accountActionStatus"></small>
+      </div>
+      <div class="settings-section">
         <strong>Notifications</strong>
         <label class="settings-check"><input id="setNotifications" type="checkbox"> Enable prediction/update notifications</label>
       </div>
@@ -96,9 +99,12 @@
   function closeSettings(){modal.classList.remove("open")}
   $("#settingsClose").onclick=closeSettings;
   modal.addEventListener("click",e=>{if(e.target===modal)closeSettings()});
+  $("#changePasswordBtn").onclick=async()=>{const current=prompt("Current password:");if(!current)return;const next=prompt("New password (8+ characters):");if(!next)return;try{const r=await fetch("/api/auth/change-password",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({currentPassword:current,newPassword:next})}),d=await r.json();if(!r.ok)throw new Error(d.error||"Unable to change password.");$("#accountActionStatus").textContent="Password changed. Please log in again.";setTimeout(()=>location.href="/login.html",700)}catch(e){$("#accountActionStatus").textContent=e.message}};
+  $("#logoutAllBtn").onclick=async()=>{try{const r=await fetch("/api/auth/logout",{method:"POST"});if(!r.ok)throw new Error();$("#accountActionStatus").textContent="Current session signed out. Use Admin Console to revoke all sessions."}catch{$("#accountActionStatus").textContent="Unable to sign out."}};
   $("#saveSettings").onclick=()=>{
     const s=read(); save(s);
-    localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());\n    if(window.omegaAuth?.user){fetch("/api/account/preferences",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({defaultMarket:s.defaultMarket,defaultSelection:s.defaultSelection,riskProfile:s.riskProfile,notifications:s.notifications,autoRefresh:s.autoRefresh})}).catch(()=>{})}
+    localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());
+    if(window.omegaAuth?.user){fetch("/api/account/preferences",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({defaultMarket:s.defaultMarket,defaultSelection:s.defaultSelection,riskProfile:s.riskProfile,notifications:s.notifications,autoRefresh:s.autoRefresh})}).catch(()=>{})}
     if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(s);
     $("#settingsSaveStatus").textContent="Settings saved successfully.";
     setTimeout(()=>$("#settingsSaveStatus").textContent="",1800);
