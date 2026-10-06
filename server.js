@@ -192,7 +192,10 @@ function pickLabel(type,outcome){
 function selectionRequested(outcome,requested){
   if(!requested) return true;
   const a=normalizeText(outcome.outcomeName),b=normalizeText(requested);
-  return a===b;
+  if(a===b)return true;
+  const strip=v=>v.replace(/\\b(goals?|total)\\b/g," ").replace(/\\s+/g," ").trim();
+  const aa=strip(a),bb=strip(b);
+  return aa===bb||aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
 }
 const BASKETBALL_LEAGUE_CATALOG=[
   ["NBA","USA"],["WNBA","USA"],["NBA G League","USA"],["NCAA","USA"],["EuroLeague","Europe"],["EuroCup","Europe"],["ACB","Spain"],["BBL","United Kingdom"],["LNB Pro A","France"],["BBL Germany","Germany"],["Lega Basket Serie A","Italy"],["BSL","Turkey"],["NBL","Australia"],["CBA","China"],["B.League","Japan"]
@@ -527,7 +530,8 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures,results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
-      if(leagueFilters.length&&!leagueFilters.some(l=>l.name===fixture.league&&(!l.country||l.country===leagueCountry(fixture.league,fixture.category)))) continue;
+      // League name is the authoritative fixture identifier. Country/category is display metadata and must not eliminate a valid league.
+      if(leagueFilters.length&&!leagueFilters.some(l=>normalizeText(l.name)===normalizeText(fixture.league))) continue;
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
