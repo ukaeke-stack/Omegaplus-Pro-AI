@@ -356,7 +356,7 @@ export async function getAccessSettings(){
     freeTrialDays: Math.max(0,Math.min(365,Number(map.free_trial_days)||0)),
     registrationEnabled: map.registration_enabled===undefined?true:bool(map.registration_enabled),
     announcement: String(map.announcement||"").slice(0,500),
-    defaultUserPlan: ["free","pro","premium"].includes(String(map.default_user_plan||"free"))?String(map.default_user_plan):"free"
+    defaultUserPlan: ["free","pro","premium"].includes(String(map.default_user_plan||""))?String(map.default_user_plan):"free"
   };
 }
 export async function updateAccessSettings(body={}){
