@@ -19,8 +19,8 @@ function extractStats(events,teamId){
   let gf=0,ga=0,n=0;
   for(const e of finished){
     const c=e.competitions?.[0], comps=c?.competitors||[],me=comps.find(x=>String(x.id)===String(teamId)),opp=comps.find(x=>String(x.id)!==String(teamId));
-    if(!me||!opp)continue;const ms=scoreFromEvent(me),os=scoreFromEvent(opp);
-    const f=Number.isFinite(ms.home)?ms.home:NaN,a=Number.isFinite(os.home)?os.home:NaN;
+    if(!me||!opp)continue;
+    const f=Number(me.score),a=Number(opp.score);
     if(Number.isFinite(f)&&Number.isFinite(a)){gf+=f;ga+=a;n++}
   }
   return n?{matches:n,gf:n?gf/n:null,ga:n?ga/n:null}:null;
@@ -77,9 +77,10 @@ export async function analyzeCorrectScores(fixture,independentStats={}){
   if(espn?.away?.stats?.gf!=null&&espn?.home?.stats?.ga!=null)awayGoals=(awayGoals+.5*((espn.away.stats.gf+espn.home.stats.ga)/2))/1.5;
   homeGoals=clamp(homeGoals/3,0.25,2.8)*3;awayGoals=clamp(awayGoals/3,0.2,2.6)*3;
   const matrix=scoreMatrix(homeGoals,awayGoals).slice(0,5);
-  const sources=["SportyBet market"];
-  if(form) sources.push("Sofascore");
-  if(Number.isFinite(uh)||Number.isFinite(ua))sources.push("Understat");
-  if(espn)sources.push("ESPN");
+  const sources=[];
+  if(form) sources.push("Sofascore recent form");
+  if(Number.isFinite(uh)||Number.isFinite(ua)||Number.isFinite(uha)||Number.isFinite(uaa)) sources.push("Understat xG/xGA");
+  if(espn) sources.push("ESPN recent results");
+  if(market) sources.push("Live market probability");
   return{expectedGoals:{home:Number(homeGoals.toFixed(2)),away:Number(awayGoals.toFixed(2))},scores:matrix.map(x=>({score:x.h+"-"+x.a,probability:Number((x.p*100).toFixed(1))})),sources};
 }
