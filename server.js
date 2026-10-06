@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -343,6 +343,8 @@ app.post("/api/payments/paystack/webhook",async(req,r)=>{
   }catch(e){console.error("Paystack webhook processing failed:",e.message)}
 });
 
+app.get("/api/admin/system-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAdminSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.patch("/api/admin/system-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAdminSettings(req.body||{});await audit(req,"admin.system-settings.update","system",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const user=await createAdminUser(req.body||{},req);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
@@ -524,7 +526,7 @@ app.get("/api/best-picks",async(req,r)=>{
     r.json({ok:true,date,limit,market,sport,predictions,generatedAt:new Date().toISOString(),source:"SportyBet market model + independent statistics"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/correct-scores",requirePaid,async(req,r)=>{
+app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).correctScoreEnabled)return r.status(503).json({ok:false,error:"Correct-score analysis is temporarily disabled by the administrator."});
   try{
     const sport=String(req.query.sport||"football");
     const date=String(req.query.date||localDayKey(Date.now()));
@@ -554,35 +556,46 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
-    const body=req.body||{};
+    const body=req.body||{}, admin=await getAdminSettings();
+    if(!admin.analyzerEnabled)return r.status(503).json({ok:false,error:"Analyzer is temporarily disabled by the administrator.",code:"ANALYZER_DISABLED",predictions:[]});
     const requestedSport=String(body.sport||"football");
-    const requestedDate=String(body.date||localDayKey(Date.now()));
-    const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
-    const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
-    const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
-    const maxGames=Math.max(1,Math.min(50,Number(body.maxGames)||20));
-    const minConfidence=Math.max(0,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures,results=[];
+    const requestedDate=/^\\d{4}-\\d{2}-\\d{2}$/.test(String(body.date||""))?String(body.date):localDayKey(Date.now());
+    const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{
+      const raw=String(value),parts=raw.split("|||"); return {name:parts[0].trim(),country:parts.slice(1).join("|||").trim()};
+    });
+    const marketTypes=[...(Array.isArray(body.marketTypes)?body.marketTypes:[])].map(String).filter(Boolean);
+    const selections=[...(Array.isArray(body.selections)?body.selections:[])].map(String).filter(Boolean);
+    const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
+    const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[];
+    const results=[];
+    const leagueMatch=(fixture)=>{
+      if(!leagueFilters.length)return true;
+      const fl=normalizeText(fixture.league),fc=normalizeText(fixture.category);
+      return leagueFilters.some(l=>{
+        const n=normalizeText(l.name),c=normalizeText(l.country);
+        return n===fl || fl.includes(n) || n.includes(fl) || (c && fc===c && (fl.includes(n)||n.includes(c)));
+      });
+    };
     for(const fixture of fixtures){
-      if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
-      // League name is the authoritative fixture identifier. Country/category is display metadata and must not eliminate a valid league.
-      if(leagueFilters.length&&!leagueFilters.some(l=>normalizeText(l.name)===normalizeText(fixture.league))) continue;
-      for(const market of fixture.markets){
+      if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
+      for(const market of (fixture.markets||[])){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
-          if(!marketMatches(market,type)) continue;
-          for(const outcome of market.outcomes){
-            if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market))) continue;
+          if(!marketMatches(market,type))continue;
+          for(const outcome of (market.outcomes||[])){
+            const odds=Number(outcome.odds);
+            if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
+            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market)))continue;
             const confidence=confidenceForOutcome(market,outcome);
-            if(confidence<minConfidence) continue;
+            if(confidence<minConfidence)continue;
             results.push({
               id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
               eventId:fixture.eventId,league:fixture.league,category:fixture.category,
               time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
               startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
               market:market.marketName,marketId:market.marketId,specifier:market.specifier,
-              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,
+              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds,marketType:type,
               confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"
             });
           }
@@ -591,18 +604,27 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const dedupe=new Map();
     for(const row of results){
-      const key=row.eventId;
-      if(!dedupe.has(key)||dedupe.get(key).confidence<row.confidence) dedupe.set(key,row);
+      const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
+      if(!dedupe.has(key)||row.confidence>dedupe.get(key).confidence)dedupe.set(key,row);
     }
-    const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    const candidates=qualified.slice(0,Math.min(60,qualified.length));
-    const enriched=await enrichPredictions(candidates,{concurrency:3});
-    enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    const predictions=decoratePredictions(enriched).slice(0,maxGames);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
-  }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
+    const candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    const limited=candidates.slice(0,Math.min(80,candidates.length));
+    let enriched=limited;
+    if(admin.independentStatsEnabled && limited.length) enriched=await enrichPredictions(limited,{concurrency:4});
+    enriched=decoratePredictions(enriched).sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    const predictions=enriched.slice(0,maxGames);
+    r.json({
+      ok:true,sport:requestedSport,date:requestedDate,source:admin.independentStatsEnabled?"SportyBet markets + independent statistics":"SportyBet markets",
+      generatedAt:new Date().toISOString(),
+      criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},
+      total:predictions.length,available:candidates.length,scannedFixtures:fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).length,
+      independentStatsApplied:admin.independentStatsEnabled&&predictions.some(x=>x.independentConfidence!=null),predictions
+    });
+  }catch(e){
+    console.error("Analyzer error:",e);
+    r.status(502).json({ok:false,error:e.message||"Analyzer failed.",total:0,available:0,predictions:[]});
+  }
 });
-
 
 function serverSettlePrediction(p,result){
   if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
@@ -654,7 +676,7 @@ app.get("/api/performance",async(req,r)=>{
     r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket});
   }catch(e){r.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
 });
-app.post("/api/booking-code",requirePaid,async(req,r)=>{try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
+app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
 
 app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!prevArchive||!Array.isArray(prevArchive.predictions)||prevArchive.predictions.length!==10){try{const predictions=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,predictions:[],results:[]};prevArchive.predictions=predictions;prevArchive.dailySelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&todayArchive?.predictions?.length===10?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.dailySelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
