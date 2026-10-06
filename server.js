@@ -497,7 +497,8 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
     const date=String(req.query.date||localDayKey(Date.now()));
     if(sport!=="football")return r.status(400).json({ok:false,error:"Correct-score analysis is currently available for football."});
     const {fixtures}=await getDayFixtures(date,false,sport);
-    const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,50);
+    // Analyze a broad pool, then return exactly the five strongest matches for the selected day.
+    const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,40);
     if(!candidates.length)return r.json({ok:true,date,predictions:[],sources:[],message:"No football fixtures found for this date."});
     const base=candidates.map(f=>({id:f.eventId,eventId:f.eventId,home:f.home,away:f.away,league:f.league,time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,marketType:"1x2",pick:"Home",confidence:50,odds:1.5}));
     const enriched=await enrichPredictions(base,{concurrency:3});
@@ -513,7 +514,8 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
       results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
     }
     results.sort((a,b)=>b.confidence-a.confidence);
-    r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"One best correct score per match from market signal + recent form/xG + independent fixture sources"});
+    const topFive=results.slice(0,5).map(x=>({...x,topScores:x.topScores?.slice(0,1)||[]}));
+    r.json({ok:true,date,sport,predictions:topFive,generatedAt:new Date().toISOString(),count:topFive.length,requiredCount:5,method:"Top five correct-score matches ranked with independent form/xG/recent-results signals plus live market probability"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
