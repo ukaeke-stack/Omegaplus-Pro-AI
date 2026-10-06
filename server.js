@@ -14,7 +14,7 @@ const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
 const APP_VERSION="1.5.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="mixed-top10-v1";
+const DAILY_SELECTION_VERSION="mixed-top10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -552,9 +552,9 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
-          if(!marketMatches(market,type)) continue;
+          if(!marketMatches(market,type)) continue;\n          if(requestedSport==="football"&&!predictionControls.allowedMarkets.includes(type)) continue;
           for(const outcome of market.outcomes){
-            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<predictionControls.minOdds) continue;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
