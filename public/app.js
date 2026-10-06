@@ -205,6 +205,9 @@ async function analyze(){
       const dated=(d.predictions||[]).map(x=>({...x,date}));
       all.push(...dated);
       archiveDay(date,{predictions:dated});
+      if(!dated.length && d.scannedFixtures!=null){
+        console.warn("Analyzer returned no matches", {date, scannedFixtures:d.scannedFixtures, available:d.available, criteria:d.criteria});
+      }
     }
     const seen=new Set();state.rows=all.filter(x=>{if(seen.has(x.eventId))return false;seen.add(x.eventId);return true});
     state.selected.clear();renderRows();renderSlip();
