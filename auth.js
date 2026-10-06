@@ -57,6 +57,15 @@ export async function initAuthDb(){
         updated_at timestamptz not null default now(),
         last_login_at timestamptz
       );
+      create table if not exists password_reset_tokens(
+        id uuid primary key default gen_random_uuid(),
+        user_id uuid not null references users(id) on delete cascade,
+        token_hash text not null unique,
+        expires_at timestamptz not null,
+        used_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+      create index if not exists password_reset_tokens_expiry_idx on password_reset_tokens(expires_at);
       create table if not exists sessions(
         id uuid primary key default gen_random_uuid(),
         user_id uuid not null references users(id) on delete cascade,
@@ -133,7 +142,10 @@ export async function initAuthDb(){
     await q(`insert into app_settings(key,value) values
       ('subscription_enabled','true'::jsonb),
       ('free_trial_enabled','true'::jsonb),
-      ('free_trial_days','3'::jsonb)
+      ('free_trial_days','3'::jsonb),
+      ('registration_enabled','true'::jsonb),
+      ('announcement',''::jsonb),
+      ('default_user_plan','free'::jsonb)
       on conflict(key) do nothing`);
     await ensureBootstrapAdmin();
     return true;
@@ -230,11 +242,44 @@ export async function registerUser({email,password,name=""},req){
   const exists=await q("select id from users where email=$1",[email]);
   if(exists.rowCount)throw new Error("An account with this email already exists.");
   const {hash,salt}=hashPassword(password);
-  const r=await q("insert into users(email,password_hash,password_salt,name,role,plan) values($1,$2,$3,$4,'user','free') returning *",[email,hash,salt,String(name||"").trim().slice(0,100)]);
+  const r=await q("insert into users(email,password_hash,password_salt,name,role,plan) values($1,$2,$3,$4,'user',$5) returning *",[email,hash,salt,String(name||"").trim().slice(0,100),settings.defaultUserPlan]);
   const user=safeUser(r.rows[0]);
   await audit({user},"account.register");
   return user;
 }
+export async function requestPasswordReset(email,req){
+  email=cleanEmail(email);
+  const r=await q("select id,email,name from users where email=$1 and is_active=true",[email]);
+  const generic={message:"If an account exists for that email, a password-reset link has been sent."};
+  if(!r.rowCount)return generic;
+  const raw=token(),hash=sessionHash(raw),expires=new Date(Date.now()+30*60*1000);
+  await q("update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null",[r.rows[0].id]);
+  await q("insert into password_reset_tokens(user_id,token_hash,expires_at) values($1,$2,$3)",[r.rows[0].id,hash,expires]);
+  const base=String(process.env.PUBLIC_APP_URL||"https://omegaplus-pro-ai.vercel.app").replace(/\\/$/,"");
+  const link=base+"/reset-password.html?token="+encodeURIComponent(raw);
+  const key=String(process.env.RESEND_API_KEY||"");
+  const from=String(process.env.RESEND_FROM||"");
+  if(!key||!from)throw new Error("Password reset email service is not configured yet.");
+  const res=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({from,to:[email],subject:"Omegaplus Pro AI password reset",html:"<p>Hello "+String(r.rows[0].name||"there").replace(/[<>]/g,"")+",</p><p>We received a request to reset your Omegaplus Pro AI password.</p><p><a href=""+link+"">Reset your password</a></p><p>This link expires in 30 minutes. If you did not request this, you can ignore this email.</p>"})});
+  if(!res.ok)throw new Error("Unable to send the password reset email right now.");
+  await audit({user:{id:r.rows[0].id}},"account.password_reset.request",r.rows[0].id);
+  return generic;
+}
+export async function resetPassword(raw,newPassword){
+  const password=String(newPassword||"");
+  if(password.length<8)throw new Error("Password must be at least 8 characters.");
+  const tokenValue=String(raw||"").trim();
+  if(!tokenValue)throw new Error("Reset link is invalid or expired.");
+  const r=await q("select id,user_id from password_reset_tokens where token_hash=$1 and used_at is null and expires_at>now()",[sessionHash(tokenValue)]);
+  if(!r.rowCount)throw new Error("Reset link is invalid or expired.");
+  const {hash,salt}=hashPassword(password);
+  await q("update users set password_hash=$1,password_salt=$2,updated_at=now() where id=$3",[hash,salt,r.rows[0].user_id]);
+  await q("update password_reset_tokens set used_at=now() where id=$1",[r.rows[0].id]);
+  await q("delete from sessions where user_id=$1",[r.rows[0].user_id]);
+  await audit({user:{id:r.rows[0].user_id}},"account.password_reset.complete",r.rows[0].user_id);
+  return {ok:true};
+}
+
 export async function loginUser({email,password},req){
   email=cleanEmail(email);
   const r=await q("select * from users where email=$1 and is_active=true",[email]);
@@ -299,13 +344,16 @@ export async function revokeSubscription(userId){
 }
 
 export async function getAccessSettings(){
-  const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days')");
+  const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days','registration_enabled','announcement','default_user_plan')");
   const map=Object.fromEntries(r.rows.map(x=>[x.key,x.value]));
   const bool=v=>v===true||v==="true"||v===1||v==="1";
   return {
     subscriptionEnabled: map.subscription_enabled===undefined?true:bool(map.subscription_enabled),
     freeTrialEnabled: map.free_trial_enabled===undefined?true:bool(map.free_trial_enabled),
-    freeTrialDays: Math.max(0,Math.min(365,Number(map.free_trial_days)||0))
+    freeTrialDays: Math.max(0,Math.min(365,Number(map.free_trial_days)||0)),
+    registrationEnabled: map.registration_enabled===undefined?true:bool(map.registration_enabled),
+    announcement: String(map.announcement||"").slice(0,500),
+    defaultUserPlan: ["free","pro","premium"].includes(String(map.default_user_plan||"free"))?String(map.default_user_plan):"free"
   };
 }
 export async function updateAccessSettings(body={}){
@@ -313,9 +361,12 @@ export async function updateAccessSettings(body={}){
   const next={
     subscriptionEnabled: typeof body.subscriptionEnabled==="boolean"?body.subscriptionEnabled:current.subscriptionEnabled,
     freeTrialEnabled: typeof body.freeTrialEnabled==="boolean"?body.freeTrialEnabled:current.freeTrialEnabled,
-    freeTrialDays: body.freeTrialDays===undefined?current.freeTrialDays:Math.max(0,Math.min(365,Math.round(Number(body.freeTrialDays)||0)))
+    freeTrialDays: body.freeTrialDays===undefined?current.freeTrialDays:Math.max(0,Math.min(365,Math.round(Number(body.freeTrialDays)||0))),
+    registrationEnabled: typeof body.registrationEnabled==="boolean"?body.registrationEnabled:current.registrationEnabled,
+    announcement: body.announcement===undefined?current.announcement:String(body.announcement||"").trim().slice(0,500),
+    defaultUserPlan: ["free","pro","premium"].includes(String(body.defaultUserPlan||""))?String(body.defaultUserPlan):current.defaultUserPlan
   };
-  for(const [key,value] of [["subscription_enabled",next.subscriptionEnabled],["free_trial_enabled",next.freeTrialEnabled],["free_trial_days",next.freeTrialDays]]){
+  for(const [key,value] of [["subscription_enabled",next.subscriptionEnabled],["free_trial_enabled",next.freeTrialEnabled],["free_trial_days",next.freeTrialDays],["registration_enabled",next.registrationEnabled],["announcement",next.announcement],["default_user_plan",next.defaultUserPlan]]){
     await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
   }
   return next;
