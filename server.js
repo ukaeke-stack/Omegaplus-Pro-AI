@@ -546,7 +546,7 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
       const f=candidates.find(x=>x.eventId===p.eventId);
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
-      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,score:model.score,sources:model.sources,confidence:Number((model.probability||0).toFixed(1))});
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,score:model.score,sources:model.sources,confidence:Number((model.probability||0).toFixed(1)),analyzedAt:new Date().toISOString()});
     }
     results.sort((a,b)=>b.confidence-a.confidence);
     r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"Single most likely correct-score outcome per match from market signal + recent form/xG + independent fixture sources"});
