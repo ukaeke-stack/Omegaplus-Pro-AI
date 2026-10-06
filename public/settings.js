@@ -54,7 +54,7 @@
         <label class="settings-check"><input id="setAutoRefresh" type="checkbox"> Auto-refresh live scan</label>
       </div>
       <div class="settings-section">
-        <strong>Account</strong><small>Manage your password and account access.</small><div class="settings-actions"><button class="settings-button" id="changePasswordBtn">Change password</button><button class="settings-button" id="logoutAllBtn">Sign out all sessions</button></div><small id="accountActionStatus"></small>
+        <strong>Account</strong><small>Manage your profile, password and account access.</small><div class="settings-grid"><div class="settings-field"><label>Name</label><input id="accountName" autocomplete="name"></div><div class="settings-field"><label>Email</label><input id="accountEmail" type="email" autocomplete="email"></div></div><div class="settings-actions"><button class="settings-button primary-settings" id="saveProfileBtn">Save profile</button><button class="settings-button" id="changePasswordBtn">Change password</button><button class="settings-button" id="logoutAllBtn">Sign out current session</button><button class="settings-button" id="deleteAccountBtn">Delete account</button></div><small id="accountActionStatus"></small>
       </div>
       <div class="settings-section">
         <strong>Notifications</strong>
@@ -82,6 +82,7 @@
 
   function fill(){
     const s=get();
+    if(window.omegaAuth?.user){$("#accountName").value=window.omegaAuth.user.name||"";$("#accountEmail").value=window.omegaAuth.user.email||""}
     $("#setGames").value=s.games; $("#setConfidence").value=s.minConfidence; $("#setMarket").value=s.defaultMarket;
     $("#setSelection").value=s.defaultSelection; $("#setRisk").value=s.riskProfile; $("#setOddsMin").value=s.oddsMin; $("#setOddsMax").value=s.oddsMax;
     $("#setShowConfidence").checked=!!s.showConfidence; $("#setAutoRefresh").checked=!!s.autoRefresh; $("#setNotifications").checked=!!s.notifications;
@@ -99,6 +100,8 @@
   function closeSettings(){modal.classList.remove("open")}
   $("#settingsClose").onclick=closeSettings;
   modal.addEventListener("click",e=>{if(e.target===modal)closeSettings()});
+  $("#saveProfileBtn").onclick=async()=>{try{const r=await fetch("/api/account/profile",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({name:$("#accountName").value,email:$("#accountEmail").value})}),d=await r.json();if(!r.ok)throw new Error(d.error||"Unable to update profile.");$("#accountActionStatus").textContent="Profile updated.";if(window.omegaAuth?.refresh)window.omegaAuth.refresh()}catch(e){$("#accountActionStatus").textContent=e.message}};
+  $("#deleteAccountBtn").onclick=async()=>{if(!confirm("Delete your account permanently? This cannot be undone."))return;try{const r=await fetch("/api/account",{method:"DELETE"}),d=await r.json();if(!r.ok)throw new Error(d.error||"Unable to delete account.");location.href="/login.html"}catch(e){$("#accountActionStatus").textContent=e.message}};
   $("#changePasswordBtn").onclick=async()=>{const current=prompt("Current password:");if(!current)return;const next=prompt("New password (8+ characters):");if(!next)return;try{const r=await fetch("/api/auth/change-password",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({currentPassword:current,newPassword:next})}),d=await r.json();if(!r.ok)throw new Error(d.error||"Unable to change password.");$("#accountActionStatus").textContent="Password changed. Please log in again.";setTimeout(()=>location.href="/login.html",700)}catch(e){$("#accountActionStatus").textContent=e.message}};
   $("#logoutAllBtn").onclick=async()=>{try{const r=await fetch("/api/auth/logout",{method:"POST"});if(!r.ok)throw new Error();$("#accountActionStatus").textContent="Current session signed out. Use Admin Console to revoke all sessions."}catch{$("#accountActionStatus").textContent="Unable to sign out."}};
   $("#saveSettings").onclick=()=>{
