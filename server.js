@@ -114,7 +114,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
               outcomeId:String(o.id||""),
               outcomeName:String(o.desc||""),
               odds:Number(o.odds),
-              isActive:o.isActive===undefined?true:Boolean(Number(o.isActive))
+              isActive:o.isActive===undefined?true:(typeof o.isActive==="boolean"?o.isActive:["1","true","active","open"].includes(String(o.isActive).toLowerCase()))
             }))
           }))
         });
@@ -150,7 +150,7 @@ function marketMatches(market,type){
   return false;
 }
 function confidenceForOutcome(market,outcome){
-  const active=market.outcomes.filter(o=>o.isActive&&Number.isFinite(o.odds)&&o.odds>1);
+  const active=market.outcomes.filter(o=>o.isActive!==false&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1);
   if(!active.length||!Number.isFinite(outcome.odds)||outcome.odds<=1) return 0;
   const inv=1/outcome.odds,total=active.reduce((s,o)=>s+1/o.odds,0),normalized=total?inv/total:inv;
   return Math.round(Math.max(50,Math.min(99,normalized*100)));
@@ -546,7 +546,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
         for(const type of types){
           if(!marketMatches(market,type)) continue;
           for(const outcome of market.outcomes){
-            if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<=1) continue;
+            if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
