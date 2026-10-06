@@ -35,7 +35,7 @@ function verifyPassword(password,hash,salt){
 }
 function token(){return crypto.randomBytes(32).toString("hex")}
 function cleanEmail(v){return String(v||"").trim().toLowerCase()}
-function safeUser(row){return row?{id:row.id,email:row.email,name:row.name||"",role:row.role,plan:row.plan||"visitor",subscriptionStatus:row.subscription_status||"none",subscriptionExpiresAt:row.subscription_expires_at||null,createdAt:row.created_at}:null}
+function safeUser(row){return row?{id:row.id,email:row.email,name:row.name||"",role:row.role,plan:row.plan||"visitor",subscriptionStatus:row.subscription_status||"none",subscriptionExpiresAt:row.subscription_expires_at||null,createdAt:row.created_at,lastLoginAt:row.last_login_at}:null}
 
 export async function initAuthDb(){
   if(initPromise)return initPromise;
@@ -297,6 +297,41 @@ export async function loginUser({email,password},req){
   await audit({user},"account.login");
   return {user,session};
 }
+export async function changePassword(userId,currentPassword,newPassword){
+  const password=String(newPassword||"");
+  if(password.length<8)throw new Error("Password must be at least 8 characters.");
+  const r=await q("select password_hash,password_salt from users where id=$1 and is_active=true",[userId]);
+  if(!r.rowCount||!verifyPassword(currentPassword,r.rows[0].password_hash,r.rows[0].password_salt))throw new Error("Current password is incorrect.");
+  const {hash,salt}=hashPassword(password);
+  await q("update users set password_hash=$1,password_salt=$2,updated_at=now() where id=$3",[hash,salt,userId]);
+  await q("delete from sessions where user_id=$1",[userId]);
+  await audit({user:{id:userId}},"account.password.change",userId);
+  return {ok:true};
+}
+export async function adminResetPassword(userId,newPassword,req){
+  const password=String(newPassword||"");
+  if(password.length<8)throw new Error("Password must be at least 8 characters.");
+  const {hash,salt}=hashPassword(password);
+  const r=await q("update users set password_hash=$1,password_salt=$2,updated_at=now() where id=$3 returning id,email",[hash,salt,userId]);
+  if(!r.rowCount)throw new Error("User not found.");
+  await q("delete from sessions where user_id=$1",[userId]);
+  await audit(req,"admin.user.password_reset",userId);
+  return r.rows[0];
+}
+export async function deleteUser(userId,req){
+  const r=await q("select id,email,role from users where id=$1",[userId]);
+  if(!r.rowCount)throw new Error("User not found.");
+  if(r.rows[0].role==="admin")throw new Error("Admin accounts must be removed by changing their role first.");
+  await q("delete from users where id=$1",[userId]);
+  await audit(req,"admin.user.delete",userId,{email:r.rows[0].email});
+  return {ok:true};
+}
+export async function revokeUserSessions(userId,req){
+  const r=await q("delete from sessions where user_id=$1",[userId]);
+  await audit(req,"admin.user.sessions_revoke",userId,{count:r.rowCount});
+  return Number(r.rowCount||0);
+}
+
 export async function logoutUser(req){
   const raw=readCookie(req,"omega_session")||String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
   if(raw)await q("delete from sessions where token_hash=$1",[sessionHash(raw)]).catch(()=>{});
@@ -364,6 +399,7 @@ export async function getPredictionSettings(){
     maxGames:num(map.prediction_max_games,20,1,50),
     dailyBestCount:num(map.prediction_daily_best_count,10,1,25),
     minOdds:num(map.prediction_min_odds,1.1,1,100),
+    minDataRequired:num(map.prediction_min_data_required,2,0,10),
     correctScoreEnabled:map.prediction_correct_score_enabled===undefined?true:Boolean(map.prediction_correct_score_enabled),
     allowedMarkets:Array.isArray(map.prediction_allowed_markets)?map.prediction_allowed_markets:["ou","btts","1x2","handicap","corners","cards"]
   };
@@ -376,10 +412,11 @@ export async function updatePredictionSettings(body={}){
     maxGames:Math.max(1,Math.min(50,Math.round(Number(body.maxGames??current.maxGames)||20))),
     dailyBestCount:Math.max(1,Math.min(25,Math.round(Number(body.dailyBestCount??current.dailyBestCount)||10))),
     minOdds:Math.max(1,Math.min(100,Number(body.minOdds??current.minOdds)||1.1)),
+    minDataRequired:Math.max(0,Math.min(10,Math.round(Number(body.minDataRequired??current.minDataRequired)||0))),
     correctScoreEnabled:typeof body.correctScoreEnabled==="boolean"?body.correctScoreEnabled:current.correctScoreEnabled,
     allowedMarkets:Array.isArray(body.allowedMarkets)?body.allowedMarkets.filter(x=>allowed.includes(String(x))).map(String):current.allowedMarkets
   };
-  for(const [key,value] of Object.entries({prediction_min_confidence:next.minConfidence,prediction_max_games:next.maxGames,prediction_daily_best_count:next.dailyBestCount,prediction_min_odds:next.minOdds,prediction_correct_score_enabled:next.correctScoreEnabled,prediction_allowed_markets:next.allowedMarkets}))
+  for(const [key,value] of Object.entries({prediction_min_confidence:next.minConfidence,prediction_max_games:next.maxGames,prediction_daily_best_count:next.dailyBestCount,prediction_min_odds:next.minOdds,prediction_correct_score_enabled:next.correctScoreEnabled,prediction_min_data_required:next.minDataRequired,prediction_allowed_markets:next.allowedMarkets}))
     await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
   return next;
 }
@@ -400,7 +437,7 @@ export async function updateUserPreferences(userId,preferences={}){
 }
 
 export async function getAccessSettings(){
-  const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days','registration_enabled','announcement','default_user_plan')");
+  const r=await q("select key,value from app_settings where key in ('subscription_enabled','free_trial_enabled','free_trial_days','registration_enabled','announcement','announcement_enabled','announcement_audience','announcement_expires_at','default_user_plan')");
   const map=Object.fromEntries(r.rows.map(x=>[x.key,x.value]));
   const bool=v=>v===true||v==="true"||v===1||v==="1";
   return {
@@ -409,6 +446,9 @@ export async function getAccessSettings(){
     freeTrialDays: Math.max(0,Math.min(365,Number(map.free_trial_days)||0)),
     registrationEnabled: map.registration_enabled===undefined?true:bool(map.registration_enabled),
     announcement: String(map.announcement||"").slice(0,500),
+    announcementEnabled: map.announcement_enabled===undefined?true:bool(map.announcement_enabled),
+    announcementAudience: ["all","premium","free"].includes(String(map.announcement_audience||"all"))?String(map.announcement_audience):"all",
+    announcementExpiresAt: map.announcement_expires_at||null,
     defaultUserPlan: ["free","pro","premium"].includes(String(map.default_user_plan||""))?String(map.default_user_plan):"free"
   };
 }
@@ -420,9 +460,12 @@ export async function updateAccessSettings(body={}){
     freeTrialDays: body.freeTrialDays===undefined?current.freeTrialDays:Math.max(0,Math.min(365,Math.round(Number(body.freeTrialDays)||0))),
     registrationEnabled: typeof body.registrationEnabled==="boolean"?body.registrationEnabled:current.registrationEnabled,
     announcement: body.announcement===undefined?current.announcement:String(body.announcement||"").trim().slice(0,500),
+    announcementEnabled: typeof body.announcementEnabled==="boolean"?body.announcementEnabled:current.announcementEnabled,
+    announcementAudience: ["all","premium","free"].includes(String(body.announcementAudience||""))?String(body.announcementAudience):current.announcementAudience,
+    announcementExpiresAt: body.announcementExpiresAt===undefined?current.announcementExpiresAt:(body.announcementExpiresAt?new Date(body.announcementExpiresAt).toISOString():null),
     defaultUserPlan: ["free","pro","premium"].includes(String(body.defaultUserPlan||""))?String(body.defaultUserPlan):current.defaultUserPlan
   };
-  for(const [key,value] of [["subscription_enabled",next.subscriptionEnabled],["free_trial_enabled",next.freeTrialEnabled],["free_trial_days",next.freeTrialDays],["registration_enabled",next.registrationEnabled],["announcement",next.announcement],["default_user_plan",next.defaultUserPlan]]){
+  for(const [key,value] of [["subscription_enabled",next.subscriptionEnabled],["free_trial_enabled",next.freeTrialEnabled],["free_trial_days",next.freeTrialDays],["registration_enabled",next.registrationEnabled],["announcement",next.announcement],["announcement_enabled",next.announcementEnabled],["announcement_audience",next.announcementAudience],["announcement_expires_at",next.announcementExpiresAt],["default_user_plan",next.defaultUserPlan]]){
     await q("insert into app_settings(key,value,updated_at) values($1,$2,now()) on conflict(key) do update set value=excluded.value,updated_at=now()",[key,JSON.stringify(value)]);
   }
   return next;
