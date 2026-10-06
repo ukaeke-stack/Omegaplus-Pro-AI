@@ -18,7 +18,7 @@ async function loadPredictionSettings(){
   $("#predMinConfidence").value=s.minConfidence??60;
   $("#predMaxGames").value=s.maxGames??20;
   $("#predDailyCount").value=s.dailyBestCount??10;
-  $("#predMinOdds").value=s.minOdds??1.1;
+  $("#predMinOdds").value=s.minOdds??1.1;$("#predMinData").value=s.minDataRequired??2;
   $("#predCorrectScore").checked=s.correctScoreEnabled!==false;
   $(".pred-market").forEach(x=>x.checked=(s.allowedMarkets||[]).includes(x.value));
 }
