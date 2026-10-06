@@ -236,6 +236,8 @@ export async function createAdminUser({email,password,name=""},req){
   return r.rows[0];
 }
 export async function registerUser({email,password,name=""},req){
+  const settings=await getAccessSettings();
+  if(!settings.registrationEnabled)throw new Error("New account registration is currently disabled.");
   email=cleanEmail(email);
   if(!email||!/^\S+@\S+\.\S+$/.test(email))throw new Error("Enter a valid email address.");
   if(String(password||"").length<8)throw new Error("Password must be at least 8 characters.");
