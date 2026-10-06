@@ -385,7 +385,10 @@ export async function adminStats(){
     (select count(*) from users where role='admin') as admins,
     (select count(*) from users where plan in ('pro','premium')) as paid_users,
     (select count(*) from sessions where expires_at>now()) as active_sessions,
-    (select count(*) from audit_logs where created_at>now()-interval '24 hours') as audits_24h`);
+    (select count(*) from audit_logs where created_at>now()-interval '24 hours') as audits_24h,
+    (select count(*) from audit_logs where action like '%failure%' and created_at>now()-interval '24 hours') as failed_requests_24h,
+    (select max(created_at) from audit_logs where action='booking.request') as last_booking_request_at,
+    (select max(created_at) from audit_logs) as last_audit_at`);
   return Object.fromEntries(Object.entries(r.rows[0]).map(([k,v])=>[k,Number(v)]));
 }
 export async function listPlans(){const r=await q("select id,name,description,price_ngn,billing_period,features,is_active,paystack_plan_code from plans where is_active order by price_ngn");return r.rows}
