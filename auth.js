@@ -340,8 +340,8 @@ export async function adminUsers({page=1,limit=50,search=""}={}){
   const pageNum=Math.max(1,Number(page)||1),size=Math.min(100,Math.max(1,Number(limit)||50)),offset=(pageNum-1)*size;
   const term=String(search||"").trim().toLowerCase();
   const r=term
-    ?await q("select id,email,name,role,plan,is_active,email_verified,created_at,last_login_at from users where lower(email) like $1 or lower(name) like $1 order by created_at desc limit $2 offset $3",["%"+term+"%",size,offset])
-    :await q("select id,email,name,role,plan,is_active,email_verified,created_at,last_login_at from users order by created_at desc limit $1 offset $2",[size,offset]);
+    ?await q("select u.id,u.email,u.name,u.role,u.plan,u.is_active,u.email_verified,u.created_at,u.last_login_at,su.expires_at as subscription_expires_at from users u left join lateral(select expires_at from subscriptions where user_id=u.id order by created_at desc limit 1) su on true where lower(email) like $1 or lower(name) like $1 order by created_at desc limit $2 offset $3",["%"+term+"%",size,offset])
+    :await q("select u.id,u.email,u.name,u.role,u.plan,u.is_active,u.email_verified,u.created_at,u.last_login_at,su.expires_at as subscription_expires_at from users u left join lateral(select expires_at from subscriptions where user_id=u.id order by created_at desc limit 1) su on true order by created_at desc limit $1 offset $2",[size,offset]);
   return r.rows;
 }
 export async function setUserAccess(id,{role,plan,isActive}){
