@@ -195,11 +195,11 @@ function selectionRequested(outcome,requested){
   if(!requested) return true;
   const a=normalizeText(outcome?.outcomeName),b=normalizeText(requested);
   if(a===b)return true;
-  const clean=v=>v.replace(/goals?|total|over|under/g," ").replace(/[^a-z0-9.]+/g," ").replace(/\\s+/g," ").trim();
+  const clean=v=>v.replaceAll("goals"," ").replaceAll("goal"," ").replaceAll("total"," ").replaceAll("over"," ").replaceAll("under"," ").replaceAll(/[^a-z0-9.]+/g," ").trim();
   const aa=clean(a),bb=clean(b);
   if(aa===bb)return true;
   if((a.includes("over")&&b.includes("over"))||(a.includes("under")&&b.includes("under"))){
-    const an=a.match(/(\\d+(?:\\.\\d+)?)/)?.[1],bn=b.match(/(\\d+(?:\\.\\d+)?)/)?.[1];
+    const an=(a.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0],bn=(b.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0];
     if(an&&bn&&an===bn)return true;
   }
   return aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
