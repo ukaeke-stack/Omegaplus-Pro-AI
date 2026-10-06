@@ -13,6 +13,10 @@ const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
 const APP_VERSION="1.5.0";
+const APP_ID="com.omegaplus.proai";
+const APP_VERSION_CODE=4;
+const ANDROID_TARGET_SDK=36;
+const MIN_SUPPORTED_WEB_VERSION="1.5.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
 const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
@@ -191,9 +195,14 @@ function decoratePredictions(rows){
 function pickLabel(type,outcome){
   return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
-function selectionRequested(outcome,requested){
+function selectionRequested(outcome,requested,market){
   if(!requested) return true;
-  const a=normalizeText(outcome?.outcomeName),b=normalizeText(requested);
+  const spec=String(market?.specifier||"");
+  const lineMatch=spec.match(/(?:total|goals|over|under)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i)||spec.match(/([0-9]+(?:\.[0-9]+)?)/);
+  const line=lineMatch?.[1]||"";
+  const rawName=String(outcome?.outcomeName||"");
+  const effectiveName=(line&&/^(over|under)$/i.test(rawName.trim()))?rawName.trim()+" "+line:rawName;
+  const a=normalizeText(effectiveName),b=normalizeText(requested);
   if(a===b)return true;
   const clean=v=>v.replaceAll("goals"," ").replaceAll("goal"," ").replaceAll("total"," ").replaceAll("over"," ").replaceAll("under"," ").replaceAll(/[^a-z0-9.]+/g," ").trim();
   const aa=clean(a),bb=clean(b);
@@ -249,7 +258,7 @@ function sortLeagues(a,b){
   return a.localeCompare(b);
 }
 
-app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
+app.get("/api/release/status",async(_,r)=>{\n  r.json({ok:true,appId:APP_ID,version:APP_VERSION,versionCode:APP_VERSION_CODE,targetSdk:ANDROID_TARGET_SDK,minSupportedVersion:MIN_SUPPORTED_WEB_VERSION,updateMode:"web-server-first",nativeUpdateRequired:false,releaseChannel:"production",generatedAt:new Date().toISOString()});\n});\napp.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{\n  try{\n    const dbConfigured=authDbConfigured(),dbReadyNow=await dbReady();\n    let adminCount=0;try{const users=await adminUsers({page:1,limit:100,search:""});adminCount=(users?.users||users||[]).filter(x=>String(x.role||"").toLowerCase()==="admin").length}catch{}\n    const checks={databaseConfigured:dbConfigured,databaseReady:dbReadyNow,adminAccountPresent:adminCount>0,productionVersion:APP_VERSION,appId:APP_ID,versionCode:APP_VERSION_CODE};\n    const passed=Boolean(dbConfigured&&dbReadyNow&&adminCount>0);\n    await audit(req,"admin.release.check",null,{passed,checks});\n    r.status(passed?200:503).json({ok:passed,releaseReady:passed,checks});\n  }catch(e){r.status(503).json({ok:false,releaseReady:false,error:e.message})}\n});\napp.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"integration-omegaplus-current",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
@@ -547,7 +556,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
           if(!marketMatches(market,type)) continue;
           for(const outcome of market.outcomes){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
+            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
             results.push({
