@@ -507,10 +507,10 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{
       const f=candidates.find(x=>x.eventId===p.eventId);
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
-      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,score:model.score,sources:model.sources,confidence:Number((model.probability||0).toFixed(1))});
     }
     results.sort((a,b)=>b.confidence-a.confidence);
-    r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"Five ranked correct-score probabilities per match from market signal + recent form/xG + independent fixture sources"});
+    r.json({ok:true,date,sport,predictions:results,generatedAt:new Date().toISOString(),method:"Single most likely correct-score outcome per match from market signal + recent form/xG + independent fixture sources"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
