@@ -1,0 +1,23 @@
+name: Release Safety Checks
+on:
+  push:
+    branches: [release-v1.3.0]
+  pull_request:
+    branches: [main]
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax check
+        run: |
+          node --check server.js
+          node --check auth.js
+          node --check correct-score.js
+          node --check public/app.js
+          node --check public/admin.js
+          node --check public/auth-ui.js
+          node --check public/settings.js
