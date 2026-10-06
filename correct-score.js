@@ -81,5 +81,6 @@ export async function analyzeCorrectScores(fixture,independentStats={}){
   if(form) sources.push("Sofascore");
   if(Number.isFinite(uh)||Number.isFinite(ua))sources.push("Understat");
   if(espn)sources.push("ESPN");
-  return{expectedGoals:{home:Number(homeGoals.toFixed(2)),away:Number(awayGoals.toFixed(2))},scores:matrix.map(x=>({score:x.h+"-"+x.a,probability:Number((x.p*100).toFixed(1))})),sources};
+  const best=matrix[0];
+  return{expectedGoals:{home:Number(homeGoals.toFixed(2)),away:Number(awayGoals.toFixed(2))},score:best.h+"-"+best.a,probability:Number((best.p*100).toFixed(1)),sources};
 }
