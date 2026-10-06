@@ -257,7 +257,7 @@ export async function requestPasswordReset(email,req){
   const raw=token(),hash=sessionHash(raw),expires=new Date(Date.now()+30*60*1000);
   await q("update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null",[r.rows[0].id]);
   await q("insert into password_reset_tokens(user_id,token_hash,expires_at) values($1,$2,$3)",[r.rows[0].id,hash,expires]);
-  const base=String(process.env.PUBLIC_APP_URL||"https://omegaplus-pro-ai.vercel.app").replace(/\\/$/,"");
+  const base=String(process.env.PUBLIC_APP_URL||"https://omegaplus-pro-ai.vercel.app").replace(/\/$/,"");
   const link=base+"/reset-password.html?token="+encodeURIComponent(raw);
   const key=String(process.env.RESEND_API_KEY||"");
   const from=String(process.env.RESEND_FROM||"");
