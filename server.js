@@ -566,7 +566,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const selections=[...(Array.isArray(body.selections)?body.selections:[])].map(String).filter(Boolean);
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,true,requestedSport)).fixtures||[];
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[];
     const results=[];
     const leagueMatch=(fixture)=>{
       if(!leagueFilters.length)return true;
