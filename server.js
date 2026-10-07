@@ -158,6 +158,11 @@ function localDayKey(ms){
   return d.toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});
 }
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
+function isDirectWinningMarket(market){
+  const name=normalizeText(market?.marketName);
+  const id=String(market?.marketId||"");
+  return id==="1"||["1x2","match result","winner","direct winning"].includes(name);
+}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
   const id=String(market.marketId||"");
@@ -169,14 +174,20 @@ function marketMatches(market,type){
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
-  // Direct Winning/1X2 must only use the actual match-result market.
-  // Do not infer 1X2 from Home/Draw/Away outcome names because handicap
-  // markets commonly use the same outcome labels.
-  if(type==="1x2") return id==="1"||isNamed("1x2","match result","winner","direct winning");
+  if(type==="1x2") return isDirectWinningMarket(market);
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
   return false;
+}
+function directWinningSelectionRequested(outcome,requested){
+  const req=normalizeText(requested);
+  const raw=normalizeText(outcome?.outcomeName);
+  if(!req) return true;
+  if(req==="home"||req==="1") return raw==="home"||raw==="1"||raw.includes("home team");
+  if(req==="draw"||req==="x") return raw==="draw"||raw==="x"||raw.includes("tie");
+  if(req==="away"||req==="2") return raw==="away"||raw==="2"||raw.includes("away team");
+  return raw===req;
 }
 function confidenceForOutcome(market,outcome){
   const active=market.outcomes.filter(o=>o.isActive!==false&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1);
@@ -631,7 +642,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
           if(!marketMatches(market,type)) continue;
           for(const outcome of market.outcomes){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market,type))) continue;
+            if(selections.length&&!selections.some(s=>type==="1x2"?directWinningSelectionRequested(outcome,s):selectionRequested(outcome,s,market))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
             results.push({
