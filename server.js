@@ -55,7 +55,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
 initAuthDb().then(ok=>console.log("Account database:",ok?"ready":"not configured/unavailable"));
-app.use(express.static(path.join(__dirname,"public")));
+app.use((req,res,next)=>{\n  if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");\n  next();\n});\napp.use(express.static(path.join(__dirname,"public")));
 
 const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301","219","223","225","227","228"];
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
