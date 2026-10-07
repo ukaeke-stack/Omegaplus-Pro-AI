@@ -603,43 +603,33 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const body=req.body||{}, admin=await getAdminSettings();
     if(!admin.analyzerEnabled)return r.status(503).json({ok:false,error:"Analyzer is temporarily disabled by the administrator.",code:"ANALYZER_DISABLED",predictions:[]});
     const requestedSport=String(body.sport||"football");
-    const requestedDate=/^\d{4}-\d{2}-\d{2}$/.test(String(body.date||""))?String(body.date):localDayKey(Date.now());
-    const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{
-      const raw=String(value),parts=raw.split("|||"); return {name:parts[0].trim(),country:parts.slice(1).join("|||").trim()};
-    });
-    const marketTypes=[...(Array.isArray(body.marketTypes)?body.marketTypes:[])].map(String).filter(Boolean);
-    const selections=[...(Array.isArray(body.selections)?body.selections:[])].map(String).filter(Boolean);
+    const requestedDate=String(body.date||localDayKey(Date.now()));
+    const leagueFilters=(Array.isArray(body.leagues)?body.leagues.filter(Boolean):[]).map(value=>{const raw=String(value),parts=raw.split("|||");return{name:parts[0],country:parts.slice(1).join("|||")||""}});
+    const marketTypes=Array.isArray(body.marketTypes)?body.marketTypes.filter(Boolean):[];
+    const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[];
-    const results=[];
-    const leagueMatch=(fixture)=>{
-      if(!leagueFilters.length)return true;
-      const fl=normalizeText(fixture.league),fc=normalizeText(fixture.category);
-      return leagueFilters.some(l=>{
-        const n=normalizeText(l.name),c=normalizeText(l.country);
-        return n===fl || fl.includes(n) || n.includes(fl) || (c && fc===c && (fl.includes(n)||n.includes(c)));
-      });
-    };
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
     for(const fixture of fixtures){
-      if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
-      for(const market of (fixture.markets||[])){
+      if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
+      // League name is the authoritative fixture identifier. Country/category is display metadata and must not eliminate a valid league.
+      if(leagueFilters.length&&!leagueFilters.some(l=>normalizeText(l.name)===normalizeText(fixture.league))) continue;
+      for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
-          if(!marketMatches(market,type))continue;
-          for(const outcome of (market.outcomes||[])){
-            const odds=Number(outcome.odds);
-            if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market)))continue;
+          if(!marketMatches(market,type)) continue;
+          for(const outcome of market.outcomes){
+            if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
+            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
             const confidence=confidenceForOutcome(market,outcome);
-            if(confidence<minConfidence)continue;
+            if(confidence<minConfidence) continue;
             results.push({
               id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
               eventId:fixture.eventId,league:fixture.league,category:fixture.category,
               time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
               startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
               market:market.marketName,marketId:market.marketId,specifier:market.specifier,
-              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds,marketType:type,
+              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,
               confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"
             });
           }
@@ -648,90 +638,18 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const dedupe=new Map();
     for(const row of results){
-      const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
-      if(!dedupe.has(key)||row.confidence>dedupe.get(key).confidence)dedupe.set(key,row);
+      const key=row.eventId;
+      if(!dedupe.has(key)||dedupe.get(key).confidence<row.confidence) dedupe.set(key,row);
     }
-    let candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    if(!candidates.length && selections.length){
-      for(const fixture of fixtures){
-        if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
-        for(const market of (fixture.markets||[])){
-          const types=marketTypes.length?marketTypes:["ou"];
-          for(const type of types){
-            if(!marketMatches(market,type))continue;
-            for(const outcome of (market.outcomes||[])){
-              const odds=Number(outcome.odds);
-              if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
-              const pick=pickLabel(type,outcome);
-              if(!selections.some(sel=>selectionRequested({...outcome,outcomeName:pick},sel,market)))continue;
-              const confidence=confidenceForOutcome(market,outcome);
-              if(confidence<minConfidence)continue;
-              const row={id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,eventId:fixture.eventId,league:fixture.league,category:fixture.category,time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,market:market.marketName,marketId:market.marketId,specifier:market.specifier,outcomeId:outcome.outcomeId,pick,odds,marketType:type,confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"};
-              const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
-              if(!dedupe.has(key))dedupe.set(key,row);
-            }
-          }
-        }
-      }
-      candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    }
-    // Provider market labels/specifiers vary across fixtures. If the strict
-    // market matcher found nothing, do a second pass using the actual outcome
-    // labels/specifiers while still honoring the user's league and selection.
-    if(!candidates.length && selections.length){
-      const fallbackRows=[];
-      for(const fixture of fixtures){
-        if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
-        for(const market of (fixture.markets||[])){
-          for(const outcome of (market.outcomes||[])){
-            const odds=Number(outcome.odds);
-            if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
-            if(!selections.some(s=>flexibleSelectionRequested("",outcome,s,market)))continue;
-            const type=marketTypes.find(t=>marketMatches(market,t))||(
-              /both teams|btts/i.test(String(market.marketName||""))?"btts":
-              /1x2|match result|winner/i.test(String(market.marketName||""))?"1x2":
-              /handicap|spread/i.test(String(market.marketName||""))?"handicap":
-              /corner/i.test(String(market.marketName||""))?"corners":
-              /card|booking/i.test(String(market.marketName||""))?"cards":"ou"
-            );
-            const confidence=confidenceForOutcome(market,outcome);
-            if(confidence<minConfidence)continue;
-            fallbackRows.push({
-              id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
-              eventId:fixture.eventId,league:fixture.league,category:fixture.category,
-              time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
-              startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
-              market:market.marketName,marketId:market.marketId,specifier:market.specifier,
-              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds,marketType:type,
-              confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"
-            });
-          }
-        }
-      }
-      const fallbackSeen=new Set();
-      candidates=fallbackRows.filter(row=>{
-        const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
-        if(fallbackSeen.has(key))return false;
-        fallbackSeen.add(key);return true;
-      }).sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    }
-    const limited=candidates.slice(0,Math.min(80,candidates.length));
-    let enriched=limited;
-    if(admin.independentStatsEnabled && limited.length) enriched=await enrichPredictions(limited,{concurrency:4});
-    enriched=decoratePredictions(enriched).sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    const predictions=enriched.slice(0,maxGames);
-    r.json({
-      ok:true,sport:requestedSport,date:requestedDate,source:admin.independentStatsEnabled?"SportyBet markets + independent statistics":"SportyBet markets",
-      generatedAt:new Date().toISOString(),
-      criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},
-      total:predictions.length,available:candidates.length,scannedFixtures:fixtures.filter(x=>localDayKey(x.startTimeMs)===requestedDate).length,
-      independentStatsApplied:admin.independentStatsEnabled&&predictions.some(x=>x.independentConfidence!=null),predictions
-    });
-  }catch(e){
-    console.error("Analyzer error:",e);
-    r.status(502).json({ok:false,error:e.message||"Analyzer failed.",total:0,available:0,predictions:[]});
-  }
+    const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    const candidates=qualified.slice(0,Math.min(60,qualified.length));
+    const enriched=await enrichPredictions(candidates,{concurrency:3});
+    enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    const predictions=decoratePredictions(enriched).slice(0,maxGames);
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+  }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
+
 
 function serverSettlePrediction(p,result){
   if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
