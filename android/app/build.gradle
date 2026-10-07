@@ -26,8 +26,8 @@ android {
             if (keystorePath && keystorePassword && keyAliasValue && keyPassword) {
                 storeFile file(keystorePath)
                 storePassword keystorePassword
-                keyAlias keyAliasValue
-                keyPassword keyPassword
+                setKeyAlias(keyAliasValue)
+                setKeyPassword(keyPassword)
             }
         }
     }
