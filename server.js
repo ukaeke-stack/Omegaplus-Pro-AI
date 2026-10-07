@@ -160,18 +160,22 @@ function localDayKey(ms){
 function normalizeText(v){return String(v||"").toLowerCase().replace(/[^a-z0-9.]+/g," ").trim()}
 function marketMatches(market,type){
   const n=normalizeText(market.marketName);
-  const outcomes=(market.outcomes||[]).map(o=>normalizeText(o.outcomeName));
-  const hasAny=patterns=>outcomes.some(o=>patterns.some(p=>o.includes(p)));
-  if(type==="basketball_total") return ["225"].includes(market.marketId)||n.includes("total")||n.includes("over under")||hasAny(["over ","under "]);
-  if(type==="basketball_handicap") return ["223"].includes(market.marketId)||n.includes("handicap")||n.includes("spread")||hasAny(["handicap","spread"]);
-  if(type==="basketball_moneyline") return ["219"].includes(market.marketId)||n.includes("winner")||n.includes("moneyline")||n.includes("match result")||hasAny(["home","away"]);
-  if(type==="basketball_team_total") return ["227","228"].includes(market.marketId)||n.includes("team total");
-  if(type==="ou") return market.marketId==="18"||n.includes("over under")||n.includes("total goals")||n.includes("goals total")||hasAny(["over ","under "]);
-  if(type==="btts") return market.marketId==="29"||n.includes("both teams to score")||n.includes("btts")||hasAny(["both teams to score","yes","no"]);
-  if(type==="1x2") return market.marketId==="1"||n.includes("1x2")||n.includes("match result")||n==="winner"||hasAny(["home","draw","away"]);
-  if(type==="handicap") return ["14","16"].includes(market.marketId)||n.includes("handicap")||n.includes("spread")||hasAny(["handicap","spread"]);
-  if(type==="corners") return ["166","165","162"].includes(market.marketId)||n.includes("corner")||hasAny(["corner"]);
-  if(type==="cards") return ["139","138","900304","900305","900312"].includes(market.marketId)||n.includes("booking")||n.includes("card")||hasAny(["card","booking"]);
+  const id=String(market.marketId||"");
+  const isNamed=(...names)=>names.some(x=>n===normalizeText(x));
+  const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
+  if(type==="basketball_total") return id==="225"||has("over under","total");
+  if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
+  if(type==="basketball_moneyline") return id==="219"||isNamed("winner","moneyline","match result");
+  if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
+  if(type==="ou") return id==="18"||has("over under","total goals","goals total");
+  if(type==="btts") return id==="29"||has("both teams to score","btts");
+  // Direct Winning/1X2 must only use the actual match-result market.
+  // Do not infer 1X2 from Home/Draw/Away outcome names because handicap
+  // markets commonly use the same outcome labels.
+  if(type==="1x2") return id==="1"||isNamed("1x2","match result","winner","direct winning");
+  if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
+  if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
+  if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
   return false;
 }
 function confidenceForOutcome(market,outcome){
