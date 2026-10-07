@@ -12,11 +12,11 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.5.0";
+const APP_VERSION="1.5.6";
 const APP_ID="com.omegaplus.proai";
 const APP_VERSION_CODE=4;
 const ANDROID_TARGET_SDK=36;
-const MIN_SUPPORTED_WEB_VERSION="1.5.0";
+const MIN_SUPPORTED_WEB_VERSION="1.5.6";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
 const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
@@ -417,7 +417,11 @@ app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({
 app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"ou",name:"Goals Over/Under",type:"ou"},{id:"1x2",name:"1X2",type:"1x2"},
   {id:"btts",name:"BTTS",type:"btts"},{id:"handicap",name:"Handicap",type:"handicap"},
-  {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"}
+  {id:"corners",name:"Corners Over/Under",type:"corners"},{id:"cards",name:"Cards/Bookings Over/Under",type:"cards"},
+  {id:"basketball_total",name:"Points Over/Under",type:"basketball_total"},
+  {id:"basketball_handicap",name:"Basketball Handicap / Spread",type:"basketball_handicap"},
+  {id:"basketball_moneyline",name:"Basketball Winner",type:"basketball_moneyline"},
+  {id:"basketball_team_total",name:"Team Total Points",type:"basketball_team_total"}
 ]}));
 
 async function getDayFixtures(date,force=false,sport="football"){
