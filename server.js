@@ -163,17 +163,16 @@ function marketMatches(market,type){
   const id=String(market.marketId||"");
   const isNamed=(...names)=>names.some(x=>n===normalizeText(x));
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  const handicapMarket=has("handicap","spread");
   if(type==="basketball_total") return id==="225"||has("over under","total");
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
-  if(type==="basketball_moneyline") return !handicapMarket&&(id==="219"||isNamed("winner","moneyline","match result"));
+  if(type==="basketball_moneyline") return id==="219"||isNamed("winner","moneyline","match result");
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
   // Direct Winning/1X2 must only use the actual match-result market.
   // Do not infer 1X2 from Home/Draw/Away outcome names because handicap
   // markets commonly use the same outcome labels.
-  if(type==="1x2") return !isHandicap&&(id==="1"||isNamed("1x2","match result","match winner","winner","direct winning"));
+  if(type==="1x2") return id==="1"||isNamed("1x2","match result","winner","direct winning");
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
