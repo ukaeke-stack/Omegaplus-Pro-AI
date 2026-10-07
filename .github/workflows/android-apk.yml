@@ -45,6 +45,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="android-v1.2.0"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus Pro AI Android v1.2.0" --notes "Current production Omegaplus Pro AI Android build."
+          TAG="android-v1.5.6"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus Pro AI Android v1.5.6" --notes "Current production Omegaplus Pro AI Android build."
           gh release upload "$TAG" android/app/build/outputs/apk/debug/app-debug.apk --clobber
