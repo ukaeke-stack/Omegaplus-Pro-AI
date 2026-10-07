@@ -220,19 +220,8 @@ function decoratePredictions(rows){
 function pickLabel(type,outcome){
   return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
-function selectionRequested(outcome,requested,market,type){
+function selectionRequested(outcome,requested,market){
   if(!requested) return true;
-  const marketName=normalizeText(market?.marketName);
-  const outcomeName=normalizeText(outcome?.outcomeName);
-  if(type==="1x2"){
-    if(/\bhandicap\b|\bspread\b/.test(marketName)) return false;
-    const outcomeId=String(outcome?.outcomeId||"");
-    if(outcomeId==="1"&&["home","1","home win"].includes(outcomeName)) return true;
-    if(outcomeId==="2"&&["draw","x","2","draw win"].includes(outcomeName)) return true;
-    if(outcomeId==="3"&&["away","2","away win"].includes(outcomeName)) return true;
-    return ["home","draw","away","1","x","2","home win","away win"].includes(outcomeName);
-  }
-  if(type==="handicap" && !(/\bhandicap\b|\bspread\b/.test(marketName))) return false;
   const spec=String(market?.specifier||"");
   const lineMatch=spec.match(/(?:total|goals|over|under)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i)||spec.match(/([0-9]+(?:\.[0-9]+)?)/);
   const line=lineMatch?.[1]||"";
