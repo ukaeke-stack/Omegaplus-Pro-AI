@@ -2,6 +2,7 @@ import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
+import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import path from "node:path";
@@ -12,11 +13,11 @@ import {fileURLToPath} from "node:url";
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
-const APP_VERSION="1.5.6";
+const APP_VERSION="1.6.0";
 const APP_ID="com.omegaplus.proai";
-const APP_VERSION_CODE=4;
+const APP_VERSION_CODE=5;
 const ANDROID_TARGET_SDK=36;
-const MIN_SUPPORTED_WEB_VERSION="1.5.6";
+const MIN_SUPPORTED_WEB_VERSION="1.6.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
 const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
@@ -182,6 +183,8 @@ function marketMatches(market,type){
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
+  if(type==="double_chance") return ["10","11","12"].includes(id)||has("double chance","double result");
+  if(type==="team_total") return ["20","21","22"].includes(id)||has("team total","team goals");
   return false;
 }
 function directWinningSelectionRequested(outcome,requested){
@@ -443,13 +446,13 @@ app.get("/api/scan",async(req,r)=>{
 });
 app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
 app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
-app.get("/api/results/status",(_,r)=>r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),provider:"Sportmonks",cacheSeconds:15}));
+app.get("/api/results/status",async(_,r)=>{try{const x=await getVerifiedResults(localDayKey(Date.now()),false);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const force=String(req.query.refresh||"") === "1";const x=await getDateResults(date,force);if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",date,results:x.data,cached:x.cached,updatedAt:x.updatedAt});}
-  catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}
+  try{const date=String(req.query.date||localDayKey(Date.now()));const force=String(req.query.refresh||"") === "1";const x=await getVerifiedResults(date,force);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"confirmed only when Sportmonks and Sofascore agree",date,results:x.results,updatedAt:x.updatedAt});}
+  catch(e){r.status(502).json({ok:false,configured:false,providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},error:e.message,results:[]})}
 });
-app.get("/api/results/live",async(_,r)=>{try{const x=await getLatestResults();if(!x.configured)return r.status(503).json({ok:false,configured:false,provider:"Sportmonks",error:x.error,results:[]});r.json({ok:true,configured:true,provider:"Sportmonks",results:x.data,updatedAt:x.updatedAt})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,results:[]})}});
+app.get("/api/results/live",async(_,r)=>{try{const x=await getVerifiedLiveResults();r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,results:x.results,updatedAt:x.updatedAt});}catch(e){r.status(502).json({ok:false,configured:false,error:e.message,results:[]})}});
 
 function leagueCountry(name,category=""){
   const c=String(category||"").trim();
@@ -690,11 +693,21 @@ function serverSettlePrediction(p,result){
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(over) return total>Number(over[1])?"Won":"Lost";
   if(under) return total<Number(under[1])?"Won":"Lost";
+  if(result.verificationStatus!=="confirmed") return "Pending";
   if(p.marketType==="btts"||/btts/.test(pick)){
     const yes=/yes|gg|both.*score/.test(pick),actual=hs>0&&as>0;
     return actual===yes?"Won":"Lost";
   }
   if(p.marketType==="basketball_moneyline"){ if(/home|1/.test(pick)) return hs>as?"Won":"Lost"; if(/away|2/.test(pick)) return as>hs?"Won":"Lost"; }
+  if(p.marketType==="double_chance"){
+    if(/home or draw|1x/.test(pick)) return hs>=as?"Won":"Lost";
+    if(/home or away|12/.test(pick)) return hs!==as?"Won":"Lost";
+    if(/draw or away|x2/.test(pick)) return as>=hs?"Won":"Lost";
+  }
+  if(p.marketType==="team_total"){
+    const hm=pick.match(/home\s*over\s*(\d+(?:\.\d+)?)/),am=pick.match(/away\s*over\s*(\d+(?:\.\d+)?)/);
+    if(hm)return hs>Number(hm[1])?"Won":"Lost"; if(am)return as>Number(am[1])?"Won":"Lost";
+  }
   if(p.marketType==="1x2"){
     if(/home|1x2.*1|\b1\b/.test(pick)) return hs>as?"Won":"Lost";
     if(/away|1x2.*2|\b2\b/.test(pick)) return as>hs?"Won":"Lost";

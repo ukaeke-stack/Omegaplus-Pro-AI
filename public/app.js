@@ -53,7 +53,7 @@ function saveHistoryRows(rows,replaceDate=null){
   const targetDate=replaceDate||state.date;
   const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
   const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,recordedAt:now}));
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:now}));
   return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
 }
 
@@ -64,6 +64,7 @@ function settleOutcome(x){
   // A 0-0 (or any current score) from a scheduled/live fixture is NOT a final result.
   // Only settle a prediction after the provider explicitly reports a completed match.
   if(!finished)return "Pending";
+  if(String(x.verificationStatus||"")!=="confirmed")return "Pending";
   const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return "Pending";
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
@@ -97,7 +98,7 @@ function renderHistory(date=historySelectedDate(),fallbackRows=[]){
   }
   updateOutcomeSummary(h,"history");
   $("#historyStatus").textContent=h.length?h.length+" record(s) for "+prettyDate(date)+".":"No prediction records saved for "+prettyDate(date)+".";
-  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
+  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span><small>'+esc((x.sources||[]).join(" + ")||"Result verification pending")+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+(Number.isFinite(Number(x.homeScore))?" · "+x.homeScore+"-"+x.awayScore:"")+'</small></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
 }
 async function refreshHistory(date=historySelectedDate()){
   let h=readHistory(),fallback=[];
@@ -121,7 +122,7 @@ async function refreshHistory(date=historySelectedDate()){
     const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
     const liveData=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json().catch(()=>({predictions:[]}));
     const live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
-    day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId}x.outcome=settleOutcome(x)});
+    day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}x.outcome=settleOutcome(x)});
     writeHistory([...h.filter(x=>x.date!==date),...day]);
     archiveDay(date,{history:day,results:resultRows});
     try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,results:resultRows})});}catch{}
@@ -323,4 +324,4 @@ function scheduleMidnightReset(){
   const now=new Date(),next=new Date(now);next.setHours(24,0,0,0);
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
-const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(pending&&$("#historyDate")?.value)refreshHistory($("#historyDate").value)},30000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.configured?"Result provider: Sportmonks live results enabled.":"Result provider: Sportmonks token required for automatic settlement."}catch{}})();
+const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(pending&&$("#historyDate")?.value)refreshHistory($("#historyDate").value)},30000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
