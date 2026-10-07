@@ -174,7 +174,7 @@ function marketMatches(market,type){
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
-  if(type==="1x2") return isDirectWinningMarket(market);
+  if(type==="1x2") return String(market.marketId||"")==="1";
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
