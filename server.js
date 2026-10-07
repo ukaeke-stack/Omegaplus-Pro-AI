@@ -234,6 +234,26 @@ function selectionRequested(outcome,requested,market){
   }
   return aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
 }
+function flexibleSelectionRequested(type,outcome,requested,market){
+  if(selectionRequested(outcome,requested,market)) return true;
+  const req=normalizeText(requested), raw=normalizeText(outcome?.outcomeName), spec=normalizeText(market?.specifier), name=normalizeText(market?.marketName);
+  const combined=[raw,spec,name].join(" ");
+  const line=v=>(v.match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
+  if(/^(over|under)\\b/.test(req)){
+    const direction=req.startsWith("over")?"over":"under", wanted=line(req);
+    return combined.includes(direction) && (!wanted || combined.includes(wanted));
+  }
+  if(req==="home"||req==="1"){
+    return /(^|\\s)(home|1)(\\s|$)/.test(raw) || raw.includes("home team");
+  }
+  if(req==="away"||req==="2"){
+    return /(^|\\s)(away|2)(\\s|$)/.test(raw) || raw.includes("away team");
+  }
+  if(req==="draw"||req==="x") return raw==="draw"||raw==="x"||raw.includes("tie");
+  if(req==="yes") return raw==="yes"||raw.includes("both teams");
+  if(req==="no") return raw==="no";
+  return false;
+}
 const BASKETBALL_LEAGUE_CATALOG=[
   ["NBA","USA"],["WNBA","USA"],["NBA G League","USA"],["NCAA","USA"],["EuroLeague","Europe"],["EuroCup","Europe"],["ACB","Spain"],["BBL","United Kingdom"],["LNB Pro A","France"],["BBL Germany","Germany"],["Lega Basket Serie A","Italy"],["BSL","Turkey"],["NBL","Australia"],["CBA","China"],["B.League","Japan"]
 ];
@@ -654,6 +674,46 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
         }
       }
       candidates=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    }
+    // Provider market labels/specifiers vary across fixtures. If the strict
+    // market matcher found nothing, do a second pass using the actual outcome
+    // labels/specifiers while still honoring the user's league and selection.
+    if(!candidates.length && selections.length){
+      const fallbackRows=[];
+      for(const fixture of fixtures){
+        if(!fixture.home||!fixture.away||localDayKey(fixture.startTimeMs)!==requestedDate||!leagueMatch(fixture))continue;
+        for(const market of (fixture.markets||[])){
+          for(const outcome of (market.outcomes||[])){
+            const odds=Number(outcome.odds);
+            if(outcome.isActive===false||!Number.isFinite(odds)||odds<=1)continue;
+            if(!selections.some(s=>flexibleSelectionRequested("",outcome,s,market)))continue;
+            const type=marketTypes.find(t=>marketMatches(market,t))||(
+              /both teams|btts/i.test(String(market.marketName||""))?"btts":
+              /1x2|match result|winner/i.test(String(market.marketName||""))?"1x2":
+              /handicap|spread/i.test(String(market.marketName||""))?"handicap":
+              /corner/i.test(String(market.marketName||""))?"corners":
+              /card|booking/i.test(String(market.marketName||""))?"cards":"ou"
+            );
+            const confidence=confidenceForOutcome(market,outcome);
+            if(confidence<minConfidence)continue;
+            fallbackRows.push({
+              id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
+              eventId:fixture.eventId,league:fixture.league,category:fixture.category,
+              time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
+              startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
+              market:market.marketName,marketId:market.marketId,specifier:market.specifier,
+              outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds,marketType:type,
+              confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate"
+            });
+          }
+        }
+      }
+      const fallbackSeen=new Set();
+      candidates=fallbackRows.filter(row=>{
+        const key=row.eventId+"|"+row.marketType+"|"+row.marketId+"|"+row.specifier+"|"+row.outcomeId;
+        if(fallbackSeen.has(key))return false;
+        fallbackSeen.add(key);return true;
+      }).sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     }
     const limited=candidates.slice(0,Math.min(80,candidates.length));
     let enriched=limited;
