@@ -198,7 +198,7 @@ async function analyze(){
   const leagues=selectedLeagues(),marketTypes=[...state.markets],selections=[...state.selections],maxGames=Math.max(1,Math.min(50,Number($("#gameLimit").value)||20)),minConfidence=Math.max(0,Math.min(100,Number(state.settings.minConfidence)||0)),dates=[...state.dates].sort();
   $("#analyze").disabled=true;setStatus("Analyzing "+dates.length+" selected date(s)...");
   try{
-    const all=[];
+    const all=[],summaries=[];
     for(const date of dates){
       const remaining=Math.max(0,maxGames-all.length);
       if(remaining===0) break;
@@ -206,15 +206,17 @@ async function analyze(){
       if(!d.ok)throw new Error(d.error||("Analysis failed for "+prettyDate(date)));
       const dated=(d.predictions||[]).slice(0,remaining).map(x=>({...x,date}));
       all.push(...dated);
+      summaries.push({date,scannedFixtures:Number(d.scannedFixtures||0),available:Number(d.available||0),returned:dated.length});
       archiveDay(date,{predictions:dated});
-      if(!dated.length && d.scannedFixtures!=null){
-        console.warn("Analyzer returned no matches", {date, scannedFixtures:d.scannedFixtures, available:d.available, criteria:d.criteria});
-      }
+      if(!dated.length && d.scannedFixtures!=null) console.warn("Analyzer returned no matches",{date,scannedFixtures:d.scannedFixtures,available:d.available,criteria:d.criteria});
     }
     const seen=new Set();state.rows=all.filter(x=>{if(seen.has(x.eventId))return false;seen.add(x.eventId);return true});
     state.selected.clear();renderRows();renderSlip();
     renderHistory(dates.length===1?dates[0]:historySelectedDate());
-    if(!state.rows.length){const parts=dates.map((date,i)=>{const d=all[i];return prettyDate(date)+": scanned "+Number(d?.scannedFixtures||0)+", available "+Number(d?.available||0)});setStatus("0 games matched. "+parts.join(" · ")+" — check the selected league/market/option.");}else setStatus(state.rows.length+" unique game(s) returned across "+dates.length+" selected date(s).");
+    if(!state.rows.length){
+      const parts=summaries.map(x=>prettyDate(x.date)+": scanned "+x.scannedFixtures+", available "+x.available);
+      setStatus("0 games matched. "+parts.join(" · ")+" — check the selected league/market/option.");
+    }else setStatus(state.rows.length+" unique game(s) returned across "+summaries.length+" selected date(s).");
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
 }
 async function loadCalendar(){
