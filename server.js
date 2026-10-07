@@ -452,15 +452,18 @@ app.get("/api/leagues",async(req,r)=>{
     }
     for(const f of fixtures){
       if(!f.league) continue;
+      const actualCountry=leagueCountry(f.league,f.category);
       const topIndex=topLeagueIndex(f.league);
       if(topIndex>=0){
-        const [name,country]=TOP_LEAGUE_CATALOG[topIndex],key=name+"|||"+country;
-        const item=map.get(key); if(item)item.count++;
-        continue;
+        const [name,country]=TOP_LEAGUE_CATALOG[topIndex];
+        if(normalizeText(actualCountry)===normalizeText(country)){
+          const key=name+"|||"+country;
+          const item=map.get(key); if(item)item.count++;
+          continue;
+        }
       }
-      const country=leagueCountry(f.league,f.category);
-      const key=f.league+"|||"+country;
-      if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key,count:1});
+      const key=f.league+"|||"+actualCountry;
+      if(!map.has(key)) map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
       else map.get(key).count++;
     }
     const leagues=[...map.values()].sort((a,b)=>{
@@ -612,8 +615,12 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
-      // League name is the authoritative fixture identifier. Country/category is display metadata and must not eliminate a valid league.
-      if(leagueFilters.length&&!leagueFilters.some(l=>normalizeText(l.name)===normalizeText(fixture.league))) continue;
+      if(leagueFilters.length&&!leagueFilters.some(l=>{
+        const sameName=normalizeText(l.name)===normalizeText(fixture.league);
+        if(!sameName) return false;
+        if(!l.country) return true;
+        return normalizeText(l.country)===normalizeText(leagueCountry(fixture.league,fixture.category));
+      })) continue;
       for(const market of fixture.markets){
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
