@@ -163,10 +163,10 @@ function marketMatches(market,type){
   const id=String(market.marketId||"");
   const isNamed=(...names)=>names.some(x=>n===normalizeText(x));
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  const isHandicap=has("handicap","spread");
+  const handicapMarket=has("handicap","spread");
   if(type==="basketball_total") return id==="225"||has("over under","total");
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
-  if(type==="basketball_moneyline") return !isHandicap&&(id==="219"||isNamed("winner","moneyline","match result"));
+  if(type==="basketball_moneyline") return !handicapMarket&&(id==="219"||isNamed("winner","moneyline","match result"));
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
