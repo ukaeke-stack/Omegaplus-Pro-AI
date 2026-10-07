@@ -162,7 +162,8 @@ function marketMatches(market,type){
   const n=normalizeText(market.marketName);
   const id=String(market.marketId||"");
   const isNamed=(...names)=>names.some(x=>n===normalizeText(x));
-  const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));\n  const isHandicap=has("handicap","spread");
+  const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
+  const isHandicap=has("handicap","spread");
   if(type==="basketball_total") return id==="225"||has("over under","total");
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
   if(type==="basketball_moneyline") return !isHandicap&&(id==="219"||isNamed("winner","moneyline","match result"));
