@@ -56,8 +56,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
-initAuthDb().then(ok=>console.log("Account database:",ok?"ready":"not configured/unavailable"));
-initSupportDb().then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
+initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
