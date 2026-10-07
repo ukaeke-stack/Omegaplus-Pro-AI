@@ -47,14 +47,33 @@ function leagueSlug(league){
   return null;
 }
 function marketExpectedGoals(fixture){
-  const one=fixture.markets?.find(m=>m.marketId==="1");
-  if(!one)return null;
-  const vals=one.outcomes?.filter(o=>o.isActive&&Number(o.odds)>1).map(o=>({name:key(o.outcomeName),p:1/Number(o.odds)}))||[];
-  const sum=vals.reduce((s,x)=>s+x.p,0);if(!sum)return null;
-  const home=vals.find(x=>x.name.includes("home")),away=vals.find(x=>x.name.includes("away")),draw=vals.find(x=>x.name.includes("draw"));
-  if(!home||!away)return null;
-  const hp=home.p/sum,ap=away.p/sum,dp=draw?draw.p/sum:0;
-  return{home:Math.max(.2,1.45*hp+.55*dp),away:Math.max(.2,1.45*ap+.55*dp)}
+  const one=fixture.markets?.find(m=>m.marketId==="1"||key(m.marketName).includes("1x2")||key(m.marketName).includes("match result"));
+  const vals=one?.outcomes?.filter(o=>o.isActive&&Number(o.odds)>1).map(o=>({name:key(o.outcomeName),p:1/Number(o.odds)}))||[];
+  const sum=vals.reduce((s,x)=>s+x.p,0);
+  let hp=.45,ap=.35;
+  if(sum){
+    const home=vals.find(x=>x.name.includes("home")),away=vals.find(x=>x.name.includes("away"));
+    if(home&&away){hp=home.p/sum;ap=away.p/sum;}
+  }
+  const ou=fixture.markets?.find(m=>{
+    const n=key(m.marketName);
+    return ["18","900300","900301"].includes(String(m.marketId))||n.includes("over under")||n.includes("total goals")||n.includes("goals total");
+  });
+  let total=2.55;
+  if(ou){
+    const parsed=(ou.outcomes||[]).filter(o=>o.isActive&&Number(o.odds)>1).map(o=>{
+      const name=key(o.outcomeName),line=String(ou.specifier||"").match(/([0-9]+(?:\.[0-9]+)?)/)?.[1]||name.match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
+      return line?{name,line:Number(line),p:1/Number(o.odds)}:null;
+    }).filter(Boolean);
+    const line25=parsed.filter(x=>Math.abs(x.line-2.5)<0.01);
+    const over=line25.find(x=>x.name.includes("over")),under=line25.find(x=>x.name.includes("under"));
+    if(over&&under){
+      const s=over.p+under.p,po=over.p/s;
+      total=Math.max(1.75,Math.min(3.8,2.5+(po-.5)*2.2));
+    }
+  }
+  const share=(hp+ap)>0?hp/(hp+ap):.56;
+  return{home:Math.max(.65,total*share),away:Math.max(.55,total*(1-share))};
 }
 function scoreMatrix(lh,la){
   const rows=[];
