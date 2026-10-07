@@ -5,6 +5,7 @@ import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from ".
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {analyzeCorrectScores} from "./correct-score.js";
+import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -56,6 +57,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
 initAuthDb().then(ok=>console.log("Account database:",ok?"ready":"not configured/unavailable"));
+initSupportDb().then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
@@ -747,6 +749,49 @@ app.get("/api/performance",async(req,r)=>{
 app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(e.code==="NO_AVAILABLE_SELECTIONS"?409:502).json({ok:false,error:e.message,unavailableSelections:e.unavailable||[]})}});
 
 app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!prevArchive||!Array.isArray(prevArchive.predictions)||prevArchive.predictions.length!==10){try{const predictions=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,predictions:[],results:[]};prevArchive.predictions=predictions;prevArchive.dailySelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&todayArchive?.predictions?.length===10?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.dailySelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+
+
+// User support, feedback, suggestions and admin live-chat endpoints.
+app.post("/api/support/tickets",requireAuth,async(req,r)=>{
+  try{const ticket=await createTicket(req.user,req.body||{});r.status(201).json({ok:true,ticket})}
+  catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/support/tickets",requireAuth,async(req,r)=>{
+  try{r.json({ok:true,tickets:await listUserTickets(req.user)})}
+  catch(e){r.status(500).json({ok:false,error:e.message})}
+});
+app.get("/api/support/chat",requireAuth,async(req,r)=>{
+  try{const thread=await getOrCreateChat(req.user);const messages=await listChatMessages(req.user,thread.id);r.json({ok:true,thread,messages})}
+  catch(e){r.status(500).json({ok:false,error:e.message})}
+});
+app.post("/api/support/chat",requireAuth,async(req,r)=>{
+  try{const thread=await getOrCreateChat(req.user);const message=await addChatMessage(req.user,thread.id,req.body?.message);r.status(201).json({ok:true,message})}
+  catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/admin/support/tickets",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.json({ok:true,tickets:await adminTickets()})}
+  catch(e){r.status(500).json({ok:false,error:e.message})}
+});
+app.patch("/api/admin/support/tickets/:id",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.json({ok:true,ticket:await updateTicket(req.params.id,String(req.body?.status||"open"))})}
+  catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/admin/support/chats",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.json({ok:true,threads:await adminThreads()})}
+  catch(e){r.status(500).json({ok:false,error:e.message})}
+});
+app.get("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.json({ok:true,messages:await adminMessages(req.params.id)})}
+  catch(e){r.status(404).json({ok:false,error:e.message})}
+});
+app.post("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.status(201).json({ok:true,message:await adminAddMessage(req.user,req.params.id,req.body?.message)})}
+  catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+app.patch("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(req,r)=>{
+  try{r.json({ok:true,thread:await setThreadStatus(req.params.id,String(req.body?.status||"open"))})}
+  catch(e){r.status(400).json({ok:false,error:e.message})}
+});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
 // Vercel invokes the Express app as a serverless function. Keep the local
