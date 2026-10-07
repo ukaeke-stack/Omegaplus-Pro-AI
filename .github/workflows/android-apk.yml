@@ -44,6 +44,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -e
           TAG="android-v1.6.0"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Omegaplus Pro AI Android v1.6.0" --notes "Current production Omegaplus Pro AI Android build."
-          gh release upload "$TAG" android/app/build/outputs/apk/debug/app-debug.apk --clobber
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG"               --title "Omegaplus Pro AI Android v1.6.0"               --notes "Current production Omegaplus Pro AI Android build."
+          fi
+
+          # GitHub can briefly return 404 while a newly-created release
+          # propagates to the release-assets upload service. Retry safely.
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "app-debug.apk"; then
+              echo "app-debug.apk is already attached to $TAG."
+              exit 0
+            fi
+
+            if gh release upload "$TAG" "$APK" --clobber; then
+              echo "APK uploaded successfully."
+              exit 0
+            fi
+
+            echo "Release asset upload attempt $attempt failed; retrying..."
+            sleep $((attempt * 5))
+          done
+
+          echo "Failed to publish app-debug.apk after 5 attempts."
+          exit 1
