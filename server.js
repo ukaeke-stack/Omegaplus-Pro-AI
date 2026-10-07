@@ -165,14 +165,14 @@ function marketMatches(market,type){
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
   if(type==="basketball_total") return id==="225"||has("over under","total");
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
-  if(type==="basketball_moneyline") return id==="219"||isNamed("winner","moneyline","match result");
+  if(type==="basketball_moneyline") return !isHandicap&&(id==="219"||isNamed("winner","moneyline","match result"));
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
   // Direct Winning/1X2 must only use the actual match-result market.
   // Do not infer 1X2 from Home/Draw/Away outcome names because handicap
   // markets commonly use the same outcome labels.
-  if(type==="1x2") return id==="1"||isNamed("1x2","match result","winner","direct winning");
+  if(type==="1x2") return !isHandicap&&(id==="1"||isNamed("1x2","match result","match winner","winner","direct winning"));
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
@@ -220,8 +220,15 @@ function decoratePredictions(rows){
 function pickLabel(type,outcome){
   return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
-function selectionRequested(outcome,requested,market){
+function selectionRequested(outcome,requested,market,type){
   if(!requested) return true;
+  const marketName=normalizeText(market?.marketName);
+  const outcomeName=normalizeText(outcome?.outcomeName);
+  if(type==="1x2"){
+    if(/\bhandicap\b|\bspread\b/.test(marketName)) return false;
+    return ["home","draw","away","1","x","2","home win","away win"].includes(outcomeName);
+  }
+  if(type==="handicap" && !(/\bhandicap\b|\bspread\b/.test(marketName))) return false;
   const spec=String(market?.specifier||"");
   const lineMatch=spec.match(/(?:total|goals|over|under)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i)||spec.match(/([0-9]+(?:\.[0-9]+)?)/);
   const line=lineMatch?.[1]||"";
@@ -631,7 +638,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
           if(!marketMatches(market,type)) continue;
           for(const outcome of market.outcomes){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
-            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s))) continue;
+            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market,type))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
             results.push({
