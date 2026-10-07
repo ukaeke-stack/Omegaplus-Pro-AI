@@ -28,7 +28,28 @@ const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
 async function betRelayFetch(pathname,options={}){if(!BETRELAY_API_KEY)throw new Error("Multi-bookmaker code service is not configured yet. Add BETRELAY_API_KEY to Railway.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const res=await fetch(BETRELAY_BASE+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","X-API-Key":BETRELAY_API_KEY,...(options.headers||{})},signal:controller.signal});const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}if(!res.ok)throw new Error(body?.message||("BetRelay HTTP "+res.status));if(!body)throw new Error("BetRelay returned an invalid response");return body}finally{clearTimeout(timer)}}
 function bookmakerById(id){return BOOKMAKERS.find(x=>x.id===String(id))}
-async function createSportyBooking(selections,sport="football"){const fixtures=await getSportyFixtures(false,true,sport);for(const s of selections){const f=fixtures.find(x=>x.eventId===s.eventId);const m=f?.markets.find(x=>x.marketId===String(s.marketId)&&String(x.specifier||"")===String(s.specifier||""));const o=m?.outcomes.find(x=>x.outcomeId===String(s.outcomeId)&&x.isActive);if(!f||!m||!o)throw new Error("One or more selections are no longer available. Refresh and analyze again.")}const payload={selections:selections.map(s=>({eventId:s.eventId,marketId:String(s.marketId),specifier:s.specifier??null,outcomeId:String(s.outcomeId)}))};const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify(payload)}),data=body.data||{};if(!data.shareCode)throw new Error("SportyBet did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null}}
+async function createSportyBooking(selections,sport="football"){
+  const fixtures=await getSportyFixtures(false,true,sport);
+  const available=[],unavailable=[];
+  for(const s of selections){
+    const f=fixtures.find(x=>x.eventId===s.eventId);
+    const m=f?.markets.find(x=>x.marketId===String(s.marketId)&&String(x.specifier||"")===String(s.specifier||""));
+    const o=m?.outcomes.find(x=>x.outcomeId===String(s.outcomeId)&&x.isActive);
+    if(!f||!m||!o){
+      unavailable.push({eventId:s.eventId,home:s.home||f?.home||"Unknown",away:s.away||f?.away||"Unknown",pick:s.pick||s.outcomeName||"Selection unavailable"});
+      continue;
+    }
+    available.push(s);
+  }
+  if(!available.length){
+    const err=new Error("None of the selected games are currently available for booking. Refresh and analyze again.");
+    err.code="NO_AVAILABLE_SELECTIONS"; err.unavailable=unavailable; throw err;
+  }
+  const payload={selections:available.map(s=>({eventId:s.eventId,marketId:String(s.marketId),specifier:s.specifier??null,outcomeId:String(s.outcomeId)}))};
+  const body=await sportyFetch("/orders/share",{method:"POST",body:JSON.stringify(payload)}),data=body.data||{};
+  if(!data.shareCode)throw new Error("SportyBet did not return a booking code for the available selections.");
+  return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null,availableSelections:available,unavailableSelections:unavailable};
+}
 async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:target,country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[]}}
 
 
@@ -407,16 +428,20 @@ app.get("/api/leagues",async(req,r)=>{
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
     for(const [name,country] of catalog){
       const key=name+"|||"+country;
-      map.set(key,{name,country,group:"Top Leagues",key});
+      map.set(key,{name,country,group:"Top Leagues",key,count:0});
     }
-    if(sport==="football"){
-      for(const f of fixtures){
-        if(!f.league) continue;
-        if(topLeagueIndex(f.league)>=0) continue;
-        const country=leagueCountry(f.league,f.category);
-        const key=f.league+"|||"+country;
-        if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key});
+    for(const f of fixtures){
+      if(!f.league) continue;
+      const topIndex=topLeagueIndex(f.league);
+      if(topIndex>=0){
+        const [name,country]=TOP_LEAGUE_CATALOG[topIndex],key=name+"|||"+country;
+        const item=map.get(key); if(item)item.count++;
+        continue;
       }
+      const country=leagueCountry(f.league,f.category);
+      const key=f.league+"|||"+country;
+      if(!map.has(key)) map.set(key,{name:f.league,country,group:"Other Leagues",key,count:1});
+      else map.get(key).count++;
     }
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
@@ -548,7 +573,7 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
       results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
     }
     results.sort((a,b)=>b.confidence-a.confidence);
-    const topFive=results.slice(0,5).map(x=>({...x,topScores:x.topScores?.slice(0,1)||[]}));
+    const topFive=results.slice(0,5).map(x=>({...x,bestScore:x.topScores?.[0]||null,topScores:x.topScores?.slice(0,5)||[]}));
     r.json({ok:true,date,sport,predictions:topFive,generatedAt:new Date().toISOString(),count:topFive.length,requiredCount:5,method:"Top five correct-score matches ranked with independent form/xG/recent-results signals plus live market probability"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
@@ -698,7 +723,7 @@ app.get("/api/performance",async(req,r)=>{
     r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket});
   }catch(e){r.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
 });
-app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(502).json({ok:false,error:e.message})}});
+app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(e.code==="NO_AVAILABLE_SELECTIONS"?409:502).json({ok:false,error:e.message,unavailableSelections:e.unavailable||[]})}});
 
 app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!prevArchive||!Array.isArray(prevArchive.predictions)||prevArchive.predictions.length!==10){try{const predictions=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,predictions:[],results:[]};prevArchive.predictions=predictions;prevArchive.dailySelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&todayArchive?.predictions?.length===10?todayArchive.predictions:await buildDailyBest(date);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.dailySelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
