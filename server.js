@@ -4,6 +4,7 @@ import {put,get} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
+import {applyDerivedModel} from "./model-ensemble.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
@@ -12,6 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
+async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichAndModel(rows,opts))}
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
@@ -557,7 +559,7 @@ async function buildDailyBest(date,sport="football"){
     seen.add(key); return true;
   });
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
-  const enriched=decoratePredictions(await enrichPredictions(shortlist,{concurrency:4}));
+  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
   const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
   // First guarantee market diversity: take the strongest available pick from each market type.
@@ -594,7 +596,7 @@ async function buildBestPicks(date,limit=25,requestedType="all",sport="football"
   }
   const seen=new Set(),unique=candidates.filter(x=>{const k=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;if(seen.has(k))return false;seen.add(k);return true});
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,40);
-  const enriched=decoratePredictions(await enrichPredictions(shortlist,{concurrency:4}));
+  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
   return enriched.sort((a,b)=>b.confidence-a.confidence||b.modelProbability-a.modelProbability||a.startTimeMs-b.startTimeMs).slice(0,Math.max(1,Math.min(25,limit)));
 }
 app.get("/api/best-picks",async(req,r)=>{
@@ -623,7 +625,7 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,40);
     if(!candidates.length)return r.json({ok:true,date,predictions:[],sources:[],message:"No football fixtures found for this date."});
     const base=candidates.map(f=>({id:f.eventId,eventId:f.eventId,home:f.home,away:f.away,league:f.league,time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,marketType:"1x2",pick:"Home",confidence:50,odds:1.5}));
-    const enriched=await enrichPredictions(base,{concurrency:3});
+    const enriched=await enrichAndModel(base,{concurrency:3});
     const ranked=enriched.sort((a,b)=>{
       const as=(a.independentSources||[]).length,bs=(b.independentSources||[]).length;
       return bs-as||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs;
@@ -696,7 +698,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const candidates=qualified.slice(0,Math.min(60,qualified.length));
-    const enriched=await enrichPredictions(candidates,{concurrency:3});
+    const enriched=await enrichAndModel(candidates,{concurrency:3});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
     const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
