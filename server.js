@@ -262,62 +262,60 @@ function selectionRequested(outcome,requested,market,type=""){
   if(requestedMarket&&requestedMarket!==String(type||""))return false;
   const n=normalizeText(market?.marketName), raw=normalizeText(outcome?.outcomeName);
   const spec=normalizeText(market?.specifier);
-  const line=(label.match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
+  const line=(label.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  const combined=n+" "+raw+" "+spec;
-  const actualLine=(spec.match(/[0-9]+(?:\\.[0-9]+)?/)||combined.match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
-  const direction=/\\bunder\\b/.test(normalizeText(label))?"under":/\\bover\\b/.test(normalizeText(label))?"over":"";
+  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const direction=/\bunder\b/.test(normalizeText(label))?"under":/\bover\b/.test(normalizeText(label))?"over":"";
   if(type==="ou"){
     if(!(String(market?.marketId)==="18" || (has("goal","goals")&&has("over","under","total"))))return false;
-    return direction && actualLine===line && raw.includes(direction);
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="cards"){
-    if(!(String(market?.marketId) in {"139":1,"138":1,"900304":1,"900305":1,"900312":1}) && !has("card","booking"))return false;
-    return direction && actualLine===line && raw.includes(direction);
+    if(!(["139","138","900304","900305","900312"].includes(String(market?.marketId))||has("card","booking")))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="corners"){
     if(!(["166","165","162"].includes(String(market?.marketId))||has("corner")))return false;
-    return direction && actualLine===line && raw.includes(direction);
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="btts"){
     if(!(String(market?.marketId)==="29"||has("both teams to score","btts")))return false;
-    return label.toLowerCase().endsWith("yes")?raw==="yes"||raw.includes("yes")||raw.includes("goal goal"):raw==="no"||raw.includes("no");
+    return label.toLowerCase().endsWith("yes")?(raw==="yes"||raw.includes("goal goal")):(raw==="no"||raw.includes("no"));
   }
   if(type==="btts_goals"){
     if(!(has("btts","both teams")&&has("over","under")))return false;
     if(line&&actualLine!==line)return false;
-    if(/yes|goal goal/.test(raw))return true;
-    return raw.includes("over")||raw.includes("under");
+    return raw==="yes"||raw.includes("goal goal")||raw.includes("over")||raw.includes("under");
   }
   if(type==="team_total"){
     if(!(has("team total","team goals")||["20","21","22"].includes(String(market?.marketId))))return false;
     const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
-    return side && direction && actualLine===line && raw.includes(direction) && (!side||raw.includes(side)||spec.includes(side));
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
   }
   if(type==="team_corners"){
     if(!has("corner"))return false;
     const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
-    return side && direction && actualLine===line && raw.includes(direction) && (raw.includes(side)||spec.includes(side)||n.includes(side));
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
   }
   if(type==="team_cards"){
     if(!(has("card","booking")))return false;
     const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
-    return side && direction && actualLine===line && raw.includes(direction) && (raw.includes(side)||spec.includes(side)||n.includes(side));
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
   }
   if(type==="first_half_ou"){
     if(!(has("first half","1st half","half total")&&has("goal","goals","total")))return false;
-    return direction && actualLine===line && raw.includes(direction);
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="half_time_result"){
     if(!has("half time","half-time","ht"))return false;
-    const want=normalizeText(label).replace(/^ht\\s*/,"");
+    const want=normalizeText(label).replace(/^ht\s*/,"");
     return raw===want||raw.includes(want);
   }
   if(type==="double_chance"){
     if(!(has("double chance","double result")||["10","11","12"].includes(String(market?.marketId))))return false;
     const map={home_or_draw:["home","draw"],home_or_away:["home","away"],draw_or_away:["draw","away"]};
     const want=map[requestedKey]||[];
-    return want.length===2&&want.every(x=>raw.includes(x)||raw.includes(x==="draw"?"x":x));
+    return want.length===2&&want.every(x=>raw.includes(x)||(x==="draw"&&raw==="x"));
   }
   if(type==="1x2"){
     if(!(String(market?.marketId)==="1"||has("1x2","match result","winner")))return false;
@@ -330,14 +328,15 @@ function selectionRequested(outcome,requested,market,type=""){
   }
   if(type==="basketball_total"||type==="basketball_first_half_total"||type==="basketball_quarter_total"){
     if(!has("over","under","total"))return false;
-    return direction&&actualLine===line&&raw.includes(direction);
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="basketball_team_total"){
     if(!has("team total","total points"))return false;
-    return direction&&actualLine===line&&raw.includes(direction);
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
   if(type==="basketball_handicap"||type==="basketball_moneyline"||type==="basketball_first_half_moneyline"){
-    return has("winner","moneyline","match result","handicap","spread")&&(raw===normalizeText(label)||raw.includes(normalizeText(label)));
+    const want=normalizeText(label);
+    return has("winner","moneyline","match result","handicap","spread")&&(raw===want||raw.includes(want));
   }
   return false;
 }
