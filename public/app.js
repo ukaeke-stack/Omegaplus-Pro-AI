@@ -349,3 +349,7 @@ function scheduleMidnightReset(){
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
 const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(async()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(!pending)return;const d=$("#historyDate")?.value||dateKey(new Date());try{await refreshHistory(d);if($("#page-predictions")?.classList.contains("active-page"))await loadDailyBest();}catch{}},10000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
+// Public read-only bridge for additive upgrade modules. No existing state is replaced.
+window.omegaRows=()=>Array.isArray(state.rows)?state.rows.slice():[];
+window.omegaStateDate=()=>state.date||new Date().toISOString().slice(0,10);
+window.omegaSport=()=>state.sport||"football";
