@@ -550,17 +550,89 @@ function leagueGroup(name,category=""){
   if(topLeagueIndex(name)>=0) return "Top Leagues";
   return "Other Leagues";
 }
+const leagueCountCache=new Map();
+const leagueCountPromises=new Map();
+const LEAGUE_COUNT_CACHE_MS=30*60*1000;
+
+async function getLeagueCountFixtures(date,sport="football"){
+  const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
+  const cacheKey=date+"|"+sportDef.id;
+  const hit=leagueCountCache.get(cacheKey);
+  if(hit&&Date.now()-hit.at<LEAGUE_COUNT_CACHE_MS)return {fixtures:hit.fixtures,cached:true};
+  const running=leagueCountPromises.get(cacheKey);
+  if(running)return running;
+  const promise=(async()=>{
+    const all=[];
+    const pageSize=100;
+    const marketId="1";
+    for(let page=1;page<=12;page++){
+      const params=new URLSearchParams({
+        sportId:sportDef.sportId,
+        marketId,
+        pageSize:String(pageSize),
+        pageNum:String(page),
+        todayGames:"false",
+        timeline:"720",
+        _t:String(Date.now())
+      });
+      let body;
+      try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){
+        if(all.length)break;
+        throw e;
+      }
+      const tournaments=body.data?.tournaments||[];
+      let pageCount=0;
+      let pageMin=Infinity,pageMax=-Infinity;
+      for(const tournament of tournaments){
+        for(const event of tournament.events||[]){
+          pageCount++;
+          const startTimeMs=Number(event.estimateStartTime||0);
+          if(Number.isFinite(startTimeMs)&&startTimeMs>0){
+            pageMin=Math.min(pageMin,startTimeMs);
+            pageMax=Math.max(pageMax,startTimeMs);
+          }
+          all.push({
+            eventId:String(event.eventId||""),
+            league:String(tournament.name||""),
+            category:String(tournament.categoryName||""),
+            startTimeMs
+          });
+        }
+      }
+      if(pageCount<pageSize)break;
+      if(Number.isFinite(pageMax)&&pageMax>0){
+        const maxDate=localDayKey(pageMax);
+        const minDate=Number.isFinite(pageMin)&&pageMin>0?localDayKey(pageMin):"";
+        if(maxDate>date&&minDate>date)break;
+        if(maxDate===date)break;
+      }
+    }
+    const fixtures=all.filter(x=>localDayKey(x.startTimeMs)===date);
+    leagueCountCache.set(cacheKey,{at:Date.now(),fixtures});
+    return {fixtures,cached:false};
+  })();
+  leagueCountPromises.set(cacheKey,promise);
+  try{return await promise}finally{leagueCountPromises.delete(cacheKey)}
+}
+
 app.get("/api/leagues",async(req,r)=>{
   const sport=String(req.query.sport||"football");
   const requestedDate=String(req.query.date||localDayKey(Date.now()));
   const includeCounts=String(req.query.counts||"1")!=="0";
   try{
     const cacheKey=requestedDate+"|"+(SPORTS.find(x=>x.id===sport)?.id||"football");
-    const cached=dayCache.get(cacheKey);
-    let fixtures=cached?.fixtures||[];
-    if(includeCounts&&!cached){
-      const loaded=await getDayFixtures(requestedDate,false,sport);
-      fixtures=loaded.fixtures||[];
+    let fixtures=[];
+    let cached=false;
+    if(includeCounts){
+      const dayHit=dayCache.get(cacheKey);
+      if(dayHit&&Date.now()-dayHit.at<DAY_CACHE_MS){
+        fixtures=dayHit.fixtures||[];
+        cached=true;
+      }else{
+        const loaded=await getLeagueCountFixtures(requestedDate,sport);
+        fixtures=loaded.fixtures||[];
+        cached=Boolean(loaded.cached);
+      }
     }
     const map=new Map();
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
@@ -570,19 +642,20 @@ app.get("/api/leagues",async(req,r)=>{
     }
     if(includeCounts){
       for(const f of fixtures){
-        if(!f.league) continue;
+        if(!f.league)continue;
         const actualCountry=leagueCountry(f.league,f.category);
         const topIndex=topLeagueIndex(f.league);
         if(topIndex>=0){
           const [name,country]=TOP_LEAGUE_CATALOG[topIndex];
           if(normalizeText(actualCountry)===normalizeText(country)){
             const key=name+"|||"+country;
-            const item=map.get(key); if(item)item.count++;
+            const item=map.get(key);
+            if(item)item.count++;
             continue;
           }
         }
         const key=f.league+"|||"+actualCountry;
-        if(!map.has(key)) map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
+        if(!map.has(key))map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
         else map.get(key).count++;
       }
     }
@@ -591,7 +664,7 @@ app.get("/api/leagues",async(req,r)=>{
       const ai=ga.indexOf(a.group),bi=ga.indexOf(b.group);
       return (ai-bi)||a.name.localeCompare(b.name)||a.country.localeCompare(b.country);
     });
-    r.json({ok:true,date:requestedDate,sport,counts:includeCounts,cached:Boolean(cached),leagues});
+    r.json({ok:true,date:requestedDate,sport,counts:includeCounts,cached,leagues});
   }catch(e){
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
     const leagues=catalog.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country,count:null}));

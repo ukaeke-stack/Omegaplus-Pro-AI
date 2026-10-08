@@ -80,9 +80,6 @@ function settleOutcome(x){
   if(pick.includes("draw"))return hs===as?"Won":"Lost";
   return "Finished";
 }
-function historySelectedDate(){
-  return $("#historyDate")?.value||dateKey(new Date());
-}
 function updateOutcomeSummary(rows,prefix){
   const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost"].includes(x.outcome)).length;
   const settled=won+lost,accuracy=settled?Math.round(won/settled*100):null;
@@ -186,9 +183,13 @@ function bindMarketDropdowns(){
   $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add(state.sport==="basketball"?"basketball_total":"ou");renderMarketOptions();renderSelectionOptions()};
   $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const marketId=[...state.markets][0],first=(marketCatalog[marketId]?.options||[])[0];if(first)state.selections.add(selectionValue(marketId,first))}renderSelectionOptions()};
 }
+const leagueUiCache=new Map();
+const LEAGUE_UI_CACHE_MS=30*60*1000;
+
 async function loadLeagues(){
   const requestDate=state.date,requestSport=state.sport;
-  const renderLeagues=(leagues,countsReady)=>{
+  const cacheKey=requestDate+"|"+requestSport;
+  const renderLeagues=(leagues)=>{
     if(requestDate!==state.date||requestSport!==state.sport)return;
     const chosen=new Set(selectedLeagues());
     const groups=["Top Leagues","European Competitions","International","Other Leagues"];
@@ -201,29 +202,41 @@ async function loadLeagues(){
         const country=typeof x==="string"?"":x.country;
         const visible=typeof x==="string"?x:(x.name||value.split("|||")[0]);
         const count=typeof x==="string"?null:(x.count==null?null:Number(x.count));
-        const countText=typeof x==="string"?"":(countsReady?(count==null?"—":count+" game"+(count===1?"":"s")):"Loading…");
+        const countText=typeof x==="string"?"":(count==null?"—":count+" game"+(count===1?"":"s"));
         return '<option value="'+esc(value)+'">'+esc(visible)+(country?" — "+esc(country):"")+(typeof x==="string"?"":" · "+countText)+'</option>';
       }).join("")+'</optgroup>';
     }).join("");
     $$("#league option").forEach(o=>o.selected=chosen.has(o.value));
     $("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
   };
+  const cached=leagueUiCache.get(cacheKey);
+  if(cached&&Date.now()-cached.at<LEAGUE_UI_CACHE_MS){
+    renderLeagues(cached.leagues||[]);
+    return;
+  }
+  $("#league").innerHTML='<option disabled selected>Loading leagues and game counts…</option>';
   try{
-    const base=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=0");
-    renderLeagues(base.leagues||[],false);
-    try{
-      const counts=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
-      renderLeagues(counts.leagues||base.leagues||[],Boolean(counts.counts));
-    }catch(e){
-      setTimeout(async()=>{
+    const data=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
+    if(requestDate!==state.date||requestSport!==state.sport)return;
+    const leagues=data.leagues||[];
+    if(data.counts)leagueUiCache.set(cacheKey,{at:Date.now(),leagues});
+    renderLeagues(leagues);
+  }catch(e){
+    if(requestDate!==state.date||requestSport!==state.sport)return;
+    setTimeout(async()=>{
+      if(requestDate!==state.date||requestSport!==state.sport)return;
+      try{
+        const retry=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
         if(requestDate!==state.date||requestSport!==state.sport)return;
-        try{
-          const retry=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
-          renderLeagues(retry.leagues||base.leagues||[],Boolean(retry.counts));
-        }catch{}
-      },3000);
-    }
-  }catch(e){setStatus("Could not load leagues for "+prettyDate(requestDate)+".")}
+        const leagues=retry.leagues||[];
+        if(retry.counts)leagueUiCache.set(cacheKey,{at:Date.now(),leagues});
+        renderLeagues(leagues);
+      }catch{
+        $("#league").innerHTML='<option disabled selected>Unable to load league counts</option>';
+        setStatus("Could not load leagues for "+prettyDate(requestDate)+".");
+      }
+    },1000);
+  }
 }
 async function loadBase(){
   try{
