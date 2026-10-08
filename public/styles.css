@@ -72,14 +72,15 @@ main,.page,.active-page{min-width:0;max-width:100%}
 
 /* Mobile toolbar final fit: keep brand, update, account and menu visible without wrapping. */
 @media(max-width:600px){
-  .topbar{gap:4px;overflow:hidden}
-  .top-brand{flex:1 1 auto;min-width:0}
-  .top-brand .logo{width:34px;height:34px;flex:0 0 34px;font-size:17px}
-  .top-brand strong{font-size:16px}
-  .top-update{flex:0 0 auto;padding:6px 7px;font-size:12px}
-  #omegaAccount{flex:0 1 88px;min-width:0;margin-left:2px}
-  #omegaAccount .omega-account-btn{width:100%;min-width:0;max-width:88px;padding:7px 6px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .icon-btn,.menu-btn{flex:0 0 34px;width:34px;min-width:34px;height:34px;border-radius:10px;font-size:18px;margin-left:2px;padding:0}
+  .topbar{gap:5px;overflow:hidden;min-height:58px}
+  .top-brand{flex:1 1 auto;min-width:0;gap:8px}
+  .top-brand .logo{width:38px;height:38px;flex:0 0 38px;font-size:19px}
+  .top-brand strong{font-size:18px;line-height:1.1}
+  .top-brand small{font-size:8px}
+  .top-update{flex:0 0 auto;padding:8px 9px;font-size:13px;font-weight:700}
+  #omegaAccount{flex:0 1 104px;min-width:0;margin-left:2px}
+  #omegaAccount .omega-account-btn{width:100%;min-width:0;max-width:104px;padding:8px 7px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .icon-btn,.menu-btn{flex:0 0 38px;width:38px;min-width:38px;height:38px;border-radius:10px;font-size:20px;margin-left:2px;padding:0}
 }
 @media(max-width:360px){
   .topbar{padding-left:7px;padding-right:7px;gap:2px}
