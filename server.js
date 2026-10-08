@@ -114,7 +114,7 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  const marketKey=MARKET_IDS.join(",");
+  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"1";
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
@@ -123,7 +123,14 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     let body;
-    try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){if(all.length) break;throw e}
+    try{
+      body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+      if(sportDef.id!=="football" && !(body.data?.tournaments||[]).some(t=>(t.events||[]).length)){
+        const unfiltered=new URLSearchParams(params);
+        unfiltered.delete("marketId");
+        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+      }
+    }catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
     for(const tournament of tournaments){
