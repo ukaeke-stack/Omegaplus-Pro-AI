@@ -367,14 +367,14 @@ function selectionRequested(outcome,requested,market,type=""){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
-  if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+  if(["table_tennis_total_points","tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
-  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+  if(["table_tennis_moneyline","tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
     return directWinningSelectionRequested(outcome,label);
   }
-  if(["tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
+  if(["table_tennis_handicap","table_tennis_set_betting","tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
