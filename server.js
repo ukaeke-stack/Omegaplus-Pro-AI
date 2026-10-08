@@ -175,16 +175,16 @@ function isDirectWinningMarket(market){
 function marketMatches(market,type){
   const n=normalizeText(market.marketName),id=String(market.marketId||"");
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  if(type==="basketball_total") return id==="225"||has("over under","total");
+  if(type==="basketball_total") return id==="225"||(has("over","under","total")&&!has("corner","card","booking"));
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
   if(type==="basketball_moneyline") return id==="219"||has("winner","moneyline","match result");
-  if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
+  if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total","team points");
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="ou") return id==="18"||has("over under","total goals","goals total");
+  if(type==="ou") return id==="18"||(has("goal","goals")&&has("over","under","total")&&!has("corner","corners","card","cards","booking","team"));
   if(type==="btts") return id==="29"||has("both teams to score","btts");
-  if(type==="btts_goals") return has("btts","both teams","over","under");
+  if(type==="btts_goals") return has("btts","both teams")&&has("over","under")&&!has("corner","card","booking");
   if(type==="1x2") return id==="1"||has("1x2","match result","winner");
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
