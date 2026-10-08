@@ -34,3 +34,22 @@ window.OMEGA_MARKET_OPTIONS.basketball_first_half_total={name:"1st Half Points",
 window.OMEGA_MARKET_OPTIONS.basketball_first_half_moneyline={name:"1st Half Winner",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
 window.OMEGA_MARKET_OPTIONS.basketball_quarter_total={name:"Quarter Points",options:[{label:"Q1 Over 40.5",key:"q1_over_40_5"},{label:"Q1 Over 50.5",key:"q1_over_50_5"},{label:"Q2 Over 40.5",key:"q2_over_40_5"},{label:"Q3 Over 40.5",key:"q3_over_40_5"},{label:"Q4 Over 40.5",key:"q4_over_40_5"}]};
 window.OMEGA_SPORT_MARKETS.basketball.push("basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total");
+
+window.OMEGA_MARKET_OPTIONS.tennis_moneyline={name:"Tennis Match Winner",options:[{label:"Player 1",key:"home"},{label:"Player 2",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.tennis_total_games={name:"Tennis Total Games",options:[{label:"Over 20.5",key:"over_20_5"},{label:"Over 22.5",key:"over_22_5"},{label:"Over 24.5",key:"over_24_5"},{label:"Under 20.5",key:"under_20_5"},{label:"Under 22.5",key:"under_22_5"},{label:"Under 24.5",key:"under_24_5"}]};
+window.OMEGA_MARKET_OPTIONS.tennis_handicap={name:"Tennis Games Handicap",options:[{label:"Player 1",key:"home"},{label:"Player 2",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.tennis_set_betting={name:"Tennis Set Betting",options:[{label:"2-0",key:"2_0"},{label:"2-1",key:"2_1"},{label:"0-2",key:"0_2"},{label:"1-2",key:"1_2"}]};
+
+window.OMEGA_MARKET_OPTIONS.hockey_moneyline={name:"Ice Hockey Match Winner",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.hockey_total_goals={name:"Ice Hockey Goals Over/Under",options:[{label:"Over 4.5",key:"over_4_5"},{label:"Over 5.5",key:"over_5_5"},{label:"Over 6.5",key:"over_6_5"},{label:"Under 4.5",key:"under_4_5"},{label:"Under 5.5",key:"under_5_5"},{label:"Under 6.5",key:"under_6_5"}]};
+window.OMEGA_MARKET_OPTIONS.hockey_puck_line={name:"Ice Hockey Puck Line",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.hockey_period={name:"Ice Hockey Period Markets",options:[{label:"1st Period Home",key:"home"},{label:"1st Period Draw",key:"draw"},{label:"1st Period Away",key:"away"}]};
+
+window.OMEGA_MARKET_OPTIONS.baseball_moneyline={name:"Baseball Match Winner",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.baseball_total_runs={name:"Baseball Total Runs",options:[{label:"Over 7.5",key:"over_7_5"},{label:"Over 8.5",key:"over_8_5"},{label:"Over 9.5",key:"over_9_5"},{label:"Under 7.5",key:"under_7_5"},{label:"Under 8.5",key:"under_8_5"},{label:"Under 9.5",key:"under_9_5"}]};
+window.OMEGA_MARKET_OPTIONS.baseball_run_line={name:"Baseball Run Line",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.baseball_innings={name:"Baseball Innings Markets",options:[{label:"1st Inning Over 0.5",key:"over_0_5"},{label:"1st Inning Under 0.5",key:"under_0_5"}]};
+
+window.OMEGA_SPORT_MARKETS.tennis=["tennis_moneyline","tennis_total_games","tennis_handicap","tennis_set_betting"];
+window.OMEGA_SPORT_MARKETS.ice_hockey=["hockey_moneyline","hockey_total_goals","hockey_puck_line","hockey_period"];
+window.OMEGA_SPORT_MARKETS.baseball=["baseball_moneyline","baseball_total_runs","baseball_run_line","baseball_innings"];

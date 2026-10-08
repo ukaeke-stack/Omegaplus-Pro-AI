@@ -17,12 +17,12 @@ function scoreOf(e){
   return {homeScore:Number.isFinite(h)?h:null,awayScore:Number.isFinite(a)?a:null};
 }
 function dayKey(ms){return new Date(ms).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});}
-async function sofaDate(date){
-  const key="sofa:"+date,hit=cache.get(key);
+async function sofaDate(date,sport="football"){
+  const key="sofa:"+sport+":"+date,hit=cache.get(key);
   if(hit&&Date.now()-hit.at<TTL)return hit.data;
   const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);
   try{
-    const res=await fetch(SOFA+"/sport/football/scheduled-events/"+encodeURIComponent(date),{headers:{Accept:"application/json"},signal:c.signal});
+    const res=await fetch(SOFA+"/sport/"+encodeURIComponent(sport)+"/scheduled-events/"+encodeURIComponent(date),{headers:{Accept:"application/json"},signal:c.signal});
     if(!res.ok)throw new Error("Sofascore HTTP "+res.status);
     const body=await res.json();
     const data=(body.events||[]).map(e=>{const s=scoreOf(e);return{providerId:String(e.id||""),date:dayKey(Number(e.startTimestamp||0)*1000),startingAt:e.startTimestamp,home:String(e.homeTeam?.name||""),away:String(e.awayTeam?.name||""),homeKey:norm(e.homeTeam?.name),awayKey:norm(e.awayTeam?.name),homeScore:s.homeScore,awayScore:s.awayScore,status:statusOf(e),state:String(e.status?.description||e.status?.type||"")};});
@@ -53,10 +53,15 @@ function combine(primary,secondary){
     return x;
   });
 }
-export async function getVerifiedResults(date,force=false){
+export async function getVerifiedResults(date,force=false,sport="football"){
+  if(sport!=="football"){
+    const sofa=await sofaDate(date,sport);
+    const results=sofa.map(x=>({...x,verificationStatus:x.status==="Finished"?"confirmed":"unverified",verificationCount:1,sources:["Sofascore"]}));
+    return {date,results,sources:{sportmonks:false,sofascore:true},updatedAt:Date.now(),cached:false};
+  }
   const sm=await getDateResults(date,force);
   let sofa=[];
-  try{sofa=await sofaDate(date)}catch{}
+  try{sofa=await sofaDate(date,"football")}catch{}
   return {date,results:combine(sm.configured?sm.data:[],sofa),sources:{sportmonks:Boolean(sm.configured),sofascore:true},updatedAt:Date.now(),cached:false};
 }
-export async function getVerifiedLiveResults(){return getVerifiedResults(dayKey(Date.now()),true);}
+export async function getVerifiedLiveResults(sport="football"){return getVerifiedResults(dayKey(Date.now()),true,sport);}
