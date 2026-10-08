@@ -214,9 +214,9 @@ function directWinningSelectionRequested(outcome,requested){
   const req=normalizeText(requested);
   const raw=normalizeText(outcome?.outcomeName);
   if(!req) return true;
-  if(req==="home"||req==="1") return raw==="home"||raw==="1"||raw.includes("home team");
+  if(req==="home"||req==="1"||req==="player 1") return raw==="home"||raw==="1"||raw.includes("home team");
   if(req==="draw"||req==="x") return raw==="draw"||raw==="x"||raw.includes("tie");
-  if(req==="away"||req==="2") return raw==="away"||raw==="2"||raw.includes("away team");
+  if(req==="away"||req==="2"||req==="player 2") return raw==="away"||raw==="2"||raw.includes("away team");
   return raw===req;
 }
 function confidenceForOutcome(market,outcome){
@@ -867,7 +867,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
-        const sameName=normalizeText(l.name)===normalizeText(fixture.league);
+        const fixtureLeague=normalizeText(fixture.league), requestedLeague=normalizeText(l.name); const sameName=fixtureLeague===requestedLeague||fixtureLeague.includes(requestedLeague)||requestedLeague.includes(fixtureLeague);
         if(!sameName) return false;
         if(!l.country) return true;
         return normalizeText(l.country)===normalizeText(leagueCountry(fixture.league,fixture.category));
