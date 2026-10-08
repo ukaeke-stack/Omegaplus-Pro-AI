@@ -1,4 +1,4 @@
-const state={sport:"football",rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["Over 1.5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
+const state={sport:"football",rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
 function readSavedSettings(){try{return {...state.settings,...JSON.parse(localStorage.getItem("omegaplus_settings_v2")||"{}")}}catch{return {...state.settings}}}
 function applySettings(s){
   state.settings={...state.settings,...s};
@@ -7,7 +7,7 @@ function applySettings(s){
   const market=state.settings.defaultMarket;
   if(market&&marketCatalog[market])state.markets=new Set([market]);
   const selection=state.settings.defaultSelection;
-  if(selection)state.selections=new Set([selection]);
+  if(selection)state.selections=new Set([String(selection).includes("::")?selection:"ou::"+selection.toLowerCase().replace(/ /g,"_")]);
   if(typeof renderMarketOptions==="function")renderMarketOptions();
   if(typeof renderSelectionOptions==="function")renderSelectionOptions();
 }
@@ -164,7 +164,7 @@ function selectionLabel(value){
   return marketCatalog[marketId]?.options?.find(o=>o.key===key)?.label||String(value||"");
 }
 function renderSelectionOptions(){
-  const options=[...state.markets].flatMap(k=>(marketCatalog[k]?.options||[]).map(o=>({value:selectionValue(k,o),label:o.label+" · "+marketCatalog[k].name})));
+  const options=[...state.markets].flatMap(k=>(marketCatalog[k]?.options||[]).map(o=>({value:selectionValue(k,o),label:o.label})));
   const seen=new Set(),unique=options.filter(o=>!seen.has(o.value)&&seen.add(o.value));
   const legacy=[...state.selections].map(x=>{
     if(String(x).includes("::"))return x;
@@ -184,7 +184,7 @@ function renderSelectionOptions(){
 }
 function bindMarketDropdowns(){
   $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add(state.sport==="basketball"?"basketball_total":"ou");renderMarketOptions();renderSelectionOptions()};
-  $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const first=(marketCatalog[[...state.markets][0]]?.options||[])[0];if(first)state.selections.add(first.label)}renderSelectionOptions()};
+  $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const marketId=[...state.markets][0],first=(marketCatalog[marketId]?.options||[])[0];if(first)state.selections.add(selectionValue(marketId,first))}renderSelectionOptions()};
 }
 async function loadLeagues(){
   try{
