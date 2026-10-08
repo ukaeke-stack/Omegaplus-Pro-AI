@@ -1,0 +1,22 @@
+name: Omegaplus Next Upgrade Checks
+on:
+  push:
+    branches: [feature/omegaplus-next-upgrades]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node --check advanced-features.js
+      - run: node --check public/app.js
+      - run: node --check public/market-options.js
+      - run: node --check public/next-upgrades.js

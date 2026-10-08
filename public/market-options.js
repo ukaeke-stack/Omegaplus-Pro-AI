@@ -22,3 +22,15 @@ window.OMEGA_MARKET_OPTIONS.basketball_moneyline={name:"Basketball Winner",optio
 
 window.OMEGA_MARKET_OPTIONS.basketball_team_total={name:"Team Total Points",options:[{label:"Over 70.5",key:"over_70_5"},{label:"Over 80.5",key:"over_80_5"},{label:"Over 90.5",key:"over_90_5"},{label:"Under 70.5",key:"under_70_5"},{label:"Under 80.5",key:"under_80_5"},{label:"Under 90.5",key:"under_90_5"}]};
 window.OMEGA_SPORT_MARKETS.basketball.push("basketball_team_total");
+
+window.OMEGA_MARKET_OPTIONS.first_half_ou={name:"First-Half Goals",options:[{label:"1H Over 0.5",key:"1h_over_0_5"},{label:"1H Over 1.5",key:"1h_over_1_5"},{label:"1H Over 2.5",key:"1h_over_2_5"},{label:"1H Under 0.5",key:"1h_under_0_5"},{label:"1H Under 1.5",key:"1h_under_1_5"},{label:"1H Under 2.5",key:"1h_under_2_5"}]};
+window.OMEGA_MARKET_OPTIONS.half_time_result={name:"Half-Time Result",options:[{label:"HT Home",key:"ht_home"},{label:"HT Draw",key:"ht_draw"},{label:"HT Away",key:"ht_away"}]};
+window.OMEGA_MARKET_OPTIONS.btts_goals={name:"BTTS + Goals",options:[{label:"BTTS + Over 1.5",key:"btts_over_1_5"},{label:"BTTS + Over 2.5",key:"btts_over_2_5"},{label:"BTTS + Over 3.5",key:"btts_over_3_5"},{label:"BTTS + Under 4.5",key:"btts_under_4_5"}]};
+window.OMEGA_MARKET_OPTIONS.team_corners={name:"Team Corners",options:[{label:"Home Over 2.5",key:"home_corners_2_5"},{label:"Home Over 3.5",key:"home_corners_3_5"},{label:"Away Over 2.5",key:"away_corners_2_5"},{label:"Away Over 3.5",key:"away_corners_3_5"}]};
+window.OMEGA_MARKET_OPTIONS.team_cards={name:"Team Cards",options:[{label:"Home Over 0.5",key:"home_cards_0_5"},{label:"Home Over 1.5",key:"home_cards_1_5"},{label:"Away Over 0.5",key:"away_cards_0_5"},{label:"Away Over 1.5",key:"away_cards_1_5"}]};
+window.OMEGA_SPORT_MARKETS.football.push("first_half_ou","half_time_result","btts_goals","team_corners","team_cards");
+
+window.OMEGA_MARKET_OPTIONS.basketball_first_half_total={name:"1st Half Points",options:[{label:"1H Over 70.5",key:"1h_over_70_5"},{label:"1H Over 80.5",key:"1h_over_80_5"},{label:"1H Over 90.5",key:"1h_over_90_5"},{label:"1H Under 70.5",key:"1h_under_70_5"},{label:"1H Under 80.5",key:"1h_under_80_5"},{label:"1H Under 90.5",key:"1h_under_90_5"}]};
+window.OMEGA_MARKET_OPTIONS.basketball_first_half_moneyline={name:"1st Half Winner",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.basketball_quarter_total={name:"Quarter Points",options:[{label:"Q1 Over 40.5",key:"q1_over_40_5"},{label:"Q1 Over 50.5",key:"q1_over_50_5"},{label:"Q2 Over 40.5",key:"q2_over_40_5"},{label:"Q3 Over 40.5",key:"q3_over_40_5"},{label:"Q4 Over 40.5",key:"q4_over_40_5"}]};
+window.OMEGA_SPORT_MARKETS.basketball.push("basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total");

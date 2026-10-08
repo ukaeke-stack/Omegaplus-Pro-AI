@@ -94,6 +94,14 @@ async function sofaEventStats(eventId){
     return flattenStats(x.data);
   }catch{return{}}
 }
+async function sofaEventLineups(eventId){
+  if(!eventId)return null;
+  try{const x=await cachedJson("sofa-lineups:"+eventId,SOFASCORE_BASE+"/event/"+eventId+"/lineups");return x.data||null}catch{return null}
+}
+async function sofaTeamInjuries(teamId){
+  if(!teamId)return null;
+  try{const x=await cachedJson("sofa-injuries:"+teamId,SOFASCORE_BASE+"/team/"+teamId+"/injuries");return x.data||null}catch{return null}
+}
 async function sofaTeamRecent(teamId){
   if(!teamId)return[];
   try{
@@ -133,12 +141,13 @@ function understatTeamSummary(data,teamName){
 async function independentStatsForFixture(fixture){
   const date=new Date(fixture.startTimeMs).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});
   const sofa=await findSofaEvent(fixture);
-  let homeRecent=null,awayRecent=null,sofaStats={};
+  let homeRecent=null,awayRecent=null,sofaStats={},lineups=null,injuries={home:null,away:null};
   if(sofa.found){
     const ht=sofa.event?.homeTeam,at=sofa.event?.awayTeam;
     const pair=await Promise.all([sofaTeamRecent(ht?.id),sofaTeamRecent(at?.id)]);
     homeRecent=summarizeRecent(pair[0],ht?.id);awayRecent=summarizeRecent(pair[1],at?.id);
-    sofaStats=await sofaEventStats(sofa.eventId);
+    const intelligence=await Promise.all([sofaEventStats(sofa.eventId),sofaEventLineups(sofa.eventId),sofaTeamInjuries(ht?.id),sofaTeamInjuries(at?.id)]);
+    sofaStats=intelligence[0];lineups=intelligence[1];injuries={home:intelligence[2],away:intelligence[3]};
   }
   const season=seasonStart(date),ud=await understatLeagueData(fixture.league,season);
   const uh=understatTeamSummary(ud,fixture.home),ua=understatTeamSummary(ud,fixture.away);
@@ -157,7 +166,7 @@ async function independentStatsForFixture(fixture){
     homeCorners:sofaStats.cornerKicks?.home??null,awayCorners:sofaStats.cornerKicks?.away??null
   }:null;
   const available=[sofa.found?"sofascore":null,ud?"understat":null].filter(Boolean);
-  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots},understat:{home:uh,away:ua}};
+  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots,lineups,injuries},understat:{home:uh,away:ua}};
 }
 function clamp(n,min=0,max=100){return Math.max(min,Math.min(max,n))}
 function independentConfidence(stats,type){

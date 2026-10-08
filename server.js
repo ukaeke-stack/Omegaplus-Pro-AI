@@ -6,6 +6,7 @@ import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
+import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -170,22 +171,28 @@ function isDirectWinningMarket(market){
   return id==="1"||["1x2","match result","winner","direct winning"].includes(name);
 }
 function marketMatches(market,type){
-  const n=normalizeText(market.marketName);
-  const id=String(market.marketId||"");
-  const isNamed=(...names)=>names.some(x=>n===normalizeText(x));
+  const n=normalizeText(market.marketName),id=String(market.marketId||"");
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
   if(type==="basketball_total") return id==="225"||has("over under","total");
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
-  if(type==="basketball_moneyline") return id==="219"||isNamed("winner","moneyline","match result");
+  if(type==="basketball_moneyline") return id==="219"||has("winner","moneyline","match result");
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
+  if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
+  if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
+  if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
-  if(type==="1x2") return String(market.marketId||"")==="1";
+  if(type==="btts_goals") return has("btts","both teams","over","under");
+  if(type==="1x2") return id==="1"||has("1x2","match result","winner");
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
+  if(type==="team_corners") return has("corner")&&has("team");
   if(type==="cards") return ["139","138","900304","900305","900312"].includes(id)||has("booking","card");
+  if(type==="team_cards") return has("card","booking")&&has("team");
   if(type==="double_chance") return ["10","11","12"].includes(id)||has("double chance","double result");
   if(type==="team_total") return ["20","21","22"].includes(id)||has("team total","team goals");
+  if(type==="first_half_ou") return has("first half","1st half","half total","total goals");
+  if(type==="half_time_result") return has("half time","half-time","ht result");
   return false;
 }
 function directWinningSelectionRequested(outcome,requested){
@@ -520,7 +527,7 @@ app.get("/api/predictions",async(req,r)=>{
 
 async function buildDailyBest(date,sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards"];
+  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards","double_chance","team_total","first_half_ou","half_time_result","btts_goals","team_corners","team_cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets||[]){
@@ -570,7 +577,7 @@ async function buildDailyBest(date,sport="football"){
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
+  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total","basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets){
@@ -690,6 +697,16 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const enriched=await enrichPredictions(candidates,{concurrency:3});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
+    const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
+    existing.predictions=predictions.slice(0,10);
+    const newOddsSnapshot=extractOddsSnapshot(predictions);
+    existing.oddsSnapshotsPrevious=Array.isArray(existing.oddsSnapshots)?existing.oddsSnapshots:[];
+    existing.oddsSnapshots=newOddsSnapshot;
+    existing.oddsSnapshotsHistory=[...(Array.isArray(existing.oddsSnapshotsHistory)?existing.oddsSnapshotsHistory:[]),newOddsSnapshot].slice(-5);
+    existing.updatedAt=new Date().toISOString();
+    existing.savedAt=existing.savedAt||existing.updatedAt;
+    existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
+    await writePersistentArchive(requestedDate,existing,requestedSport);
     r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
@@ -800,6 +817,40 @@ app.post("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(r
 app.patch("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(req,r)=>{
   try{r.json({ok:true,thread:await setThreadStatus(req.params.id,String(req.body?.status||"open"))})}
   catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+// Advanced analytics APIs.
+app.get("/api/smart-picks",async(req,res)=>{
+ try{const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);let rows=Array.isArray(archive?.predictions)?archive.predictions:[];if(!rows.length)rows=await buildBestPicks(date,20,"all",sport);res.json({ok:true,date,sport,predictions:await smartPickRank(rows),generatedAt:new Date().toISOString()})}
+ catch(e){res.status(502).json({ok:false,error:e.message,predictions:[]})}
+});
+app.post("/api/bet-builder",requirePaid,async(req,res)=>{
+ try{const rows=Array.isArray(req.body?.predictions)?req.body.predictions:[];const mode=String(req.body?.mode||"conservative");res.json({ok:true,mode,predictions:buildBetBuilder(rows,mode)})}
+ catch(e){res.status(400).json({ok:false,error:e.message,predictions:[]})}
+});
+app.get("/api/performance-advanced",async(req,res)=>{
+ try{const today=localDayKey(Date.now()),from=String(req.query.from||today),to=String(req.query.to||from);res.json({ok:true,from,to,...await performanceFromArchives(d=>readPersistentArchive(d),from,to)})}
+ catch(e){res.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{},byLeague:{}})}
+});
+app.post("/api/match-report",async(req,res)=>{
+ try{res.json({ok:true,report:buildMatchReport(req.body?.prediction||req.body||{})})}
+ catch(e){res.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/odds-movement",async(req,res)=>{
+ try{
+   const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+   const archive=await readPersistentArchive(date,sport),current=Array.isArray(archive?.predictions)?archive.predictions:[];
+   const history=Array.isArray(archive?.oddsSnapshotsHistory)?archive.oddsSnapshotsHistory:[];
+   const previous=history.length>1?history[history.length-2]:Array.isArray(archive?.oddsSnapshotsPrevious)?archive.oddsSnapshotsPrevious:[];
+   const prevMap=new Map(previous.map(x=>[x.id,x]));
+   const movement=current.map(x=>({...x,movement:oddsMovement(x,prevMap.get(x.id)||{})}));
+   res.json({ok:true,date,sport,movement,hasSnapshot:previous.length>0,updatedAt:archive?.updatedAt||null});
+ }catch(e){res.status(200).json({ok:false,error:e.message,movement:[],hasSnapshot:false})}
+});
+app.get("/api/intelligence-status",async(req,res)=>{
+ try{
+   const health=await independentHealth();
+   res.json({ok:true,providers:{sofascore:!!health.sofascore,understat:!!health.understat,oddsHistory:true,lineups:"Sofascore event lineups when published",injuries:"Sofascore team injury feed when available"},note:"Lineups and injuries are availability-dependent and are never invented."});
+ }catch(e){res.status(200).json({ok:false,providers:{sofascore:false,understat:false,oddsHistory:true},error:e.message})}
 });
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
