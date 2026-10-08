@@ -67,6 +67,11 @@ function settleOutcome(x){
   if(String(x.verificationStatus||"")!=="confirmed")return "Pending";
   const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return "Pending";
+  if(String(x.market||"").toLowerCase()==="correct score"){
+    const cs=pick.match(/^(\d+)\s*[-:]\s*(\d+)$/);
+    if(!cs)return "Pending";
+    return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
+  }
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(m)return total>Number(m[1])?"Won":"Lost";
   if(u)return total<Number(u[1])?"Won":"Lost";
@@ -91,7 +96,7 @@ function historySelectedDate(){
 function renderHistory(date=historySelectedDate(),fallbackRows=[]){
   const box=$("#historyList");if(!box)return;
   const all=readHistory();
-  let h=all.filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
+  let h=all.filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
   if(!h.length&&fallbackRows.length){
     const now=new Date().toISOString();
     h=fallbackRows.slice(0,10).map(x=>({...x,id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||settleOutcome(x),recordedAt:now}));
@@ -123,12 +128,19 @@ async function refreshHistory(date=historySelectedDate()){
     const liveData=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json().catch(()=>({predictions:[]}));
     const live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
     day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}x.outcome=settleOutcome(x)});
-    writeHistory([...h.filter(x=>x.date!==date),...day]);
-    archiveDay(date,{history:day,results:resultRows});
-    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,results:resultRows})});}catch{}
-    renderHistory(date,day);
+    const correctScoreRows=h.filter(x=>x.date===date&&(x.market||"")==="Correct Score").map(x=>{
+      const z=findResult(x);
+      const next={...x};
+      if(z){next.status=z.status||next.status;next.homeScore=z.homeScore??next.homeScore;next.awayScore=z.awayScore??next.awayScore;next.resultProviderId=z.providerId||next.resultProviderId;next.sources=z.sources||next.sources||[];next.verificationStatus=z.verificationStatus||next.verificationStatus||"unverified";next.verificationCount=z.verificationCount||next.verificationCount||1;next.outcome=settleOutcome(next);}
+      return next;
+    });
+    const merged=[...h.filter(x=>x.date!==date),...day.filter(x=>x.market!=="Correct Score"),...correctScoreRows];
+    writeHistory(merged);
+    archiveDay(date,{history:merged.filter(x=>x.date===date),predictions:day,correctScores:correctScoreRows,results:resultRows});
+    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,correctScores:correctScoreRows,results:resultRows})});}catch{}
+    renderHistory(date,merged.filter(x=>x.date===date));
   }catch{
-    const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
+    const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
     renderHistory(date,day);
   }
 }
@@ -263,6 +275,10 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
   const csRows=rows.slice(0,5).map((x,i)=>{const best=x.topScores?.[0];return {id:"cs_"+(x.eventId||x.id||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,league:x.league,time:x.time,home:x.home,away:x.away,pick:best?.score||"—",market:"Correct Score",odds:best?.probability??"—",confidence:Number(x.confidence||best?.probability||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:new Date().toISOString()};});
   const other=existing.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score"));
   writeHistory([...other,...csRows].slice(-2000));
+  try{
+    await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:"football",date,correctScores:csRows})});
+  }catch{}
+  try{await refreshHistory(date)}catch{}
   }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
