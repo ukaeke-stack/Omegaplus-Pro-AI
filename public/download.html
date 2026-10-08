@@ -4,30 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#07120e">
-<meta name="description" content="Official Omegaplus Pro AI Android app download.">
-<title>Download Omegaplus Pro AI</title>
+<meta name="description" content="Discover Omegaplus Pro AI, try the web app and download the Android app.">
+<title>Omegaplus Pro AI — Football & Basketball Analytics</title>
 <style>
-:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#f5f7f6;background:#07120e}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(145deg,#07120e,#10241b)}
-.card{width:min(560px,100%);padding:32px;border:1px solid rgba(255,255,255,.12);border-radius:24px;background:rgba(255,255,255,.05);box-shadow:0 20px 60px rgba(0,0,0,.3);text-align:center}
-.logo{font-size:48px;margin-bottom:8px}.brand{font-weight:800;font-size:28px}.sub{opacity:.7;letter-spacing:.12em;font-size:12px;margin-top:3px}
-h1{font-size:26px;margin:28px 0 10px}p{line-height:1.6;opacity:.82}
-.version{display:inline-block;margin:12px 0 22px;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.08);font-size:13px}
-a.button{display:block;text-decoration:none;padding:15px 18px;border-radius:14px;background:#fff;color:#07120e;font-weight:800;margin:8px 0}
-.secondary{font-size:13px;opacity:.72;margin-top:18px}.links{margin-top:22px;display:flex;gap:16px;justify-content:center;flex-wrap:wrap}.links a{color:inherit;opacity:.8}
+:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#f5f7f6;background:#06100c;--line:rgba(255,255,255,.1);--muted:rgba(245,247,246,.68);--panel:rgba(255,255,255,.055)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 50% -10%,#193b2b 0,#0b1c14 34%,#06100c 72%);min-height:100vh}
+a{text-decoration:none;color:inherit}.wrap{width:min(1120px,calc(100% - 32px));margin:auto}
+nav{position:sticky;top:0;z-index:20;background:rgba(6,16,12,.82);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
+.navin{height:68px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:11px;font-weight:850}.ball{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#fff,#b8c8c0);color:#07120e;font-size:20px}.brand small{display:block;font-size:9px;letter-spacing:.18em;color:var(--muted);margin-top:2px}.navlinks{display:flex;gap:18px;align-items:center;font-size:13px;color:var(--muted)}.navlinks a:hover{color:#fff}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:13px;padding:13px 18px;font-weight:800;border:1px solid var(--line);transition:.2s}.btn:hover{transform:translateY(-1px)}.primary{background:#fff;color:#07120e;border-color:#fff}.ghost{background:var(--panel)}
+.hero{padding:74px 0 42px;text-align:center}.eyebrow{font-size:11px;letter-spacing:.2em;color:#aabdb3;font-weight:800}.hero h1{font-size:clamp(40px,7vw,76px);line-height:.98;letter-spacing:-.055em;margin:15px auto 20px;max-width:900px}.hero h1 em{font-style:normal;background:linear-gradient(90deg,#fff,#9fb5aa);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{max-width:700px;margin:0 auto 28px;color:var(--muted);font-size:17px;line-height:1.65}.actions{display:flex;justify-content:center;flex-wrap:wrap;gap:10px}.version{display:inline-block;margin-top:16px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px}
+.preview{margin:30px auto 0;max-width:980px;border:1px solid var(--line);border-radius:25px;padding:10px;background:rgba(255,255,255,.035);box-shadow:0 28px 90px rgba(0,0,0,.38)}.screen{min-height:360px;border-radius:18px;background:linear-gradient(145deg,#0c2017,#07110d);border:1px solid rgba(255,255,255,.08);overflow:hidden}.screenbar{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 18px}.dot{width:9px;height:9px;border-radius:50%;background:#6d7d75}.screenbrand{font-weight:800;margin-left:8px}.screenbody{display:grid;grid-template-columns:180px 1fr;min-height:306px}.mockside{border-right:1px solid var(--line);padding:18px}.mockside div{padding:10px;border-radius:9px;color:var(--muted);font-size:12px}.mockside div:first-child{background:rgba(255,255,255,.08);color:#fff}.mockmain{padding:24px}.mocktitle{font-size:12px;letter-spacing:.15em;color:var(--muted)}.mockmain h2{font-size:28px;margin:8px 0 18px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mockcard{padding:15px;border:1px solid var(--line);background:var(--panel);border-radius:14px;text-align:left}.mockcard b{display:block;font-size:19px;margin-top:7px}.mockcard small{color:var(--muted)}.picklist{margin-top:10px;display:grid;gap:8px}.pick{padding:11px 13px;border:1px solid var(--line);border-radius:11px;display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.pick strong{color:#fff}
+section{padding:55px 0}.sectionhead{text-align:center;max-width:720px;margin:0 auto 30px}.sectionhead h2{font-size:32px;margin:8px 0}.sectionhead p{color:var(--muted);line-height:1.65}.features{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.feature{padding:22px;border:1px solid var(--line);background:var(--panel);border-radius:18px}.feature .ico{font-size:25px}.feature h3{margin:14px 0 8px}.feature p{color:var(--muted);line-height:1.6;font-size:14px}
+.cta{margin:22px 0 60px;padding:36px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,rgba(255,255,255,.09),rgba(255,255,255,.035));display:flex;justify-content:space-between;align-items:center;gap:25px}.cta h2{margin:0 0 8px}.cta p{margin:0;color:var(--muted);line-height:1.6}
+footer{border-top:1px solid var(--line);padding:25px 0 35px;color:var(--muted);font-size:12px}.footerin{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}.footerlinks{display:flex;gap:15px}
+@media(max-width:760px){.navlinks a:not(:last-child){display:none}.navin{height:62px}.hero{padding-top:52px}.screenbody{grid-template-columns:1fr}.mockside{display:none}.cards{grid-template-columns:1fr}.screen{min-height:390px}.mockmain{padding:18px}.features{grid-template-columns:1fr}.cta{display:block}.cta .actions{justify-content:flex-start;margin-top:20px}.preview{margin-top:22px}}
 </style>
 </head>
 <body>
-<main class="card">
-<div class="logo">⚽</div>
-<div class="brand">Omegaplus Pro AI</div>
-<div class="sub">AI MULTI-SPORT ANALYTICS</div>
-<h1>Download the Android App</h1>
-<p>Install the latest stable Omegaplus Pro AI Android release for football and basketball analytics, predictions, history and market analysis.</p>
-<div class="version">Current stable release: v1.6.0</div>
-<a class="button" href="https://github.com/ukaeke-stack/Omegaplus-Pro-AI/releases/download/android-v1.6.0/app-release.apk">Download Android APK</a>
-<p class="secondary">Android may ask you to allow installation from this source. Only install APKs obtained from the official Omegaplus distribution page.</p>
-<div class="links"><a href="/">Open Omegaplus Pro AI</a><a href="/privacy.html">Privacy Policy</a></div>
+<nav><div class="wrap navin"><a href="/" class="brand"><span class="ball">⚽</span><span>Omegaplus<small>PRO AI</small></span></a><div class="navlinks"><a href="#features">Features</a><a href="#preview">Preview</a><a href="/privacy.html">Privacy</a><a class="btn primary" href="#download">Get App</a></div></div></nav>
+
+<main>
+<section class="hero">
+<div class="wrap">
+<div class="eyebrow">AI MULTI-SPORT ANALYTICS</div>
+<h1>See the games differently with <em>Omegaplus Pro AI</em></h1>
+<p>Analyze football and basketball fixtures, explore markets, track predictions and build selections from one professional sports analytics platform.</p>
+<div class="actions"><a class="btn primary" href="#download">Download Android App</a><a class="btn ghost" href="/">Open Web App</a></div>
+<div class="version">Current Android release · v1.6.0</div>
+<div id="preview" class="preview"><div class="screen"><div class="screenbar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="screenbrand">Omegaplus Pro AI</span></div><div class="screenbody"><aside class="mockside"><div>⌂ Home</div><div>▥ Predictions</div><div>▣ Calendar</div><div>◷ History</div><div>◎ Correct Score</div><div>♜ Stats</div></aside><div class="mockmain"><div class="mocktitle">LIVE MARKET SCAN</div><h2>Fixture Analyzer</h2><div class="cards"><div class="mockcard"><small>Available Games</small><b>Live</b></div><div class="mockcard"><small>Selected Date</small><b>Today</b></div><div class="mockcard"><small>Engine</small><b>AI</b></div></div><div class="picklist"><div class="pick"><strong>Premier League · Match Analysis</strong><span>High confidence</span></div><div class="pick"><strong>LaLiga · Market Analysis</strong><span>Multi-market</span></div><div class="pick"><strong>Basketball · Fixture Analysis</strong><span>Sport-specific</span></div></div></div></div></div></div>
+</div>
+</section>
+
+<section id="features"><div class="wrap"><div class="sectionhead"><div class="eyebrow">WHAT YOU GET</div><h2>Everything in one place</h2><p>Visitors can explore the web experience first, then install the Android app when they are ready.</p></div><div class="features">
+<div class="feature"><div class="ico">⚽</div><h3>Football Analytics</h3><p>Analyze fixtures across supported leagues and markets with confidence-ranked selections.</p></div>
+<div class="feature"><div class="ico">🏀</div><h3>Basketball Analytics</h3><p>Use sport-specific fixture analysis and markets without mixing basketball and football competitions.</p></div>
+<div class="feature"><div class="ico">◷</div><h3>Prediction History</h3><p>Review recorded selections, results and performance over your chosen dates.</p></div>
+<div class="feature"><div class="ico">◎</div><h3>Correct Score</h3><p>Access the paid Correct Score analysis area with daily football score selections.</p></div>
+<div class="feature"><div class="ico">▣</div><h3>Calendar & Leagues</h3><p>Choose fixture dates and explore supported leagues without being limited to a short date window.</p></div>
+<div class="feature"><div class="ico">✉</div><h3>Support & Live Chat</h3><p>Send feedback, suggestions and messages to the administrator through the app.</p></div>
+</div></div></section>
+
+<section id="download"><div class="wrap"><div class="cta"><div><div class="eyebrow">ANDROID APP</div><h2>Ready to try Omegaplus Pro AI?</h2><p>Install the current signed Android release directly from the official distribution page.</p></div><div class="actions"><a class="btn primary" href="https://github.com/ukaeke-stack/Omegaplus-Pro-AI/releases/download/android-v1.6.0/app-release.apk">Download v1.6.0 APK</a><a class="btn ghost" href="/">Try Web Version</a></div></div></div></section>
 </main>
+
+<footer><div class="wrap footerin"><span>© Omegaplus Pro AI · Sports analytics platform</span><div class="footerlinks"><a href="/">Web App</a><a href="/privacy.html">Privacy Policy</a></div></div></footer>
 </body>
 </html>
