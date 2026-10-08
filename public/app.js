@@ -110,6 +110,10 @@ async function refreshHistory(date=historySelectedDate()){
   try{
     const archiveResponse=await (await fetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
     const archive=archiveResponse.ok&&archiveResponse.archive?archiveResponse.archive:null;
+    if(Array.isArray(archive?.correctScores)&&archive.correctScores.length){
+      const existingCs=archive.correctScores.slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
+      h=[...h.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score")),...existingCs];
+    }
     let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date}));
     if(!day.length){
       const data=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
