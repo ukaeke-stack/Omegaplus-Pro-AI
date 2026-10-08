@@ -558,7 +558,7 @@ async function buildDailyBest(date,sport="football"){
     if(seen.has(key)) return false;
     seen.add(key); return true;
   });
-  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
+  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
   const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
@@ -595,7 +595,7 @@ async function buildBestPicks(date,limit=25,requestedType="all",sport="football"
     }
   }
   const seen=new Set(),unique=candidates.filter(x=>{const k=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;if(seen.has(k))return false;seen.add(k);return true});
-  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,40);
+  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
   return enriched.sort((a,b)=>b.confidence-a.confidence||b.modelProbability-a.modelProbability||a.startTimeMs-b.startTimeMs).slice(0,Math.max(1,Math.min(25,limit)));
 }
