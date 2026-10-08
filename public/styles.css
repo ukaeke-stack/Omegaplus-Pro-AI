@@ -69,3 +69,25 @@ main,.page,.active-page{min-width:0;max-width:100%}
 @media(min-width:1000px){
   .hero-home,.page-title,.snap-card,.live-card,.stats-row,.analysis-controls,.analysis-status,.match,.calendar-game,.slip-card{max-width:950px}
 }
+
+/* Mobile toolbar final fit: keep brand, update, account, voice and menu visible without wrapping. */
+@media(max-width:600px){
+  .topbar{gap:4px;overflow:hidden}
+  .top-brand{flex:1 1 auto;min-width:0}
+  .top-brand .logo{width:34px;height:34px;flex:0 0 34px;font-size:17px}
+  .top-brand strong{font-size:14px}
+  .top-update{flex:0 0 auto;padding:6px 7px;font-size:10px}
+  #omegaAccount{flex:0 1 88px;min-width:0;margin-left:2px}
+  #omegaAccount .omega-account-btn{width:100%;min-width:0;max-width:88px;padding:7px 6px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .icon-btn,.menu-btn{flex:0 0 34px;width:34px;min-width:34px;height:34px;border-radius:10px;font-size:18px;margin-left:2px;padding:0}
+}
+@media(max-width:360px){
+  .topbar{padding-left:7px;padding-right:7px;gap:2px}
+  .top-brand{gap:5px}
+  .top-brand .logo{width:30px;height:30px;flex-basis:30px;font-size:15px}
+  .top-brand strong{font-size:12px}
+  .top-update{font-size:9px;padding:5px 5px}
+  #omegaAccount{flex-basis:72px}
+  #omegaAccount .omega-account-btn{max-width:72px;font-size:8px;padding:6px 4px}
+  .icon-btn,.menu-btn{flex-basis:30px;width:30px;min-width:30px;height:30px;font-size:16px}
+}
