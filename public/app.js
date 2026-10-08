@@ -80,9 +80,6 @@ function settleOutcome(x){
   if(pick.includes("draw"))return hs===as?"Won":"Lost";
   return "Finished";
 }
-function historySelectedDate(){
-  return $("#historyDate")?.value||dateKey(new Date());
-}
 function updateOutcomeSummary(rows,prefix){
   const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost"].includes(x.outcome)).length;
   const settled=won+lost,accuracy=settled?Math.round(won/settled*100):null;
