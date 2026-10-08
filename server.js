@@ -527,7 +527,7 @@ app.get("/api/predictions",async(req,r)=>{
 
 async function buildDailyBest(date,sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards"];
+  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards","double_chance","team_total","first_half_ou","half_time_result","btts_goals","team_corners","team_cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets||[]){
@@ -577,7 +577,7 @@ async function buildDailyBest(date,sport="football"){
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
+  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total","basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets){
