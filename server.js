@@ -27,7 +27,7 @@ const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
-const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketball",name:"Basketball",sportId:"sr:sport:2"}];
+const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketball",name:"Basketball",sportId:"sr:sport:2"},{id:"baseball",name:"Baseball",sportId:"sr:sport:3"},{id:"ice_hockey",name:"Ice Hockey",sportId:"sr:sport:4"},{id:"tennis",name:"Tennis",sportId:"sr:sport:5"}];
 const BOOKMAKERS=[{id:"sportybet",name:"SportyBet",country:"ng",native:true},{id:"bet9ja",name:"Bet9ja",country:"ng"},{id:"msport",name:"MSport",country:"ng"},{id:"betking",name:"BetKing",country:"ng"},{id:"1xbet",name:"1xBet",country:"ng"},{id:"betano",name:"Betano",country:"ng"},{id:"22bet",name:"22Bet",country:"ng"}];
 const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/api/v1";
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
@@ -182,6 +182,19 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
+  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
+  if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
+  if(type==="tennis_set_betting") return has("set betting","correct score","sets");
+  if(type==="hockey_moneyline") return has("moneyline","match result","winner","to win")&&!has("period");
+  if(type==="hockey_total_goals") return has("goal","goals","total")&&has("over","under");
+  if(type==="hockey_puck_line") return has("puck line","puck handicap","handicap");
+  if(type==="hockey_period") return has("period","1st period","2nd period","3rd period")&&(has("winner","moneyline","result","over","under"));
+  if(type==="baseball_moneyline") return has("moneyline","match result","winner","to win");
+  if(type==="baseball_total_runs") return has("run","runs","total")&&has("over","under");
+  if(type==="baseball_run_line") return has("run line","run handicap","handicap");
+  if(type==="baseball_innings") return has("inning","innings")&&(has("over","under","winner","result"));
+
   if(type==="ou") return id==="18"||(has("goal","goals")&&has("over","under","total")&&!has("corner","corners","card","cards","booking","team"));
   if(type==="btts") return id==="29"||has("both teams to score","btts");
   if(type==="btts_goals") return has("btts","both teams")&&has("over","under")&&!has("corner","card","booking");
@@ -347,6 +360,17 @@ function selectionRequested(outcome,requested,market,type=""){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
+  if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+    if(line&&actualLine!==line)return false;
+    return Boolean(direction&&raw.includes(direction));
+  }
+  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+    return directWinningSelectionRequested(outcome,label);
+  }
+  if(["tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
+    const want=normalizeText(label);
+    return raw===want||raw.includes(want);
+  }
   if(type==="basketball_total"||type==="basketball_first_half_total"||type==="basketball_quarter_total"){
     if(!has("over","under","total"))return false;
     return Boolean(direction&&actualLine===line&&raw.includes(direction));
@@ -355,11 +379,33 @@ function selectionRequested(outcome,requested,market,type=""){
     if(!has("team total","total points"))return false;
     return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
+  if(["tennis_moneyline","tennis_total_games","tennis_handicap","tennis_set_betting","hockey_moneyline","hockey_total_goals","hockey_puck_line","hockey_period","baseball_moneyline","baseball_total_runs","baseball_run_line","baseball_innings"].includes(type)){
+    if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+      return direction&&line?direction+" "+line:raw;
+    }
+    return raw;
+  }
   if(type==="basketball_handicap"||type==="basketball_moneyline"||type==="basketball_first_half_moneyline"){
     const want=normalizeText(label);
     return has("winner","moneyline","match result","handicap","spread")&&(raw===want||raw.includes(want));
   }
   return false;
+}
+const TENNIS_LEAGUE_CATALOG=[
+  ["ATP","International"],["WTA","International"],["ATP Challenger","International"],["WTA 125","International"],["ITF Men","International"],["ITF Women","International"]
+];
+const ICE_HOCKEY_LEAGUE_CATALOG=[
+  ["NHL","USA"],["AHL","USA"],["KHL","Europe"],["SHL","Sweden"],["Liiga","Finland"],["DEL","Germany"],["Extraliga","Czech Republic"],["National League","Switzerland"]
+];
+const BASEBALL_LEAGUE_CATALOG=[
+  ["MLB","USA"],["NPB","Japan"],["KBO","South Korea"],["CPBL","Taiwan"],["MiLB","USA"],["World Baseball Classic","International"]
+];
+function sportLeagueCatalog(sport){
+  if(sport==="basketball") return BASKETBALL_LEAGUE_CATALOG;
+  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;
+  if(sport==="ice_hockey") return ICE_HOCKEY_LEAGUE_CATALOG;
+  if(sport==="baseball") return BASEBALL_LEAGUE_CATALOG;
+  return TOP_LEAGUE_CATALOG;
 }
 const BASKETBALL_LEAGUE_CATALOG=[
   ["NBA","USA"],["WNBA","USA"],["NBA G League","USA"],["NCAA","USA"],["EuroLeague","Europe"],["EuroCup","Europe"],["ACB","Spain"],["BBL","United Kingdom"],["LNB Pro A","France"],["BBL Germany","Germany"],["Lega Basket Serie A","Italy"],["BSL","Turkey"],["NBL","Australia"],["CBA","China"],["B.League","Japan"]
@@ -635,7 +681,7 @@ app.get("/api/leagues",async(req,r)=>{
       }
     }
     const map=new Map();
-    const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
+    const catalog=sportLeagueCatalog(sport);
     for(const [name,country] of catalog){
       const key=name+"|||"+country;
       map.set(key,{name,country,group:"Top Leagues",key,count:includeCounts?0:null});
@@ -666,7 +712,7 @@ app.get("/api/leagues",async(req,r)=>{
     });
     r.json({ok:true,date:requestedDate,sport,counts:includeCounts,cached,leagues});
   }catch(e){
-    const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
+    const catalog=sportLeagueCatalog(sport);
     const leagues=catalog.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country,count:null}));
     r.status(200).json({ok:false,date:requestedDate,sport,degraded:true,error:e.message,counts:false,leagues});
   }
@@ -686,7 +732,7 @@ app.get("/api/predictions",async(req,r)=>{
 
 async function buildDailyBest(date,sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:["ou","btts","1x2","handicap","corners","cards","double_chance","team_total","first_half_ou","half_time_result","btts_goals","team_corners","team_cards"];
+  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:sport==="tennis"?["tennis_moneyline","tennis_total_games","tennis_handicap","tennis_set_betting"]:sport==="ice_hockey"?["hockey_moneyline","hockey_total_goals","hockey_puck_line","hockey_period"]:sport==="baseball"?["baseball_moneyline","baseball_total_runs","baseball_run_line","baseball_innings"]:["ou","btts","1x2","handicap","corners","cards","double_chance","team_total","first_half_ou","half_time_result","btts_goals","team_corners","team_cards"];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets||[]){
@@ -736,7 +782,7 @@ async function buildDailyBest(date,sport="football"){
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total","basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
+  const types=requestedType==="all"?(sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total","basketball_first_half_total","basketball_first_half_moneyline","basketball_quarter_total"]:sport==="tennis"?["tennis_moneyline","tennis_total_games","tennis_handicap"]:sport==="ice_hockey"?["hockey_moneyline","hockey_total_goals","hockey_puck_line"]:sport==="baseball"?["baseball_moneyline","baseball_total_runs","baseball_run_line"]:["ou","btts","1x2","handicap","corners","cards"]):[requestedType];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date) continue;
     for(const market of fixture.markets){
