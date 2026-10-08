@@ -613,8 +613,10 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     const date=String(req.query.date||localDayKey(Date.now()));
     if(sport!=="football")return r.status(400).json({ok:false,error:"Correct-score analysis is currently available for football."});
     const archived=await readPersistentArchive(date,sport);
-    if(Array.isArray(archived?.correctScores)&&archived.correctScores.length){
-      return r.json({ok:true,date,sport,predictions:archived.correctScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt||archived.updatedAt||new Date().toISOString(),count:Math.min(5,archived.correctScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
+    const archivedScores=Array.isArray(archived?.correctScores)?archived.correctScores:[];
+    const archiveHasRichAnalysis=archivedScores.length>0&&archivedScores.some(x=>x&&(Array.isArray(x.topScores)||x.bestScore||x.expectedGoals));
+    if(archiveHasRichAnalysis){
+      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt||archived.updatedAt||new Date().toISOString(),count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
     }
     const {fixtures}=await getDayFixtures(date,false,sport);
     // Analyze a broad pool, then return exactly the five strongest matches for the selected day.
