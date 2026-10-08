@@ -874,9 +874,14 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
-        const fixtureLeague=normalizeText(fixture.league), requestedLeague=normalizeText(l.name); const sameName=fixtureLeague===requestedLeague||fixtureLeague.includes(requestedLeague)||requestedLeague.includes(fixtureLeague);
+        const fixtureLeague=normalizeText(fixture.league), requestedLeague=normalizeText(l.name);
+        const sameName=fixtureLeague===requestedLeague||fixtureLeague.includes(requestedLeague)||requestedLeague.includes(fixtureLeague);
         if(!sameName) return false;
         if(!l.country) return true;
+        // For non-football sports, provider categories such as "Challenger",
+        // "ITF", or "UTR" are competition groups, not geographic countries.
+        // The league catalog already supplies the correct country grouping.
+        if(requestedSport!=="football") return true;
         return normalizeText(l.country)===normalizeText(leagueCountry(fixture.league,fixture.category));
       })) continue;
       for(const market of fixture.markets){
