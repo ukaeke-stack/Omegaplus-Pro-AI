@@ -553,42 +553,49 @@ function leagueGroup(name,category=""){
 app.get("/api/leagues",async(req,r)=>{
   const sport=String(req.query.sport||"football");
   const requestedDate=String(req.query.date||localDayKey(Date.now()));
+  const includeCounts=String(req.query.counts||"1")!=="0";
   try{
     const cacheKey=requestedDate+"|"+(SPORTS.find(x=>x.id===sport)?.id||"football");
     const cached=dayCache.get(cacheKey);
-    const fixtures=cached?.fixtures||[];
+    let fixtures=cached?.fixtures||[];
+    if(includeCounts&&!cached){
+      const loaded=await getDayFixtures(requestedDate,false,sport);
+      fixtures=loaded.fixtures||[];
+    }
     const map=new Map();
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
     for(const [name,country] of catalog){
       const key=name+"|||"+country;
-      map.set(key,{name,country,group:"Top Leagues",key,count:0});
+      map.set(key,{name,country,group:"Top Leagues",key,count:includeCounts?0:null});
     }
-    for(const f of fixtures){
-      if(!f.league) continue;
-      const actualCountry=leagueCountry(f.league,f.category);
-      const topIndex=topLeagueIndex(f.league);
-      if(topIndex>=0){
-        const [name,country]=TOP_LEAGUE_CATALOG[topIndex];
-        if(normalizeText(actualCountry)===normalizeText(country)){
-          const key=name+"|||"+country;
-          const item=map.get(key); if(item)item.count++;
-          continue;
+    if(includeCounts){
+      for(const f of fixtures){
+        if(!f.league) continue;
+        const actualCountry=leagueCountry(f.league,f.category);
+        const topIndex=topLeagueIndex(f.league);
+        if(topIndex>=0){
+          const [name,country]=TOP_LEAGUE_CATALOG[topIndex];
+          if(normalizeText(actualCountry)===normalizeText(country)){
+            const key=name+"|||"+country;
+            const item=map.get(key); if(item)item.count++;
+            continue;
+          }
         }
+        const key=f.league+"|||"+actualCountry;
+        if(!map.has(key)) map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
+        else map.get(key).count++;
       }
-      const key=f.league+"|||"+actualCountry;
-      if(!map.has(key)) map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
-      else map.get(key).count++;
     }
     const leagues=[...map.values()].sort((a,b)=>{
       const ga=["Top Leagues","European Competitions","International","Other Leagues"];
       const ai=ga.indexOf(a.group),bi=ga.indexOf(b.group);
       return (ai-bi)||a.name.localeCompare(b.name)||a.country.localeCompare(b.country);
     });
-    r.json({ok:true,date:requestedDate,sport,leagues});
+    r.json({ok:true,date:requestedDate,sport,counts:includeCounts,cached:Boolean(cached),leagues});
   }catch(e){
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
-    const leagues=catalog.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country}));
-    r.status(200).json({ok:false,date:requestedDate,sport,degraded:true,error:e.message,leagues});
+    const leagues=catalog.map(([name,country])=>({name,country,group:"Top Leagues",key:name+"|||"+country,count:null}));
+    r.status(200).json({ok:false,date:requestedDate,sport,degraded:true,error:e.message,counts:false,leagues});
   }
 });
 

@@ -92,3 +92,26 @@ main,.page,.active-page{min-width:0;max-width:100%}
   #omegaAccount .omega-account-btn{max-width:72px;font-size:10px;padding:6px 4px}
   .icon-btn,.menu-btn{flex-basis:30px;width:30px;min-width:30px;height:30px;font-size:16px}
 }
+
+
+/* Toolbar readability: larger mobile controls without clipping the account/menu. */
+@media(max-width:600px){
+  .topbar{height:74px;min-height:74px;padding:9px 9px;gap:6px}
+  .top-brand{gap:9px}
+  .top-brand .logo{width:42px;height:42px;flex:0 0 42px;font-size:21px}
+  .top-brand strong{font-size:18px;line-height:1.1}
+  .top-update{padding:9px 10px;font-size:13px;font-weight:800}
+  #omegaAccount{flex:0 1 96px;min-width:0}
+  #omegaAccount .omega-account-btn{max-width:96px;padding:9px 7px;font-size:12px;font-weight:700}
+  .icon-btn,.menu-btn{flex:0 0 40px;width:40px;min-width:40px;height:40px;border-radius:11px;font-size:21px;margin-left:2px}
+}
+@media(max-width:380px){
+  .topbar{height:72px;min-height:72px;padding:8px 7px;gap:4px}
+  .top-brand{gap:7px}
+  .top-brand .logo{width:40px;height:40px;flex-basis:40px;font-size:20px}
+  .top-brand strong{font-size:17px}
+  .top-update{font-size:12px;padding:8px 8px}
+  #omegaAccount{flex-basis:88px}
+  #omegaAccount .omega-account-btn{max-width:88px;font-size:11px;padding:8px 6px}
+  .icon-btn,.menu-btn{flex-basis:38px;width:38px;min-width:38px;height:38px;font-size:20px}
+}
