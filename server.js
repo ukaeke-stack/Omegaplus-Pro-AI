@@ -72,7 +72,7 @@ let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
 const dayCache=new Map();
-const DAY_CACHE_MS=5*60*1000;
+const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
 const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
@@ -116,7 +116,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
   const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
-  if(!force&&Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
+  if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
