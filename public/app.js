@@ -250,7 +250,7 @@ async function loadDailyBest(){
   box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
   try{
     const limit=10,market="all";const d=await jsonFetch("/api/daily-best?date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");try{await refreshHistory(date)}catch{}if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
     let rows=(d.predictions||[]).slice(0,10);
     const saved=readHistory().filter(x=>x.date===date);
     const byId=new Map(saved.map(x=>[x.id,x]));
@@ -259,7 +259,7 @@ async function loadDailyBest(){
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
     saveHistoryRows(rows.map(x=>({...x,date,sport:state.sport})),date);
     archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
-    renderHistory(date,rows);
+    refreshHistory(date).catch(()=>{});
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
@@ -272,11 +272,13 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
     const rows=d.predictions||[];
     $("#csStatus").textContent=rows.length?rows.length+" match(es) analyzed · one best score per match · "+prettyDate(date):"No qualifying fixtures for "+prettyDate(date)+".";
     box.innerHTML=rows.length?rows.map((x,i)=>{
-      const best=x.topScores?.[0];
-      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>Correct score</span><b>'+esc(best?.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(best?.probability||0)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(x.expectedGoals?.home||"—")+' — '+esc(x.expectedGoals?.away||"—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", "))+'</small></div><div class="prob"><strong>'+esc(x.confidence||best?.probability||0)+'%</strong><small>best-score confidence</small></div></article>';
+      const best=x.bestScore||x.topScores?.[0]||{};
+      const prob=best.probability ?? best.probabilityPercent ?? x.scoreProbability ?? 0;
+      const eg=x.expectedGoals||{};
+      return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league||"")+' · '+esc(x.time||"")+'</div><div class="teams">'+esc(x.home||"")+' <span>vs</span> '+esc(x.away||"")+'</div><div class="pick"><span>Correct score</span><b>'+esc(best.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(prob)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(eg.home ?? "—")+' — '+esc(eg.away ?? "—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", ")||"Independent statistics + market model")+'</small></div><div class="prob"><strong>'+esc(x.confidence ?? prob)+'%</strong><small>best-score confidence</small></div></article>';
     }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
   const existing=readHistory();
-  const csRows=rows.slice(0,5).map((x,i)=>{const best=x.topScores?.[0];return {id:"cs_"+(x.eventId||x.id||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,league:x.league,time:x.time,home:x.home,away:x.away,pick:best?.score||"—",market:"Correct Score",odds:best?.probability??"—",confidence:Number(x.confidence||best?.probability||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:new Date().toISOString()};});
+  const csRows=rows.slice(0,5).map((x,i)=>{const best=x.topScores?.[0];return {id:"cs_"+(x.eventId||x.id||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,league:x.league,time:x.time,home:x.home,away:x.away,pick:best?.score||"—",market:"Correct Score",odds:best?.probability??"—",confidence:Number(x.confidence||best?.probability||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",sources:x.sources||[],topScores:Array.isArray(x.topScores)?x.topScores.slice(0,5):[],bestScore:x.bestScore||best||null,expectedGoals:x.expectedGoals||null,verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:new Date().toISOString()};});
   const other=existing.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score"));
   writeHistory([...other,...csRows].slice(-2000));
   try{
