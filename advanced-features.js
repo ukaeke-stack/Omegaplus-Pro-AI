@@ -25,6 +25,7 @@ export function buildMatchReport(p={}){
   if(od!=null) strengths.push("Current market odds "+od.toFixed(2)+".");
   if(form.homeWinRate!=null&&form.awayWinRate!=null) strengths.push("Recent win rates: home "+Math.round(form.homeWinRate*100)+"%, away "+Math.round(form.awayWinRate*100)+"%.");
   if(u.home?.xg!=null&&u.away?.xg!=null) strengths.push("Recent xG averages: "+Number(u.home.xg).toFixed(2)+" home, "+Number(u.away.xg).toFixed(2)+" away.");
+  if(p.derivedModel?.expectedGoals) strengths.push("Independent Poisson expected goals: "+p.derivedModel.expectedGoals.home.toFixed(2)+"–"+p.derivedModel.expectedGoals.away.toFixed(2)+".");
   const li=stats.sofascore?.lineups,inj=stats.sofascore?.injuries; if(li) strengths.push("SofaScore lineup data is available when teams publish confirmed lineups."); if(inj?.home||inj?.away) strengths.push("SofaScore injury availability data was checked for the fixture.");
   const cautions=[];if(!ind)cautions.push("Independent statistics were unavailable; confidence is market-model based.");if(p.verificationStatus&&p.verificationStatus!=="confirmed")cautions.push("This is a pre-match prediction and is not a verified result.");
   if(!li)cautions.push("Confirmed lineup information may not yet be published.");
