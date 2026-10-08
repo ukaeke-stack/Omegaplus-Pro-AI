@@ -245,11 +245,28 @@ function predictionReasons(p){
 function decoratePredictions(rows){
   return (Array.isArray(rows)?rows:[]).map(p=>({...p,modelProbability:p.independentConfidence!=null&&Number.isFinite(Number(p.independentConfidence))?Number(p.independentConfidence):Number(p.marketConfidence??p.confidence??0),qualityGrade:qualityGrade(p),reasons:predictionReasons(p)}));
 }
+function marketLine(value){
+  const s=String(value||"").toLowerCase();
+  const m=s.match(/(?:over|under|1h_over|1h_under|q[1-4]_over|q[1-4]_under|btts_over|btts_under|home_over|away_over|home_corners|away_corners|home_cards|away_cards)_(\d+)_(\d+)/);
+  return m?m[1]+"."+m[2]:(String(value||"").match(/\d+(?:\.\d+)?/)||[])[0]||"";
+}
 function pickLabel(type,outcome){
   const raw=String(outcome?.outcomeName||"");
+  const spec=String(outcome?.specifier||"");
+  const line=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const direction=/\bunder\b/i.test(raw)?"Under":/\bover\b/i.test(raw)?"Over":"";
+  if(["ou","corners","cards","first_half_ou","basketball_total","basketball_first_half_total","basketball_quarter_total"].includes(type)){
+    const prefix=type==="first_half_ou"||type==="basketball_first_half_total"?"1H ":type==="basketball_quarter_total"?(String(raw).match(/Q[1-4]/i)?.[0]?.toUpperCase()+" "||""):"";
+    return direction&&line?prefix+direction+" "+line:(raw||"Over/Under");
+  }
   if(type==="btts_goals"){
-    const line=(String(outcome?.specifier||"").match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
-    return /yes|goal goal/i.test(raw)?("Goal Goal"+(line?" + Over "+line:"")):(raw||("BTTS + Goals"+(line?" "+line:"")));
+    const dir=/\bunder\b/i.test(raw)?"Under":"Over";
+    return "BTTS "+dir+" "+line;
+  }
+  if(type==="btts") return /no/i.test(raw)?"No":"Yes";
+  if(type==="half_time_result"){
+    const x=raw.toLowerCase();
+    return x.includes("home")?"HT Home":x.includes("draw")?"HT Draw":x.includes("away")?"HT Away":raw;
   }
   return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
@@ -262,10 +279,10 @@ function selectionRequested(outcome,requested,market,type=""){
   if(requestedMarket&&requestedMarket!==String(type||""))return false;
   const n=normalizeText(market?.marketName), raw=normalizeText(outcome?.outcomeName);
   const spec=normalizeText(market?.specifier);
-  const line=(label.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const line=marketLine(requestedKey||label);
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
   const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
-  const direction=/\bunder\b/.test(normalizeText(label))?"under":/\bover\b/.test(normalizeText(label))?"over":"";
+  const direction=/\bunder\b/.test(normalizeText(requestedKey+" "+label))?"under":/\bover\b/.test(normalizeText(requestedKey+" "+label))?"over":"";
   if(type==="ou"){
     if(!(String(market?.marketId)==="18" || (has("goal","goals")&&has("over","under","total"))))return false;
     return Boolean(direction&&actualLine===line&&raw.includes(direction));
@@ -285,6 +302,10 @@ function selectionRequested(outcome,requested,market,type=""){
   if(type==="btts_goals"){
     if(!(has("btts","both teams")&&has("over","under")))return false;
     if(line&&actualLine!==line)return false;
+    const wantsUnder=/under/.test(normalizeText(requestedKey+" "+label));
+    const wantsOver=/over/.test(normalizeText(requestedKey+" "+label));
+    if(wantsUnder&&!raw.includes("under"))return false;
+    if(wantsOver&&!raw.includes("over")&&!raw.includes("yes")&&!raw.includes("goal goal"))return false;
     return raw==="yes"||raw.includes("goal goal")||raw.includes("over")||raw.includes("under");
   }
   if(type==="team_total"){
@@ -533,7 +554,9 @@ app.get("/api/leagues",async(req,r)=>{
   const sport=String(req.query.sport||"football");
   const requestedDate=String(req.query.date||localDayKey(Date.now()));
   try{
-    const {fixtures}=await getDayFixtures(requestedDate,false,sport);
+    const cacheKey=requestedDate+"|"+(SPORTS.find(x=>x.id===sport)?.id||"football");
+    const cached=dayCache.get(cacheKey);
+    const fixtures=cached?.fixtures||[];
     const map=new Map();
     const catalog=sport==="basketball"?BASKETBALL_LEAGUE_CATALOG:TOP_LEAGUE_CATALOG;
     for(const [name,country] of catalog){
