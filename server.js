@@ -27,7 +27,7 @@ const DAILY_SELECTION_VERSION="mixed-top10-v1";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
-const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketball",name:"Basketball",sportId:"sr:sport:2"},{id:"baseball",name:"Baseball",sportId:"sr:sport:3"},{id:"ice_hockey",name:"Ice Hockey",sportId:"sr:sport:4"},{id:"tennis",name:"Tennis",sportId:"sr:sport:5"}];
+const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketball",name:"Basketball",sportId:"sr:sport:2"},{id:"baseball",name:"Baseball",sportId:"sr:sport:3"},{id:"ice_hockey",name:"Ice Hockey",sportId:"sr:sport:4"},{id:"tennis",name:"Tennis",sportId:"sr:sport:5"},{id:"table_tennis",name:"Table Tennis",sportId:"sr:sport:20"}];
 const BOOKMAKERS=[{id:"sportybet",name:"SportyBet",country:"ng",native:true},{id:"bet9ja",name:"Bet9ja",country:"ng"},{id:"msport",name:"MSport",country:"ng"},{id:"betking",name:"BetKing",country:"ng"},{id:"1xbet",name:"1xBet",country:"ng"},{id:"betano",name:"Betano",country:"ng"},{id:"22bet",name:"22Bet",country:"ng"}];
 const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/api/v1";
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
@@ -189,7 +189,7 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");\n  if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));\n  if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");\n  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");\n  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
   if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
   if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
   if(type==="tennis_set_betting") return has("set betting","correct score","sets");
@@ -367,14 +367,14 @@ function selectionRequested(outcome,requested,market,type=""){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
-  if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+  if(["table_tennis_total_points","tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
-  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+  if(["table_tennis_moneyline","tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
     return directWinningSelectionRequested(outcome,label);
   }
-  if(["tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
+  if(["table_tennis_handicap","table_tennis_set_betting","tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
@@ -398,7 +398,7 @@ function selectionRequested(outcome,requested,market,type=""){
   }
   return false;
 }
-const TENNIS_LEAGUE_CATALOG=[
+const TABLE_TENNIS_LEAGUE_CATALOG=[["WTT","International"],["ITTF World Championships","International"],["WTT Champions","International"],["WTT Contender","International"],["European Championships","Europe"],["Olympic Games","International"]];\nconst TENNIS_LEAGUE_CATALOG=[
   ["ATP","International"],["WTA","International"],["ATP Challenger","International"],["WTA 125","International"],["ITF Men","International"],["ITF Women","International"]
 ];
 const ICE_HOCKEY_LEAGUE_CATALOG=[
@@ -409,7 +409,7 @@ const BASEBALL_LEAGUE_CATALOG=[
 ];
 function sportLeagueCatalog(sport){
   if(sport==="basketball") return BASKETBALL_LEAGUE_CATALOG;
-  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;
+  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;\n  if(sport==="table_tennis") return TABLE_TENNIS_LEAGUE_CATALOG;
   if(sport==="ice_hockey") return ICE_HOCKEY_LEAGUE_CATALOG;
   if(sport==="baseball") return BASEBALL_LEAGUE_CATALOG;
   return TOP_LEAGUE_CATALOG;
