@@ -2,6 +2,8 @@ name: Omegaplus Next Upgrade Checks
 on:
   push:
     branches: [feature/omegaplus-next-upgrades]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
