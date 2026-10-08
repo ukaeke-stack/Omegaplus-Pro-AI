@@ -246,7 +246,12 @@ function decoratePredictions(rows){
   return (Array.isArray(rows)?rows:[]).map(p=>({...p,modelProbability:p.independentConfidence!=null&&Number.isFinite(Number(p.independentConfidence))?Number(p.independentConfidence):Number(p.marketConfidence??p.confidence??0),qualityGrade:qualityGrade(p),reasons:predictionReasons(p)}));
 }
 function pickLabel(type,outcome){
-  return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
+  const raw=String(outcome?.outcomeName||"");
+  if(type==="btts_goals"){
+    const line=(String(outcome?.specifier||"").match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
+    return /yes|goal goal/i.test(raw)?("Goal Goal"+(line?" + Over "+line:"")):(raw||("BTTS + Goals"+(line?" "+line:"")));
+  }
+  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
 function selectionRequested(outcome,requested,market,type=""){
   const req=String(requested||"");
