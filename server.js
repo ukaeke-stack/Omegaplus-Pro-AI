@@ -13,7 +13,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
-async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichAndModel(rows,opts))}
+async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
