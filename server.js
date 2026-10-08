@@ -833,7 +833,7 @@ app.get("/api/odds-movement",async(req,res)=>{
  try{
    const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
    const archive=await readPersistentArchive(date,sport),current=Array.isArray(archive?.predictions)?archive.predictions:[];
-   const previous=Array.isArray(archive?.oddsSnapshots)?archive.oddsSnapshots:[];
+   const history=Array.isArray(archive?.oddsSnapshotsHistory)?archive.oddsSnapshotsHistory:[];\n   const previous=history.length>1?history[history.length-2]:Array.isArray(archive?.oddsSnapshotsPrevious)?archive.oddsSnapshotsPrevious:[];
    const prevMap=new Map(previous.map(x=>[x.id,x]));
    const movement=current.map(x=>({...x,movement:oddsMovement(x,prevMap.get(x.id)||{})}));
    res.json({ok:true,date,sport,movement,hasSnapshot:previous.length>0,updatedAt:archive?.updatedAt||null});
