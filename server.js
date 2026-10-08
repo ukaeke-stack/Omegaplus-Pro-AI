@@ -577,13 +577,13 @@ app.get("/api/scan",async(req,r)=>{
 });
 app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
 app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.correctScores))next.correctScores=req.body.correctScores.slice(0,5);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
-app.get("/api/results/status",async(_,r)=>{try{const x=await getVerifiedResults(localDayKey(Date.now()),false);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
+app.get("/api/results/status",async(_,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const force=String(req.query.refresh||"") === "1";const x=await getVerifiedResults(date,force);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"confirmed only when Sportmonks and Sofascore agree",date,results:x.results,updatedAt:x.updatedAt});}
+  try{const date=String(req.query.date||localDayKey(Date.now()));const sport=String(req.query.sport||"football");const force=String(req.query.refresh||"") === "1";const x=await getVerifiedResults(date,force,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"confirmed only when Sportmonks and Sofascore agree",date,results:x.results,updatedAt:x.updatedAt});}
   catch(e){r.status(502).json({ok:false,configured:false,providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},error:e.message,results:[]})}
 });
-app.get("/api/results/live",async(_,r)=>{try{const x=await getVerifiedLiveResults();r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,results:x.results,updatedAt:x.updatedAt});}catch(e){r.status(502).json({ok:false,configured:false,error:e.message,results:[]})}});
+app.get("/api/results/live",async(_,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedLiveResults(sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,results:x.results,updatedAt:x.updatedAt});}catch(e){r.status(502).json({ok:false,configured:false,error:e.message,results:[]})}});
 
 function leagueCountry(name,category=""){
   const c=String(category||"").trim();
@@ -967,7 +967,7 @@ app.get("/api/performance",async(req,r)=>{
       const archive=await readPersistentArchive(date);
       const predictions=Array.isArray(archive?.predictions)?archive.predictions:[];
       let results=Array.isArray(archive?.results)?archive.results:[];
-      if(!results.length){try{const rr=await getDateResults(date,false);if(rr.configured)results=rr.data||[]}catch{}}
+      if(!results.length){try{const rr=await getVerifiedResults(date,false,String(archive?.sport||"football"));results=rr.results||[]}catch{}}
       for(const p of predictions){
         const pk=resultNorm(p.home),ak=resultNorm(p.away);
         const result=results.find(x=>x.providerId&&p.resultProviderId&&String(x.providerId)===String(p.resultProviderId))||results.find(x=>resultNorm(x.home)===pk&&resultNorm(x.away)===ak);
