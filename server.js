@@ -6,7 +6,7 @@ import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
-import {smartPickRank,buildBetBuilder,performanceFromArchives} from "./advanced-features.js";
+import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -694,6 +694,13 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const enriched=await enrichPredictions(candidates,{concurrency:3});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
+    const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
+    existing.predictions=predictions.slice(0,10);
+    existing.oddsSnapshots=extractOddsSnapshot(predictions);
+    existing.updatedAt=new Date().toISOString();
+    existing.savedAt=existing.savedAt||existing.updatedAt;
+    existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
+    await writePersistentArchive(requestedDate,existing,requestedSport);
     r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
@@ -816,7 +823,27 @@ app.post("/api/bet-builder",requirePaid,async(req,res)=>{
 });
 app.get("/api/performance-advanced",async(req,res)=>{
  try{const today=localDayKey(Date.now()),from=String(req.query.from||today),to=String(req.query.to||from);res.json({ok:true,from,to,...await performanceFromArchives(d=>readPersistentArchive(d),from,to)})}
- catch(e){res.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
+ catch(e){res.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{},byLeague:{}})}
+});
+app.post("/api/match-report",async(req,res)=>{
+ try{res.json({ok:true,report:buildMatchReport(req.body?.prediction||req.body||{})})}
+ catch(e){res.status(400).json({ok:false,error:e.message})}
+});
+app.get("/api/odds-movement",async(req,res)=>{
+ try{
+   const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+   const archive=await readPersistentArchive(date,sport),current=Array.isArray(archive?.predictions)?archive.predictions:[];
+   const previous=Array.isArray(archive?.oddsSnapshots)?archive.oddsSnapshots:[];
+   const prevMap=new Map(previous.map(x=>[x.id,x]));
+   const movement=current.map(x=>({...x,movement:oddsMovement(x,prevMap.get(x.id)||{})}));
+   res.json({ok:true,date,sport,movement,hasSnapshot:previous.length>0,updatedAt:archive?.updatedAt||null});
+ }catch(e){res.status(200).json({ok:false,error:e.message,movement:[],hasSnapshot:false})}
+});
+app.get("/api/intelligence-status",async(req,res)=>{
+ try{
+   const health=await independentHealth();
+   res.json({ok:true,providers:{sofascore:!!health.sofascore,understat:!!health.understat,oddsHistory:true,lineups:"Sofascore event lineups when published",injuries:"Sofascore team injury feed when available"},note:"Lineups and injuries are availability-dependent and are never invented."});
+ }catch(e){res.status(200).json({ok:false,providers:{sofascore:false,understat:false,oddsHistory:true},error:e.message})}
 });
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
