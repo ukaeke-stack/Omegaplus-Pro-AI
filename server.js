@@ -72,7 +72,7 @@ let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
 let liveFetchPromise=null;
 const dayCache=new Map();
-const DAY_CACHE_MS=5*60*1000;
+const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
 const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
@@ -116,7 +116,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
   const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
-  if(!force&&Date.now()-liveCache.at<300000&&liveCache.key===cacheKey) return liveCache.fixtures;
+  if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
   liveFetchPromise=(async()=>{
   const all=[],pageSize=100;
@@ -175,16 +175,16 @@ function isDirectWinningMarket(market){
 function marketMatches(market,type){
   const n=normalizeText(market.marketName),id=String(market.marketId||"");
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  if(type==="basketball_total") return id==="225"||has("over under","total");
+  if(type==="basketball_total") return id==="225"||(has("over","under","total")&&!has("corner","card","booking"));
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
   if(type==="basketball_moneyline") return id==="219"||has("winner","moneyline","match result");
-  if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
+  if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total","team points");
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="ou") return id==="18"||has("over under","total goals","goals total");
+  if(type==="ou") return id==="18"||(has("goal","goals")&&has("over","under","total")&&!has("corner","corners","card","cards","booking","team"));
   if(type==="btts") return id==="29"||has("both teams to score","btts");
-  if(type==="btts_goals") return has("btts","both teams","over","under");
+  if(type==="btts_goals") return has("btts","both teams")&&has("over","under")&&!has("corner","card","booking");
   if(type==="1x2") return id==="1"||has("1x2","match result","winner");
   if(type==="handicap") return ["14","16"].includes(id)||has("handicap","spread");
   if(type==="corners") return ["166","165","162"].includes(id)||has("corner");
@@ -246,44 +246,98 @@ function decoratePredictions(rows){
   return (Array.isArray(rows)?rows:[]).map(p=>({...p,modelProbability:p.independentConfidence!=null&&Number.isFinite(Number(p.independentConfidence))?Number(p.independentConfidence):Number(p.marketConfidence??p.confidence??0),qualityGrade:qualityGrade(p),reasons:predictionReasons(p)}));
 }
 function pickLabel(type,outcome){
-  return outcome.outcomeName||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
+  const raw=String(outcome?.outcomeName||"");
+  if(type==="btts_goals"){
+    const line=(String(outcome?.specifier||"").match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
+    return /yes|goal goal/i.test(raw)?("Goal Goal"+(line?" + Over "+line:"")):(raw||("BTTS + Goals"+(line?" "+line:"")));
+  }
+  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
-function selectionRequested(outcome,requested,market){
-  if(!requested) return true;
-  const spec=String(market?.specifier||"");
-  const lineMatch=spec.match(/(?:total|goals|over|under)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i)||spec.match(/([0-9]+(?:\.[0-9]+)?)/);
-  const line=lineMatch?.[1]||"";
-  const rawName=String(outcome?.outcomeName||"");
-  const effectiveName=(line&&/^(over|under)$/i.test(rawName.trim()))?rawName.trim()+" "+line:rawName;
-  const a=normalizeText(effectiveName),b=normalizeText(requested);
-  if(a===b)return true;
-  const clean=v=>v.replaceAll("goals"," ").replaceAll("goal"," ").replaceAll("total"," ").replaceAll("over"," ").replaceAll("under"," ").replaceAll(/[^a-z0-9.]+/g," ").trim();
-  const aa=clean(a),bb=clean(b);
-  if(aa===bb)return true;
-  if((a.includes("over")&&b.includes("over"))||(a.includes("under")&&b.includes("under"))){
-    const an=(a.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0],bn=(b.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0];
-    if(an&&bn&&an===bn)return true;
+function selectionRequested(outcome,requested,market,type=""){
+  const req=String(requested||"");
+  const parts=req.split("::");
+  const requestedMarket=parts.length>1?parts[0]:"";
+  const requestedKey=parts.length>1?parts.slice(1).join("::"):"";
+  const label=parts.length>1?String(parts[1]||""):req;
+  if(requestedMarket&&requestedMarket!==String(type||""))return false;
+  const n=normalizeText(market?.marketName), raw=normalizeText(outcome?.outcomeName);
+  const spec=normalizeText(market?.specifier);
+  const line=(label.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
+  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const direction=/\bunder\b/.test(normalizeText(label))?"under":/\bover\b/.test(normalizeText(label))?"over":"";
+  if(type==="ou"){
+    if(!(String(market?.marketId)==="18" || (has("goal","goals")&&has("over","under","total"))))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
-  return aa.startsWith(bb+" ")||bb.startsWith(aa+" ");
-}
-function flexibleSelectionRequested(type,outcome,requested,market){
-  if(selectionRequested(outcome,requested,market)) return true;
-  const req=normalizeText(requested), raw=normalizeText(outcome?.outcomeName), spec=normalizeText(market?.specifier), name=normalizeText(market?.marketName);
-  const combined=[raw,spec,name].join(" ");
-  const line=v=>(v.match(/[0-9]+(?:\\.[0-9]+)?/)||[])[0]||"";
-  if(/^(over|under)\\b/.test(req)){
-    const direction=req.startsWith("over")?"over":"under", wanted=line(req);
-    return combined.includes(direction) && (!wanted || combined.includes(wanted));
+  if(type==="cards"){
+    if(!(["139","138","900304","900305","900312"].includes(String(market?.marketId))||has("card","booking")))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
-  if(req==="home"||req==="1"){
-    return /(^|\\s)(home|1)(\\s|$)/.test(raw) || raw.includes("home team");
+  if(type==="corners"){
+    if(!(["166","165","162"].includes(String(market?.marketId))||has("corner")))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
   }
-  if(req==="away"||req==="2"){
-    return /(^|\\s)(away|2)(\\s|$)/.test(raw) || raw.includes("away team");
+  if(type==="btts"){
+    if(!(String(market?.marketId)==="29"||has("both teams to score","btts")))return false;
+    return label.toLowerCase().endsWith("yes")?(raw==="yes"||raw.includes("goal goal")):(raw==="no"||raw.includes("no"));
   }
-  if(req==="draw"||req==="x") return raw==="draw"||raw==="x"||raw.includes("tie");
-  if(req==="yes") return raw==="yes"||raw.includes("both teams");
-  if(req==="no") return raw==="no";
+  if(type==="btts_goals"){
+    if(!(has("btts","both teams")&&has("over","under")))return false;
+    if(line&&actualLine!==line)return false;
+    return raw==="yes"||raw.includes("goal goal")||raw.includes("over")||raw.includes("under");
+  }
+  if(type==="team_total"){
+    if(!(has("team total","team goals")||["20","21","22"].includes(String(market?.marketId))))return false;
+    const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
+  }
+  if(type==="team_corners"){
+    if(!has("corner"))return false;
+    const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
+  }
+  if(type==="team_cards"){
+    if(!(has("card","booking")))return false;
+    const side=label.toLowerCase().startsWith("home")?"home":label.toLowerCase().startsWith("away")?"away":"";
+    return Boolean(side&&direction&&actualLine===line&&raw.includes(direction)&&(raw.includes(side)||spec.includes(side)||n.includes(side)));
+  }
+  if(type==="first_half_ou"){
+    if(!(has("first half","1st half","half total")&&has("goal","goals","total")))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
+  }
+  if(type==="half_time_result"){
+    if(!has("half time","half-time","ht"))return false;
+    const want=normalizeText(label).replace(/^ht\s*/,"");
+    return raw===want||raw.includes(want);
+  }
+  if(type==="double_chance"){
+    if(!(has("double chance","double result")||["10","11","12"].includes(String(market?.marketId))))return false;
+    const map={home_or_draw:["home","draw"],home_or_away:["home","away"],draw_or_away:["draw","away"]};
+    const want=map[requestedKey]||[];
+    return want.length===2&&want.every(x=>raw.includes(x)||(x==="draw"&&raw==="x"));
+  }
+  if(type==="1x2"){
+    if(!(String(market?.marketId)==="1"||has("1x2","match result","winner")))return false;
+    return directWinningSelectionRequested(outcome,label);
+  }
+  if(type==="handicap"){
+    if(!(has("handicap","spread")||["14","16"].includes(String(market?.marketId))))return false;
+    const want=normalizeText(label);
+    return raw===want||raw.includes(want);
+  }
+  if(type==="basketball_total"||type==="basketball_first_half_total"||type==="basketball_quarter_total"){
+    if(!has("over","under","total"))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
+  }
+  if(type==="basketball_team_total"){
+    if(!has("team total","total points"))return false;
+    return Boolean(direction&&actualLine===line&&raw.includes(direction));
+  }
+  if(type==="basketball_handicap"||type==="basketball_moneyline"||type==="basketball_first_half_moneyline"){
+    const want=normalizeText(label);
+    return has("winner","moneyline","match result","handicap","spread")&&(raw===want||raw.includes(want));
+  }
   return false;
 }
 const BASKETBALL_LEAGUE_CATALOG=[
@@ -675,7 +729,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
           if(!marketMatches(market,type)) continue;
           for(const outcome of market.outcomes){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
-            if(selections.length&&!selections.some(s=>type==="1x2"?directWinningSelectionRequested(outcome,s):selectionRequested(outcome,s,market))) continue;
+            if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market,type))) continue;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
             results.push({

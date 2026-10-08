@@ -158,11 +158,27 @@ function renderMarketOptions(){
   renderDropdown("#marketOptions",items,state.markets);
   $("#marketCount").textContent=state.markets.size+" selected";
 }
+function selectionValue(marketId,option){return marketId+"::"+option.key}
+function selectionLabel(value){
+  const [marketId,key]=String(value||"").split("::");
+  return marketCatalog[marketId]?.options?.find(o=>o.key===key)?.label||String(value||"");
+}
 function renderSelectionOptions(){
-  const options=[...state.markets].flatMap(k=>(marketCatalog[k]?.options||[]).map(o=>({value:o.label,label:o.label})));
+  const options=[...state.markets].flatMap(k=>(marketCatalog[k]?.options||[]).map(o=>({value:selectionValue(k,o),label:o.label+" · "+marketCatalog[k].name})));
   const seen=new Set(),unique=options.filter(o=>!seen.has(o.value)&&seen.add(o.value));
-  state.selections=new Set([...state.selections].filter(x=>unique.some(o=>o.value===x)));
-  if(!state.selections.size&&unique.length)state.selections.add(unique.some(o=>o.value==="Over 1.5")?"Over 1.5":unique[0].value);
+  const legacy=[...state.selections].map(x=>{
+    if(String(x).includes("::"))return x;
+    for(const k of state.markets){
+      const hit=(marketCatalog[k]?.options||[]).find(o=>o.label===x);
+      if(hit)return selectionValue(k,hit);
+    }
+    return x;
+  });
+  state.selections=new Set(legacy.filter(x=>unique.some(o=>o.value===x)));
+  if(!state.selections.size&&unique.length){
+    const preferred=unique.find(o=>selectionLabel(o.value)==="Over 1.5");
+    state.selections.add(preferred?.value||unique[0].value);
+  }
   renderDropdown("#selectionOptions",unique,state.selections);
   $("#selectionCount").textContent=state.selections.size+" selected";
 }
@@ -289,7 +305,7 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
 async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,bookmaker,selections:rows.map(x=>({eventId:x.eventId,home:x.home,away:x.away,pick:x.pick,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingUnavailable").innerHTML="";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
-function resetFilters(){const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set([first]);$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();setStatus("Filters reset. Choose your options and Analyze.")}
+function resetFilters(){const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set();$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();setStatus("Filters reset. Choose your options and Analyze.")}
 function showPage(n){
   $$(".page").forEach(p=>p.classList.remove("active-page"));$("#page-"+n)?.classList.add("active-page");
   document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===n));closeSide();scrollTo({top:0,behavior:"smooth"});
@@ -303,8 +319,8 @@ $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$(
 $$("[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 $("#snapToggle").onclick=()=>{$("#snapBody").classList.toggle("open");$("#snapArrow").textContent=$("#snapBody").classList.contains("open")?"⌃":"⌄"};
 $("#fixtureFile").onchange=e=>$("#fileName").textContent=e.target.files[0]?"Selected: "+e.target.files[0].name:"";
-$("#sportSelect").onchange=async e=>{state.sport=e.target.value||"football";const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set([first]);marketCatalog=allMarketCatalog;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();$("#league").innerHTML="";await loadLeagues();await loadBase();if($("#page-predictions")?.classList.contains("active-page"))loadDailyBest();};
-$("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";state.selected.clear();renderSlip();await loadLeagues();await loadBase()};
+$("#sportSelect").onchange=async e=>{state.sport=e.target.value||"football";const defaults=state.sport==="basketball"?["basketball_total"]:["ou"];state.markets=new Set(defaults);state.selections=new Set();marketCatalog=allMarketCatalog;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();$("#league").innerHTML="";await Promise.all([loadLeagues(),loadBase()]);if($("#page-predictions")?.classList.contains("active-page"))loadDailyBest();};
+$("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";state.selected.clear();renderSlip();await Promise.all([loadLeagues(),loadBase()])};
 $("#prevDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(-1);$("#fixtureDate").dispatchEvent(new Event("change"))};
 $("#nextDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(1);$("#fixtureDate").dispatchEvent(new Event("change"))};
 $("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));$("#fixtureDate").dispatchEvent(new Event("change"))};
