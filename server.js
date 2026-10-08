@@ -699,7 +699,10 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
     const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
     existing.predictions=predictions.slice(0,10);
-    existing.oddsSnapshots=extractOddsSnapshot(predictions);
+    const newOddsSnapshot=extractOddsSnapshot(predictions);
+    existing.oddsSnapshotsPrevious=Array.isArray(existing.oddsSnapshots)?existing.oddsSnapshots:[];
+    existing.oddsSnapshots=newOddsSnapshot;
+    existing.oddsSnapshotsHistory=[...(Array.isArray(existing.oddsSnapshotsHistory)?existing.oddsSnapshotsHistory:[]),newOddsSnapshot].slice(-5);
     existing.updatedAt=new Date().toISOString();
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
@@ -836,7 +839,8 @@ app.get("/api/odds-movement",async(req,res)=>{
  try{
    const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
    const archive=await readPersistentArchive(date,sport),current=Array.isArray(archive?.predictions)?archive.predictions:[];
-   const history=Array.isArray(archive?.oddsSnapshotsHistory)?archive.oddsSnapshotsHistory:[];\n   const previous=history.length>1?history[history.length-2]:Array.isArray(archive?.oddsSnapshotsPrevious)?archive.oddsSnapshotsPrevious:[];
+   const history=Array.isArray(archive?.oddsSnapshotsHistory)?archive.oddsSnapshotsHistory:[];
+   const previous=history.length>1?history[history.length-2]:Array.isArray(archive?.oddsSnapshotsPrevious)?archive.oddsSnapshotsPrevious:[];
    const prevMap=new Map(previous.map(x=>[x.id,x]));
    const movement=current.map(x=>({...x,movement:oddsMovement(x,prevMap.get(x.id)||{})}));
    res.json({ok:true,date,sport,movement,hasSnapshot:previous.length>0,updatedAt:archive?.updatedAt||null});
