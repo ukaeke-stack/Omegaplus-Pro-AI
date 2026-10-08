@@ -177,6 +177,9 @@ function marketMatches(market,type){
   if(type==="basketball_handicap") return id==="223"||has("handicap","spread");
   if(type==="basketball_moneyline") return id==="219"||has("winner","moneyline","match result");
   if(type==="basketball_team_total") return ["227","228"].includes(id)||has("team total");
+  if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
+  if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
+  if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
   if(type==="ou") return id==="18"||has("over under","total goals","goals total");
   if(type==="btts") return id==="29"||has("both teams to score","btts");
   if(type==="btts_goals") return has("btts","both teams","over","under");
