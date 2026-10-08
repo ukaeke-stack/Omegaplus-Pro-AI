@@ -6,6 +6,7 @@ import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
+import {smartPickRank,buildBetBuilder,performanceFromArchives} from "./advanced-features.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -800,6 +801,19 @@ app.post("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(r
 app.patch("/api/admin/support/chats/:id",requireRole("admin","moderator"),async(req,r)=>{
   try{r.json({ok:true,thread:await setThreadStatus(req.params.id,String(req.body?.status||"open"))})}
   catch(e){r.status(400).json({ok:false,error:e.message})}
+});
+// Advanced analytics APIs.
+app.get("/api/smart-picks",async(req,res)=>{
+ try{const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);let rows=Array.isArray(archive?.predictions)?archive.predictions:[];if(!rows.length)rows=await buildBestPicks(date,20,"all",sport);res.json({ok:true,date,sport,predictions:await smartPickRank(rows),generatedAt:new Date().toISOString()})}
+ catch(e){res.status(502).json({ok:false,error:e.message,predictions:[]})}
+});
+app.post("/api/bet-builder",requirePaid,async(req,res)=>{
+ try{const rows=Array.isArray(req.body?.predictions)?req.body.predictions:[];const mode=String(req.body?.mode||"conservative");res.json({ok:true,mode,predictions:buildBetBuilder(rows,mode)})}
+ catch(e){res.status(400).json({ok:false,error:e.message,predictions:[]})}
+});
+app.get("/api/performance-advanced",async(req,res)=>{
+ try{const today=localDayKey(Date.now()),from=String(req.query.from||today),to=String(req.query.to||from);res.json({ok:true,from,to,...await performanceFromArchives(d=>readPersistentArchive(d),from,to)})}
+ catch(e){res.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
 });
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
