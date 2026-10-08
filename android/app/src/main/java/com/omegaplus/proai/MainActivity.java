@@ -44,43 +44,25 @@ public class MainActivity extends Activity {
     }
 
     private static final String APP_URL = "https://omegaplus-pro-ai.vercel.app/";
-    private WebView webView;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-
-        webView = new WebView(this);
-        webView.setWebViewClient(new WebViewClient());
-
-        WebSettings s = webView.getSettings();
+        WebView web = new WebView(this);
+        web.setWebViewClient(new WebViewClient());
+        WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(false);
         s.setSupportZoom(false);
-
-        webView.addJavascriptInterface(new AppBridge(), "AndroidApp");
-        webView.loadUrl(APP_URL);
-        setContentView(webView);
+        web.addJavascriptInterface(new AppBridge(), "AndroidApp");
+        web.loadUrl(APP_URL);
+        setContentView(web);
     }
 
     @Override public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-            return;
-        }
-
-        // At the app root, close the activity normally instead of treating
-        // the content container as a WebView (which could cause a crash).
-        finishAndRemoveTask();
-    }
-
-    @Override protected void onDestroy() {
-        if (webView != null) {
-            webView.stopLoading();
-            webView.destroy();
-            webView = null;
-        }
-        super.onDestroy();
+        WebView web = (WebView) findViewById(android.R.id.content);
+        if (web != null && web.canGoBack()) web.goBack();
+        else super.onBackPressed();
     }
 }
