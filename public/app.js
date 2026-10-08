@@ -187,10 +187,10 @@ function bindMarketDropdowns(){
   $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const marketId=[...state.markets][0],first=(marketCatalog[marketId]?.options||[])[0];if(first)state.selections.add(selectionValue(marketId,first))}renderSelectionOptions()};
 }
 async function loadLeagues(){
-  try{
-    const d=await jsonFetch("/api/leagues?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(state.date));
+  const requestDate=state.date,requestSport=state.sport;
+  const renderLeagues=(leagues,countsReady)=>{
+    if(requestDate!==state.date||requestSport!==state.sport)return;
     const chosen=new Set(selectedLeagues());
-    const leagues=d.leagues||[];
     const groups=["Top Leagues","European Competitions","International","Other Leagues"];
     const groupLabels={"Top Leagues":"TOP LEAGUES","European Competitions":"EUROPEAN / CONTINENTAL","International":"INTERNATIONAL","Other Leagues":"OTHER LEAGUES"};
     $("#league").innerHTML=groups.map(group=>{
@@ -199,12 +199,31 @@ async function loadLeagues(){
       return '<optgroup label="'+esc(groupLabels[group])+'">'+items.map(x=>{
         const value=typeof x==="string"?x:(x.key||((x.name||"")+"|||"+(x.country||"")));
         const country=typeof x==="string"?"":x.country;
-        const visible=typeof x==="string"?x:(x.name||value.split("|||")[0]); const count=typeof x==="string"?"":Number(x.count||0); return '<option value="'+esc(value)+'">'+esc(visible)+(country?" — "+esc(country):"")+(typeof x==="string"?"":" · "+count+" game"+(count===1?"":"s"))+'</option>';
+        const visible=typeof x==="string"?x:(x.name||value.split("|||")[0]);
+        const count=typeof x==="string"?null:(x.count==null?null:Number(x.count));
+        const countText=typeof x==="string"?"":(countsReady?(count==null?"—":count+" game"+(count===1?"":"s")):"Loading…");
+        return '<option value="'+esc(value)+'">'+esc(visible)+(country?" — "+esc(country):"")+(typeof x==="string"?"":" · "+countText)+'</option>';
       }).join("")+'</optgroup>';
     }).join("");
     $$("#league option").forEach(o=>o.selected=chosen.has(o.value));
     $("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
-  }catch(e){setStatus("Could not load leagues for "+prettyDate(state.date)+".")}
+  };
+  try{
+    const base=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=0");
+    renderLeagues(base.leagues||[],false);
+    try{
+      const counts=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
+      renderLeagues(counts.leagues||base.leagues||[],Boolean(counts.counts));
+    }catch(e){
+      setTimeout(async()=>{
+        if(requestDate!==state.date||requestSport!==state.sport)return;
+        try{
+          const retry=await jsonFetch("/api/leagues?sport="+encodeURIComponent(requestSport)+"&date="+encodeURIComponent(requestDate)+"&counts=1");
+          renderLeagues(retry.leagues||base.leagues||[],Boolean(retry.counts));
+        }catch{}
+      },3000);
+    }
+  }catch(e){setStatus("Could not load leagues for "+prettyDate(requestDate)+".")}
 }
 async function loadBase(){
   try{
