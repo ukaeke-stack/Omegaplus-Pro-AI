@@ -1,5 +1,5 @@
 (()=> {
-  const APP_VERSION="1.5.0";
+  const APP_VERSION="1.6.0";
   const APP_ID="com.omegaplus.proai";
   const nativeVersionCode=()=>{try{return Number(window.AndroidApp?.getVersionCode?.()||0)}catch{return 0}};
   const KEY="omegaplus_settings_v2";
