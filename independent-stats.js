@@ -159,14 +159,38 @@ async function independentStatsForFixture(fixture){
     homeGoalsFor:homeRecent.goalsFor,awayGoalsFor:awayRecent.goalsFor,
     homeGoalsAgainst:homeRecent.goalsAgainst,awayGoalsAgainst:awayRecent.goalsAgainst
   }:null;
-  const shots=(sofaStats.totalShots||sofaStats.shotsOnTarget||sofaStats.bigChances)?{
+  const shots=(sofaStats.totalShots||sofaStats.shotsOnTarget||sofaStats.bigChances||sofaStats.expectedGoals)?{
     homeShots:sofaStats.totalShots?.home??null,awayShots:sofaStats.totalShots?.away??null,
     homeOnTarget:sofaStats.shotsOnTarget?.home??null,awayOnTarget:sofaStats.shotsOnTarget?.away??null,
     homePossession:sofaStats.ballPossession?.home??null,awayPossession:sofaStats.ballPossession?.away??null,
-    homeCorners:sofaStats.cornerKicks?.home??null,awayCorners:sofaStats.cornerKicks?.away??null
+    homeCorners:sofaStats.cornerKicks?.home??null,awayCorners:sofaStats.cornerKicks?.away??null,
+    homeBigChances:sofaStats.bigChances?.home??null,awayBigChances:sofaStats.bigChances?.away??null,
+    homeXg:sofaStats.expectedGoals?.home??null,awayXg:sofaStats.expectedGoals?.away??null,
+    homePPDA:sofaStats.ppda?.home??null,awayPPDA:sofaStats.ppda?.away??null
   }:null;
   const available=[sofa.found?"sofascore":null,ud?"understat":null].filter(Boolean);
-  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots,lineups,injuries},understat:{home:uh,away:ua}};
+  const derived=buildIndependentModels({form,uh,ua,shots});
+  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots,lineups,injuries},understat:{home:uh,away:ua},models:derived};
+}
+function poissonPmf(lambda,k){if(!Number.isFinite(lambda)||lambda<0)return 0;let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p}
+function poissonOver(lambda,line){let s=0;const max=Math.max(12,Math.ceil(lambda+10));for(let k=0;k<=max;k++)if(k<=line)s+=poissonPmf(lambda,k);return clamp(1-s,0,1)}
+function buildIndependentModels({form,uh,ua,shots}){
+  const hx=Number(uh?.xg),ax=Number(ua?.xg),hxa=Number(uh?.xga),axa=Number(ua?.xga);
+  const homeGoals=(Number.isFinite(hx)&&Number.isFinite(axa))?(hx+axa)/2:(Number.isFinite(form?.homeGoalsFor)?form.homeGoalsFor:null);
+  const awayGoals=(Number.isFinite(ax)&&Number.isFinite(hxa))?(ax+hxa)/2:(Number.isFinite(form?.awayGoalsFor)?form.awayGoalsFor:null);
+  const h=Math.max(0.05,Number(homeGoals)||0.05),a=Math.max(0.05,Number(awayGoals)||0.05),total=h+a;
+  const over15=poissonOver(total,1),over25=poissonOver(total,2),btts=(1-Math.exp(-h))*(1-Math.exp(-a));
+  const homeWin=(()=>{let p=0;for(let i=0;i<=10;i++)for(let j=0;j<i;j++)p+=poissonPmf(h,i)*poissonPmf(a,j);return p})();
+  const awayWin=(()=>{let p=0;for(let i=0;i<=10;i++)for(let j=0;j<i;j++)p+=poissonPmf(a,i)*poissonPmf(h,j);return p})();
+  const draw=Math.max(0,1-homeWin-awayWin);
+  const formEdge=form?.homeWinRate!=null&&form?.awayWinRate!=null?form.homeWinRate-form.awayWinRate:null;
+  const formStrength=formEdge==null?null:clamp(50+formEdge*50);
+  const xgStrength=Number.isFinite(hx)&&Number.isFinite(ax)?clamp(50+(hx-ax)*18):null;
+  const signals=[formStrength,xgStrength,homeWin*100].filter(Number.isFinite);
+  return{expectedGoals:{home:Number(h.toFixed(2)),away:Number(a.toFixed(2)),total:Number(total.toFixed(2))},
+    probabilities:{home:Number((homeWin*100).toFixed(1)),draw:Number((draw*100).toFixed(1)),away:Number((awayWin*100).toFixed(1)),over15:Number((over15*100).toFixed(1)),over25:Number((over25*100).toFixed(1)),btts:Number((btts*100).toFixed(1))},
+    strengthSignals:{recentForm:formStrength,xgEdge:xgStrength},modelAgreement:signals.length?Math.round(100-(Math.max(...signals)-Math.min(...signals))):null,
+    methodology:"Poisson goal model using independent xG/form inputs; derived probabilities are estimates, not guarantees."};
 }
 function clamp(n,min=0,max=100){return Math.max(min,Math.min(max,n))}
 function independentConfidence(stats,type){
@@ -198,8 +222,11 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
       p.marketType==="btts"?"btts":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
     const independent=independentConfidence(stats,type);
     const market=Number(p.confidence)||0;
-    const confidence=independent==null?market:Math.round(market*0.25+independent*0.75);
-    return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,independentSources:stats.available,independentStats:stats};
+    const modelHome=stats.models?.probabilities?.home;
+    const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
+    const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
+    const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
+    return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
   });
   return enriched;
 }
