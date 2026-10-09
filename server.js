@@ -402,7 +402,8 @@ function selectionRequested(outcome,requested,market,type=""){
   }
   return false;
 }
-const TABLE_TENNIS_LEAGUE_CATALOG=[["WTT","International"],["ITTF World Championships","International"],["WTT Champions","International"],["WTT Contender","International"],["European Championships","Europe"],["Olympic Games","International"]];\nconst TENNIS_LEAGUE_CATALOG=[
+const TABLE_TENNIS_LEAGUE_CATALOG=[["WTT","International"],["ITTF World Championships","International"],["WTT Champions","International"],["WTT Contender","International"],["European Championships","Europe"],["Olympic Games","International"]];
+const TENNIS_LEAGUE_CATALOG=[
   ["ATP","International"],["WTA","International"],["ATP Challenger","International"],["WTA 125","International"],["ITF Men","International"],["ITF Women","International"]
 ];
 const ICE_HOCKEY_LEAGUE_CATALOG=[
