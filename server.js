@@ -114,7 +114,8 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  // Request the broad supported market set for every sport. A hard-coded marketId=1 can return no fixtures for table tennis and other non-football sports, even when events are available. SportyBet requires marketId, so do not omit it (that yields HTTP 422).\n  const marketKey=MARKET_IDS.join(",");
+  // Request the broad supported market set for every sport. A hard-coded marketId=1 can return no fixtures for table tennis and other non-football sports, even when events are available. SportyBet requires marketId, so do not omit it (that yields HTTP 422).
+  const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
   if(liveFetchPromise) return liveFetchPromise;
