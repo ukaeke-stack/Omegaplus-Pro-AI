@@ -126,6 +126,55 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
     let body;
     try{
       body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+      if(sportDef.id==="table_tennis"){
+        // Some SportyBet sport feeds return fixture rows for a broad market list
+        // but omit their odds. Probe common market IDs individually and merge
+        // only provider-returned markets for matching events; never synthesize odds.
+        const probeIds=["1","18","10","29","11"];
+        const eventMap=new Map();
+        const rememberEvents=(payload)=>{
+          for(const tournament of payload?.data?.tournaments||[]){
+            for(const event of tournament.events||[]){
+              const id=String(event.eventId||"");
+              if(!id) continue;
+              const current=eventMap.get(id);
+              if(!current){
+                eventMap.set(id,{tournament,event:{...event,markets:[...(event.markets||[])]}});
+              }else{
+                const known=new Set(current.event.markets.map(m=>JSON.stringify([String(m.id||""),String(m.specifier||""),(m.outcomes||[]).map(o=>String(o.id||""))])));
+                for(const market of event.markets||[]){
+                  const key=JSON.stringify([String(market.id||""),String(market.specifier||""),(market.outcomes||[]).map(o=>String(o.id||""))]);
+                  if(!known.has(key)){current.event.markets.push(market);known.add(key);}
+                }
+              }
+            }
+          }
+        };
+        rememberEvents(body);
+        const probeResults=[];
+        for(const probeId of probeIds){
+          try{
+            const probeParams=new URLSearchParams(params);
+            probeParams.set("marketId",probeId);
+            const probeBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+probeParams);
+            const probeTournaments=probeBody.data?.tournaments||[];
+            const probeEvents=probeTournaments.flatMap(t=>t.events||[]);
+            const probeMarkets=probeEvents.reduce((n,e)=>n+(e.markets||[]).length,0);
+            probeResults.push({marketId:probeId,tournaments:probeTournaments.length,events:probeEvents.length,markets:probeMarkets});
+            rememberEvents(probeBody);
+          }catch(probeError){
+            probeResults.push({marketId:probeId,error:probeError.message});
+          }
+        }
+        const mergedTournaments=new Map();
+        for(const {tournament,event} of eventMap.values()){
+          const key=String(tournament.id||tournament.name||"unknown");
+          if(!mergedTournaments.has(key)) mergedTournaments.set(key,{...tournament,events:[]});
+          mergedTournaments.get(key).events.push(event);
+        }
+        body={...body,data:{...(body.data||{}),tournaments:[...mergedTournaments.values()]}};
+        console.log("SportyBet table-tennis market probes",JSON.stringify({probeResults,mergedEvents:eventMap.size,mergedMarkets:[...eventMap.values()].reduce((n,x)=>n+(x.event.markets||[]).length,0)}));
+      }
       if(sportDef.id!=="football"){
         const unfiltered=new URLSearchParams(params);
         unfiltered.delete("marketId");
