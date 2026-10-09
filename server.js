@@ -66,11 +66,11 @@ app.use((req,res,next)=>{
 });
 app.use(express.static(path.join(__dirname,"public")));
 
-const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301","219","223","225","227","228"];
+const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","186","187","188","189","219","223","225","227","228","251","256","258","274","275","276","406","410","412","414","415","900300","900301"];
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
-let liveFetchPromise=null;
+const liveFetchPromises=new Map();
 const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
@@ -114,25 +114,94 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"1";
+  // Request the broad supported market set for every sport. A hard-coded marketId=1 can return no fixtures for table tennis and other non-football sports, even when events are available. SportyBet requires marketId, so do not omit it (that yields HTTP 422).
+  const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
-  if(liveFetchPromise) return liveFetchPromise;
-  liveFetchPromise=(async()=>{
+  if(liveFetchPromises.has(cacheKey)) return liveFetchPromises.get(cacheKey);
+  const fetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     let body;
     try{
       body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-      if(sportDef.id!=="football" && !(body.data?.tournaments||[]).some(t=>(t.events||[]).length)){
+      if(sportDef.id==="table_tennis"){
+        // Some SportyBet sport feeds return fixture rows for a broad market list
+        // but omit their odds. Probe common market IDs individually and merge
+        // only provider-returned markets for matching events; never synthesize odds.
+        const probeIds=["1","18","10","29","11"];
+        const eventMap=new Map();
+        const rememberEvents=(payload)=>{
+          for(const tournament of payload?.data?.tournaments||[]){
+            for(const event of tournament.events||[]){
+              const id=String(event.eventId||"");
+              if(!id) continue;
+              const current=eventMap.get(id);
+              if(!current){
+                eventMap.set(id,{tournament,event:{...event,markets:[...(event.markets||[])]}});
+              }else{
+                const known=new Set(current.event.markets.map(m=>JSON.stringify([String(m.id||""),String(m.specifier||""),(m.outcomes||[]).map(o=>String(o.id||""))])));
+                for(const market of event.markets||[]){
+                  const key=JSON.stringify([String(market.id||""),String(market.specifier||""),(market.outcomes||[]).map(o=>String(o.id||""))]);
+                  if(!known.has(key)){current.event.markets.push(market);known.add(key);}
+                }
+              }
+            }
+          }
+        };
+        rememberEvents(body);
+        const probeResults=[];
+        for(const probeId of probeIds){
+          try{
+            const probeParams=new URLSearchParams(params);
+            probeParams.set("marketId",probeId);
+            const probeBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+probeParams);
+            const probeTournaments=probeBody.data?.tournaments||[];
+            const probeEvents=probeTournaments.flatMap(t=>t.events||[]);
+            const probeMarkets=probeEvents.reduce((n,e)=>n+(e.markets||[]).length,0);
+            probeResults.push({marketId:probeId,tournaments:probeTournaments.length,events:probeEvents.length,markets:probeMarkets});
+            rememberEvents(probeBody);
+          }catch(probeError){
+            probeResults.push({marketId:probeId,error:probeError.message});
+          }
+        }
+        const mergedTournaments=new Map();
+        for(const {tournament,event} of eventMap.values()){
+          const key=String(tournament.id||tournament.name||"unknown");
+          if(!mergedTournaments.has(key)) mergedTournaments.set(key,{...tournament,events:[]});
+          mergedTournaments.get(key).events.push(event);
+        }
+        body={...body,data:{...(body.data||{}),tournaments:[...mergedTournaments.values()]}};
+        console.log("SportyBet table-tennis market probes",JSON.stringify({probeResults,mergedEvents:eventMap.size,mergedMarkets:[...eventMap.values()].reduce((n,x)=>n+(x.event.markets||[]).length,0)}));
+      }
+      if(sportDef.id!=="football"){
         const unfiltered=new URLSearchParams(params);
         unfiltered.delete("marketId");
-        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+        const filteredBody=body;
+        const filteredTournaments=filteredBody.data?.tournaments||[];
+        const filteredMarketCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+        const filteredEventCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+        // SportyBet can reject requests without marketId (HTTP 422). Keep the
+        // valid filtered response and only prefer unfiltered data if that call succeeds.
+        try{
+          const unfilteredBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+          const unfilteredTournaments=unfilteredBody.data?.tournaments||[];
+          const unfilteredMarketCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+          const unfilteredEventCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+          if(unfilteredMarketCount>filteredMarketCount || (unfilteredEventCount>filteredEventCount&&unfilteredMarketCount>=filteredMarketCount)){
+            body=unfilteredBody;
+          }
+        }catch(unfilteredError){
+          console.warn("SportyBet unfiltered fixture fallback unavailable:",unfilteredError.message);
+        }
       }
     }catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
+    const responseEventCount=tournaments.reduce((n,t)=>n+(t.events||[]).length,0);
+    const responseMarketCount=tournaments.reduce((n,t)=>n+(t.events||[]).reduce((m,e)=>m+(e.markets||[]).length,0),0);
+    if(page===1) console.log("SportyBet fixture diagnostic",JSON.stringify({sport:sportDef.id,sportId:sportDef.sportId,marketKey,todayOnly,page,tournamentCount:tournaments.length,eventCount:responseEventCount,marketCount:responseMarketCount,sample:tournaments.slice(0,3).map(t=>({league:t.name,category:t.categoryName,events:(t.events||[]).slice(0,2).map(e=>({home:e.homeTeamName,away:e.awayTeamName,startTimeMs:e.estimateStartTime,markets:(e.markets||[]).slice(0,5).map(m=>({id:m.id,name:m.desc||m.name,outcomes:(m.outcomes||[]).length}))}))}))}));
     for(const tournament of tournaments){
       for(const event of tournament.events||[]){
         pageCount++;
@@ -166,7 +235,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   liveCache={at:Date.now(),key:cacheKey,fixtures:all};
   return all;
   })();
-  try{return await liveFetchPromise}finally{liveFetchPromise=null}
+  liveFetchPromises.set(cacheKey,fetchPromise);try{return await fetchPromise}finally{if(liveFetchPromises.get(cacheKey)===fetchPromise)liveFetchPromises.delete(cacheKey)}
 }
 
 function localDayKey(ms){
@@ -189,7 +258,11 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");\n  if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));\n  if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");\n  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");\n  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_moneyline") return id==="1"||has("winner","match winner","moneyline","to win","match result","1x2");
+  if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));
+  if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");
+  if(type==="table_tennis_set_betting") return has("correct score","correct set score","set betting","sets","exact score");
+  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
   if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
   if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
   if(type==="tennis_set_betting") return has("set betting","correct score","sets");
@@ -371,7 +444,13 @@ function selectionRequested(outcome,requested,market,type=""){
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
-  if(["table_tennis_moneyline","tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+  if(type==="table_tennis_moneyline"){
+    const want=normalizeText(label),idx=(Array.isArray(market?.outcomes)?market.outcomes:[]).indexOf(outcome);
+    if(["home","player 1","1"].includes(want)) return ["home","player 1","1"].includes(raw)||idx===0;
+    if(["away","player 2","2"].includes(want)) return ["away","player 2","2"].includes(raw)||idx===1;
+    return directWinningSelectionRequested(outcome,label);
+  }
+  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
     return directWinningSelectionRequested(outcome,label);
   }
   if(["table_tennis_handicap","table_tennis_set_betting","tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
@@ -398,7 +477,8 @@ function selectionRequested(outcome,requested,market,type=""){
   }
   return false;
 }
-const TABLE_TENNIS_LEAGUE_CATALOG=[["WTT","International"],["ITTF World Championships","International"],["WTT Champions","International"],["WTT Contender","International"],["European Championships","Europe"],["Olympic Games","International"]];\nconst TENNIS_LEAGUE_CATALOG=[
+const TABLE_TENNIS_LEAGUE_CATALOG=[["WTT","International"],["ITTF World Championships","International"],["WTT Champions","International"],["WTT Contender","International"],["European Championships","Europe"],["Olympic Games","International"]];
+const TENNIS_LEAGUE_CATALOG=[
   ["ATP","International"],["WTA","International"],["ATP Challenger","International"],["WTA 125","International"],["ITF Men","International"],["ITF Women","International"]
 ];
 const ICE_HOCKEY_LEAGUE_CATALOG=[
@@ -409,7 +489,8 @@ const BASEBALL_LEAGUE_CATALOG=[
 ];
 function sportLeagueCatalog(sport){
   if(sport==="basketball") return BASKETBALL_LEAGUE_CATALOG;
-  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;\n  if(sport==="table_tennis") return TABLE_TENNIS_LEAGUE_CATALOG;
+  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;
+  if(sport==="table_tennis") return TABLE_TENNIS_LEAGUE_CATALOG;
   if(sport==="ice_hockey") return ICE_HOCKEY_LEAGUE_CATALOG;
   if(sport==="baseball") return BASEBALL_LEAGUE_CATALOG;
   return TOP_LEAGUE_CATALOG;
@@ -870,7 +951,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[]; const scannedFixtures=fixtures.length,fixturesWithMarkets=fixtures.filter(f=>Array.isArray(f.markets)&&f.markets.length>0).length,availableMarkets=fixtures.reduce((n,f)=>n+(Array.isArray(f.markets)?f.markets.length:0),0);
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
@@ -926,7 +1007,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
     await writePersistentArchive(requestedDate,existing,requestedSport);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},scannedFixtures,fixturesWithMarkets,availableMarkets,qualifyingFixtures:qualified.length,total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
