@@ -70,7 +70,7 @@ const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
-let liveFetchPromise=null;
+const liveFetchPromises=new Map();
 const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
@@ -118,8 +118,8 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
-  if(liveFetchPromise) return liveFetchPromise;
-  liveFetchPromise=(async()=>{
+  if(liveFetchPromises.has(cacheKey)) return liveFetchPromises.get(cacheKey);
+  const fetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
@@ -235,7 +235,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   liveCache={at:Date.now(),key:cacheKey,fixtures:all};
   return all;
   })();
-  try{return await liveFetchPromise}finally{liveFetchPromise=null}
+  liveFetchPromises.set(cacheKey,fetchPromise);try{return await fetchPromise}finally{if(liveFetchPromises.get(cacheKey)===fetchPromise)liveFetchPromises.delete(cacheKey)}
 }
 
 function localDayKey(ms){
@@ -951,7 +951,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[]; const scannedFixtures=fixtures.length,fixturesWithMarkets=fixtures.filter(f=>Array.isArray(f.markets)&&f.markets.length>0).length,availableMarkets=fixtures.reduce((n,f)=>n+(Array.isArray(f.markets)?f.markets.length:0),0);
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
@@ -1007,7 +1007,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
     await writePersistentArchive(requestedDate,existing,requestedSport);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},scannedFixtures,fixturesWithMarkets,availableMarkets,qualifyingFixtures:qualified.length,total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
