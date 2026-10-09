@@ -189,7 +189,11 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");\n  if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));\n  if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");\n  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");\n  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));
+  if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");
+  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");
+  if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
   if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
   if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
   if(type==="tennis_set_betting") return has("set betting","correct score","sets");
@@ -409,7 +413,8 @@ const BASEBALL_LEAGUE_CATALOG=[
 ];
 function sportLeagueCatalog(sport){
   if(sport==="basketball") return BASKETBALL_LEAGUE_CATALOG;
-  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;\n  if(sport==="table_tennis") return TABLE_TENNIS_LEAGUE_CATALOG;
+  if(sport==="tennis") return TENNIS_LEAGUE_CATALOG;
+  if(sport==="table_tennis") return TABLE_TENNIS_LEAGUE_CATALOG;
   if(sport==="ice_hockey") return ICE_HOCKEY_LEAGUE_CATALOG;
   if(sport==="baseball") return BASEBALL_LEAGUE_CATALOG;
   return TOP_LEAGUE_CATALOG;
