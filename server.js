@@ -189,10 +189,10 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_moneyline") return id==="1"||has("winner","match winner","moneyline","to win","match result","1x2");
   if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));
   if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");
-  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");
+  if(type==="table_tennis_set_betting") return has("correct score","correct set score","set betting","sets","exact score");
   if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
   if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
   if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
@@ -375,7 +375,13 @@ function selectionRequested(outcome,requested,market,type=""){
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
-  if(["table_tennis_moneyline","tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+  if(type==="table_tennis_moneyline"){
+    const want=normalizeText(label),idx=(Array.isArray(market?.outcomes)?market.outcomes:[]).indexOf(outcome);
+    if(["home","player 1","1"].includes(want)) return ["home","player 1","1"].includes(raw)||idx===0;
+    if(["away","player 2","2"].includes(want)) return ["away","player 2","2"].includes(raw)||idx===1;
+    return directWinningSelectionRequested(outcome,label);
+  }
+  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
     return directWinningSelectionRequested(outcome,label);
   }
   if(["table_tennis_handicap","table_tennis_set_betting","tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
