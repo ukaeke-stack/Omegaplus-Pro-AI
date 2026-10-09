@@ -125,10 +125,20 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
     let body;
     try{
       body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-      if(sportDef.id!=="football" && !(body.data?.tournaments||[]).some(t=>(t.events||[]).length)){
+      if(sportDef.id!=="football"){
         const unfiltered=new URLSearchParams(params);
         unfiltered.delete("marketId");
-        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+        const filteredBody=body;
+        const filteredTournaments=filteredBody.data?.tournaments||[];
+        const filteredMarketCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+        const unfilteredBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+        const unfilteredTournaments=unfilteredBody.data?.tournaments||[];
+        const unfilteredMarketCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+        const filteredEventCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+        const unfilteredEventCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+        if(unfilteredMarketCount>filteredMarketCount || (unfilteredEventCount>filteredEventCount&&unfilteredMarketCount>=filteredMarketCount)){
+          body=unfilteredBody;
+        }
       }
     }catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
