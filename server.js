@@ -131,13 +131,19 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
         const filteredBody=body;
         const filteredTournaments=filteredBody.data?.tournaments||[];
         const filteredMarketCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
-        const unfilteredBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
-        const unfilteredTournaments=unfilteredBody.data?.tournaments||[];
-        const unfilteredMarketCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
         const filteredEventCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
-        const unfilteredEventCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
-        if(unfilteredMarketCount>filteredMarketCount || (unfilteredEventCount>filteredEventCount&&unfilteredMarketCount>=filteredMarketCount)){
-          body=unfilteredBody;
+        // SportyBet can reject requests without marketId (HTTP 422). Keep the
+        // valid filtered response and only prefer unfiltered data if that call succeeds.
+        try{
+          const unfilteredBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+          const unfilteredTournaments=unfilteredBody.data?.tournaments||[];
+          const unfilteredMarketCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+          const unfilteredEventCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+          if(unfilteredMarketCount>filteredMarketCount || (unfilteredEventCount>filteredEventCount&&unfilteredMarketCount>=filteredMarketCount)){
+            body=unfilteredBody;
+          }
+        }catch(unfilteredError){
+          console.warn("SportyBet unfiltered fixture fallback unavailable:",unfilteredError.message);
         }
       }
     }catch(e){if(all.length) break;throw e}
