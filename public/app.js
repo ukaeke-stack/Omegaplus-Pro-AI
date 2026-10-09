@@ -114,7 +114,9 @@ function renderHistory(date=historySelectedDate(),rows=[]){
   }
   box.innerHTML=h.map(x=>{
     const teams=safe(x.home)+" vs "+safe(x.away);
-    const pick=safe(x.pick||x.selection||x.market);
+    const rawPick=String(x.pick||x.selection||x.market||"");
+    const isEuropeanHomePlusOne=String(x.marketId)==="14"&&/^hcp=1:0$/.test(String(x.specifier||""))&&/^home\b/i.test(rawPick);
+    const pick=safe(isEuropeanHomePlusOne?"Home +1 (European Handicap; virtual score 1:0)":rawPick);
     const odds=x.odds==null?"—":safe(x.odds);
     const confidence=x.confidence==null?"—":safe(x.confidence);
     const score=Number.isFinite(Number(x.homeScore))&&Number.isFinite(Number(x.awayScore))&&x.homeScore!==null&&x.awayScore!==null
