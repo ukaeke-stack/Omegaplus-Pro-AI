@@ -41,21 +41,10 @@ function renderDateChips(){
   box.innerHTML=[...state.dates].sort().map(d=>'<button class="date-chip" data-date="'+esc(d)+'">'+esc(prettyDate(d))+' ×</button>').join("");
   $$("#selectedDates .date-chip").forEach(b=>b.onclick=()=>{state.dates.delete(b.dataset.date);if(!state.dates.size)state.dates.add(state.date);renderDateChips()});
 }
-function historyKey(){return "omegaplus_history_v3"}
 function archiveKey(){return "omegaplus_day_archive_v1"}
 function readArchive(){try{return JSON.parse(localStorage.getItem(archiveKey())||"{}")}catch{return{}}}
 function writeArchive(a){try{localStorage.setItem(archiveKey(),JSON.stringify(a));return true}catch{return false}}
 function archiveDay(date,payload={}){const a=readArchive();a[date]={...(a[date]||{}),...payload,savedAt:new Date().toISOString()};writeArchive(a)}
-function readHistory(){try{return JSON.parse(localStorage.getItem(historyKey())||"[]")}catch{return[]}}
-function writeHistory(rows){try{localStorage.setItem(historyKey(),JSON.stringify(rows.slice(-2000)));return true}catch{return false}}
-function saveHistoryRows(rows,replaceDate=null){
-  const history=readHistory();
-  const targetDate=replaceDate||state.date;
-  const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
-  const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:now}));
-  return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
-}
 
 function settleOutcome(x){
   const status=String(x.status||x.matchStatus||"").toLowerCase();
@@ -90,59 +79,49 @@ function updateOutcomeSummary(rows,prefix){
 function historySelectedDate(){
   return $("#historyDate")?.value||dateKey(new Date());
 }
-function renderHistory(date=historySelectedDate(),fallbackRows=[]){
+function renderHistory(date=historySelectedDate(),rows=[]){
   const box=$("#historyList");if(!box)return;
-  const all=readHistory();
-  let h=all.filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
-  if(!h.length&&fallbackRows.length){
-    const now=new Date().toISOString();
-    h=fallbackRows.slice(0,10).map(x=>({...x,id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||settleOutcome(x),recordedAt:now}));
-  }
+  const h=(Array.isArray(rows)?rows:[]).filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
   updateOutcomeSummary(h,"history");
-  $("#historyStatus").textContent=h.length?h.length+" record(s) for "+prettyDate(date)+".":"No prediction records saved for "+prettyDate(date)+".";
-  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span><small>'+esc((x.sources||[]).join(" + ")||"Result verification pending")+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+(Number.isFinite(Number(x.homeScore))?" · "+x.homeScore+"-"+x.awayScore:"")+'</small></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
+  $("#historyStatus").textContent=h.length?h.length+" shared record(s) for "+prettyDate(date)+".":"No archived prediction records for "+prettyDate(date)+".";
+  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span><small>'+esc((x.sources||[]).join(" + ")||"Result verification pending")+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+(Number.isFinite(Number(x.homeScore))?" · "+x.homeScore+"-"+x.awayScore:"")+'</small></div><strong>'+esc(x.outcome||"Pending")+'</strong></article>').join(""):'<div class="empty">No records archived online for this date.</div>';
 }
 async function refreshHistory(date=historySelectedDate()){
-  let h=readHistory(),fallback=[];
+  $("#historyStatus").textContent="Loading shared online history…";
   try{
-    const archiveResponse=await (await fetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
-    const archive=archiveResponse.ok&&archiveResponse.archive?archiveResponse.archive:null;
-    if(Array.isArray(archive?.correctScores)&&archive.correctScores.length){
-      const existingCs=archive.correctScores.slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
-      h=[...h.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score")),...existingCs];
+    let response=await jsonFetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
+    let archive=response.archive||null;
+    if(!archive&&date===dateKey(new Date())){
+      const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
+      archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date}));
-    if(!day.length){
-      const data=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
-      const liveRows=data.predictions||[];
-      day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
-      if(!day.length){
-        try{const analyzed=await (await fetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();fallback=(analyzed.predictions||[]).slice(0,10).map(x=>({...x,date}));}catch{}
-        if(!fallback.length)fallback=liveRows.slice(0,10).map(x=>({...x,date,pick:"Fixture",market:"Fixture",confidence:0,odds:"—"}));
-        day=fallback;
-      }
-    }
+    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
-    try{const rr=await (await fetch("/api/results?date="+encodeURIComponent(date))).json();if(rr.ok)resultRows=rr.results||resultRows;}catch{}
+    try{
+      const rr=await jsonFetch("/api/results?date="+encodeURIComponent(date)+"&sport="+encodeURIComponent(state.sport));
+      if(rr.ok)resultRows=rr.results||resultRows;
+    }catch{}
     const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
     const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
-    const liveData=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json().catch(()=>({predictions:[]}));
-    const live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
-    day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}x.outcome=settleOutcome(x)});
-    const correctScoreRows=h.filter(x=>x.date===date&&(x.market||"")==="Correct Score").map(x=>{
-      const z=findResult(x);
-      const next={...x};
-      if(z){next.status=z.status||next.status;next.homeScore=z.homeScore??next.homeScore;next.awayScore=z.awayScore??next.awayScore;next.resultProviderId=z.providerId||next.resultProviderId;next.sources=z.sources||next.sources||[];next.verificationStatus=z.verificationStatus||next.verificationStatus||"unverified";next.verificationCount=z.verificationCount||next.verificationCount||1;next.outcome=settleOutcome(next);}
-      return next;
-    });
-    const merged=[...h.filter(x=>x.date!==date),...day.filter(x=>x.market!=="Correct Score"),...correctScoreRows];
-    writeHistory(merged);
-    archiveDay(date,{history:merged.filter(x=>x.date===date),predictions:day,correctScores:correctScoreRows,results:resultRows});
-    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,correctScores:correctScoreRows,results:resultRows})});}catch{}
-    renderHistory(date,merged.filter(x=>x.date===date));
-  }catch{
-    const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
-    renderHistory(date,day);
+    let live=new Map();
+    try{
+      const liveData=await jsonFetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
+      live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
+    }catch{}
+    const updateRow=x=>{
+      const y=live.get(x.eventId),z=findResult(x);
+      if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}
+      if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}
+      x.outcome=settleOutcome(x);
+      return x;
+    };
+    day=day.map(updateRow);
+    correctScoreRows=correctScoreRows.map(updateRow);
+    renderHistory(date,[...day,...correctScoreRows]);
+  }catch(e){
+    renderHistory(date,[]);
+    $("#historyStatus").textContent="Could not load shared online history: "+(e.message||"server unavailable")+". Please retry.";
   }
 }
 function renderDropdown(id,items,selectedSet){
@@ -300,13 +279,9 @@ async function loadDailyBest(){
     const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
     let rows=(d.predictions||[]).slice(0,10);
-    const saved=readHistory().filter(x=>x.date===date);
-    const byId=new Map(saved.map(x=>[x.id,x]));
-    rows=rows.map(x=>({...x,outcome:byId.get(x.id)?.outcome||"Pending"}));
+    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
     updateOutcomeSummary(rows,"daily");
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
-    saveHistoryRows(rows.map(x=>({...x,date,sport:state.sport})),date);
-    archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     refreshHistory(date).catch(()=>{});
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
@@ -325,13 +300,7 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
       const eg=x.expectedGoals||{};
       return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league||"")+' · '+esc(x.time||"")+'</div><div class="teams">'+esc(x.home||"")+' <span>vs</span> '+esc(x.away||"")+'</div><div class="pick"><span>Correct score</span><b>'+esc(best.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(prob)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(eg.home ?? "—")+' — '+esc(eg.away ?? "—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", ")||"Independent statistics + market model")+'</small></div><div class="prob"><strong>'+esc(x.confidence ?? prob)+'%</strong><small>best-score confidence</small></div></article>';
     }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
-  const existing=readHistory();
-  const csRows=rows.slice(0,5).map((x,i)=>{const best=x.topScores?.[0];return {id:"cs_"+(x.eventId||x.id||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,league:x.league,time:x.time,home:x.home,away:x.away,pick:best?.score||"—",market:"Correct Score",odds:best?.probability??"—",confidence:Number(x.confidence||best?.probability||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",sources:x.sources||[],topScores:Array.isArray(x.topScores)?x.topScores.slice(0,5):[],bestScore:x.bestScore||best||null,expectedGoals:x.expectedGoals||null,verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:new Date().toISOString()};});
-  const other=existing.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score"));
-  writeHistory([...other,...csRows].slice(-2000));
-  try{
-    await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:"football",date,correctScores:csRows})});
-  }catch{}
+  try{await refreshHistory(date)}catch{}
   try{await refreshHistory(date)}catch{}
   }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
 }
@@ -398,7 +367,7 @@ function scheduleMidnightReset(){
   const now=new Date(),next=new Date(now);next.setHours(24,0,0,0);
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
-const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(async()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(!pending)return;const d=$("#historyDate")?.value||dateKey(new Date());try{await refreshHistory(d)}catch{}},30*60*1000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
+const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{if($("#page-history")?.classList.contains("active-page")){const d=$("#historyDate")?.value||dateKey(new Date());refreshHistory(d).catch(()=>{})}},30*60*1000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
 // Public read-only bridge for additive upgrade modules. No existing state is replaced.
 window.omegaRows=()=>Array.isArray(state.rows)?state.rows.slice():[];
 window.omegaStateDate=()=>state.date||new Date().toISOString().slice(0,10);
