@@ -48,13 +48,12 @@ function archiveDay(date,payload={}){const a=readArchive();a[date]={...(a[date]|
 
 function settleOutcome(x){
   const status=String(x.status||x.matchStatus||"").toLowerCase();
-  if(/postpon|cancel|void|abandon|suspend/.test(status))return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
+  if(/postpon/.test(status))return "Postponed";
+  if(/cancel|void|abandon/.test(status))return "Void";
   const finished=/finished|full.?time|ended|closed|complete|final|\bft\b|after extra|penalt(y|ies)/i.test(status);
-  // A 0-0 (or any current score) from a scheduled/live fixture is NOT a final result.
-  // Only settle a prediction after the provider explicitly reports a completed match.
   if(!finished)return "Pending";
-  if(String(x.verificationStatus||"")!=="confirmed")return "Pending";
-  const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
+  if(String(x.verificationStatus||"")==="conflict")return "Pending";
+  const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||x.selection||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return "Pending";
   if(String(x.market||"").toLowerCase()==="correct score"){
     const cs=pick.match(/^(\d+)\s*[-:]\s*(\d+)$/);
@@ -62,15 +61,21 @@ function settleOutcome(x){
     return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
   }
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(m)return total>Number(m[1])?"Won":"Lost";
-  if(u)return total<Number(u[1])?"Won":"Lost";
-  if(pick.includes("home"))return hs>as?"Won":"Lost";
-  if(pick.includes("away"))return as>hs?"Won":"Lost";
-  if(pick.includes("draw"))return hs===as?"Won":"Lost";
-  return "Finished";
+  if(m){const line=Number(m[1]);return total===line?"Void":total>line?"Won":"Lost";}
+  if(u){const line=Number(u[1]);return total===line?"Void":total<line?"Won":"Lost";}
+  if(/btts|both teams to score|gg/.test(pick)||/both teams to score|btts/i.test(String(x.market||""))){
+    const yes=!/no|not|ng/.test(pick),actual=hs>0&&as>0;return actual===yes?"Won":"Lost";
+  }
+  if(/home or draw|1x/.test(pick))return hs>=as?"Won":"Lost";
+  if(/home or away|12/.test(pick))return hs!==as?"Won":"Lost";
+  if(/draw or away|x2/.test(pick))return as>=hs?"Won":"Lost";
+  if(/home/.test(pick)&&!/handicap/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick)&&!/handicap/.test(pick))return as>hs?"Won":"Lost";
+  if(/draw|tie/.test(pick))return hs===as?"Won":"Lost";
+  return "Pending";
 }
 function updateOutcomeSummary(rows,prefix){
-  const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost"].includes(x.outcome)).length;
+  const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost","Void","Postponed"].includes(x.outcome)).length;
   const settled=won+lost,accuracy=settled?Math.round(won/settled*100):null;
   const set=(id,v)=>{if($("#"+id))$("#"+id).textContent=v};
   if(prefix==="history"){set("historyWon",won);set("historyLost",lost);set("historyPending",pending);set("historyAccuracy",accuracy===null?"—":accuracy+"%")}
@@ -109,7 +114,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
       '<small style="display:block;color:#aab8b0">'+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
       '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
       '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
-      '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+score+'</small>'+
+      '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":x.verificationStatus==="single-source"?" · SINGLE-SOURCE":" · UNVERIFIED")+score+'</small>'+
       '</div><strong style="display:block;white-space:nowrap;color:var(--green,#18e76b)">'+safe(x.outcome||"Pending")+'</strong></article>';
   }).join("");
 }
@@ -126,7 +131,7 @@ async function refreshHistory(date=historySelectedDate()){
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
     try{
-      const rr=await jsonFetch("/api/results?date="+encodeURIComponent(date)+"&sport="+encodeURIComponent(state.sport));
+      const rr=await jsonFetch("/api/results?date="+encodeURIComponent(date)+"&sport="+encodeURIComponent(state.sport)+"&refresh=1");
       if(rr.ok)resultRows=rr.results||resultRows;
     }catch{}
     const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
