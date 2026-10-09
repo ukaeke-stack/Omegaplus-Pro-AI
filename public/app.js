@@ -80,11 +80,38 @@ function historySelectedDate(){
   return $("#historyDate")?.value||dateKey(new Date());
 }
 function renderHistory(date=historySelectedDate(),rows=[]){
-  const box=$("#historyList");if(!box)return;
-  const h=(Array.isArray(rows)?rows:[]).filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
+  const box=$("#historyList");
+  if(!box)return;
+  const h=(Array.isArray(rows)?rows:[])
+    .filter(x=>(x.sport||"football")===state.sport&&String(x.date||date)===date)
+    .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time||"").localeCompare(String(b.time||"")))
+    .slice(0,50);
+  const safe=v=>esc(v==null||v===""?"—":v);
+  const sourceText=x=>Array.isArray(x.sources)?x.sources.join(" + "):Array.isArray(x.independentSources)?x.independentSources.join(" + "):typeof x.sources==="string"?x.sources:"Result verification pending";
   updateOutcomeSummary(h,"history");
   $("#historyStatus").textContent=h.length?h.length+" shared record(s) for "+prettyDate(date)+".":"No archived prediction records for "+prettyDate(date)+".";
-  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span><small>'+esc((x.sources||[]).join(" + ")||"Result verification pending")+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+(Number.isFinite(Number(x.homeScore))?" · "+x.homeScore+"-"+x.awayScore:"")+'</small></div><strong>'+esc(x.outcome||"Pending")+'</strong></article>').join(""):'<div class="empty">No records archived online for this date.</div>';
+  box.style.display="block";
+  box.style.visibility="visible";
+  box.style.color="var(--text, #eef5f0)";
+  if(!h.length){
+    box.innerHTML='<div class="empty" style="display:block;visibility:visible;padding:16px;color:var(--text,#eef5f0)">No records archived online for this date.</div>';
+    return;
+  }
+  box.innerHTML=h.map(x=>{
+    const teams=safe(x.home)+" vs "+safe(x.away);
+    const pick=safe(x.pick||x.selection||x.market);
+    const odds=x.odds==null?"—":safe(x.odds);
+    const confidence=x.confidence==null?"—":safe(x.confidence);
+    const score=Number.isFinite(Number(x.homeScore))&&Number.isFinite(Number(x.awayScore))&&x.homeScore!==null&&x.awayScore!==null
+      ? " · "+safe(x.homeScore)+"-"+safe(x.awayScore):"";
+    return '<article class="history-item" style="display:flex!important;visibility:visible!important;opacity:1!important;color:var(--text,#eef5f0);align-items:center;gap:12px;padding:14px;margin:8px 0;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(255,255,255,.04)">'+
+      '<div style="display:grid!important;visibility:visible;gap:5px;min-width:0;flex:1">'+
+      '<small style="display:block;color:#aab8b0">'+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
+      '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
+      '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
+      '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+score+'</small>'+
+      '</div><strong style="display:block;white-space:nowrap;color:var(--green,#18e76b)">'+safe(x.outcome||"Pending")+'</strong></article>';
+  }).join("");
 }
 async function refreshHistory(date=historySelectedDate()){
   $("#historyStatus").textContent="Loading shared online history…";
