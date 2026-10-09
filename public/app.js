@@ -60,38 +60,7 @@ function settleOutcome(x){
     if(!cs)return "Pending";
     return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
   }
-  // European 3-way handicap: hcp=H:A adds the virtual score to the final score.
-  if(String(x.marketId)==="14"){
-    const h=String(x.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
-    if(h){
-      const adjustedHome=hs+Number(h[1]),adjustedAway=as+Number(h[2]),outcome=String(x.outcomeId||"");
-      if(outcome==="1711")return adjustedHome>adjustedAway?"Won":"Lost";
-      if(outcome==="1712")return adjustedHome===adjustedAway?"Won":"Lost";
-      if(outcome==="1713")return adjustedHome<adjustedAway?"Won":"Lost";
-      const pick=String(x.pick||x.selection||"").toLowerCase();
-      if(/\bhome\b/.test(pick))return adjustedHome>adjustedAway?"Won":"Lost";
-      if(/\baway\b/.test(pick))return adjustedAway>adjustedHome?"Won":"Lost";
-      if(/\bdraw\b/.test(pick))return adjustedHome===adjustedAway?"Won":"Lost";
-    }
-  }
-  // Asian handicap: signed lines stay fractional; quarter lines are split across adjacent lines.
-  if(String(x.marketId)==="16"||/asian handicap/i.test(String(x.market||""))){
-    const pick=String(x.pick||x.selection||"").toLowerCase();
-    const side=/\baway\b/.test(pick)?"away":/\bhome\b/.test(pick)?"home":"";
-    const labelLine=String(x.pick||x.selection||"").match(/\b(?:home|away)\s*([+-]\d+(?:\.\d+)?)/i);
-    const specLine=String(x.specifier||"").match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
-    const line=labelLine?Number(labelLine[1]):specLine?(side==="away"?-Number(specLine[1]):Number(specLine[1])):NaN;
-    if(side&&Number.isFinite(line)){
-      const diff=side==="home"?(hs-as)+line:(as-hs)+line;
-      const quarter=Math.abs(Math.abs(line)%1-0.25)<1e-9||Math.abs(Math.abs(line)%1-0.75)<1e-9;
-      const parts=(quarter?[diff-0.25,diff+0.25]:[diff]).map(v=>Math.abs(v)<1e-9?"Void":v>0?"Won":"Lost");
-      if(parts.length===1)return parts[0];
-      if(parts[0]===parts[1])return parts[0];
-      if(parts.includes("Won")&&parts.includes("Void"))return "Half Won";
-      if(parts.includes("Lost")&&parts.includes("Void"))return "Half Lost";
-      return "Void";
-    }
-  }
+
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(m){const line=Number(m[1]);return total===line?"Void":total>line?"Won":"Lost";}
   if(u){const line=Number(u[1]);return total===line?"Void":total<line?"Won":"Lost";}
@@ -137,8 +106,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
   box.innerHTML=h.map(x=>{
     const teams=safe(x.home)+" vs "+safe(x.away);
     const rawPick=String(x.pick||x.selection||x.market||"");
-    const isEuropeanHomePlusOne=String(x.marketId)==="14"&&/^hcp=1:0$/.test(String(x.specifier||""))&&/^home\b/i.test(rawPick);
-    const pick=safe(isEuropeanHomePlusOne?"Home +1 (European Handicap; virtual score 1:0)":rawPick);
+    const pick=safe(rawPick);
     const odds=x.odds==null?"—":safe(x.odds);
     const confidence=x.confidence==null?"—":safe(x.confidence);
     const score=Number.isFinite(Number(x.homeScore))&&Number.isFinite(Number(x.awayScore))&&x.homeScore!==null&&x.awayScore!==null
