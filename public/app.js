@@ -60,15 +60,32 @@ function settleOutcome(x){
     if(!cs)return "Pending";
     return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
   }
-  // Sportradar soccer market 14 is a three-way European handicap.
-  // hcp=1:0 gives the home side a virtual +1 goal before settlement.
-  if(String(x.marketId)==="14"&&/^hcp=1:0$/.test(String(x.specifier||""))){
-    const outcome=String(x.outcomeId||"");
-    const adjustedHome=hs+1;
-    if(outcome==="1711")return adjustedHome>as?"Won":"Lost";
-    if(outcome==="1712")return adjustedHome===as?"Won":"Lost";
-    if(outcome==="1713")return adjustedHome<as?"Won":"Lost";
-    return "Pending";
+  // European 3-way handicap: hcp=H:A adds the virtual score to the final score.
+  if(String(x.marketId)==="14"){
+    const h=String(x.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+    if(h){
+      const adjustedHome=hs+Number(h[1]),adjustedAway=as+Number(h[2]),outcome=String(x.outcomeId||"");
+      if(outcome==="1711")return adjustedHome>adjustedAway?"Won":"Lost";
+      if(outcome==="1712")return adjustedHome===adjustedAway?"Won":"Lost";
+      if(outcome==="1713")return adjustedHome<adjustedAway?"Won":"Lost";
+      const pick=String(x.pick||x.selection||"").toLowerCase();
+      if(/\bhome\b/.test(pick))return adjustedHome>adjustedAway?"Won":"Lost";
+      if(/\baway\b/.test(pick))return adjustedAway>adjustedHome?"Won":"Lost";
+      if(/\bdraw\b/.test(pick))return adjustedHome===adjustedAway?"Won":"Lost";
+    }
+  }
+  // Asian handicap: signed lines stay fractional; quarter lines are split across adjacent lines.
+  if(String(x.marketId)==="16"||/asian handicap/i.test(String(x.market||""))){
+    const pick=String(x.pick||x.selection||"").toLowerCase();
+    const side=/\baway\b/.test(pick)?"away":/\bhome\b/.test(pick)?"home":"";
+    const labelLine=String(x.pick||x.selection||"").match(/\b(?:home|away)\s*([+-]\d+(?:\.\d+)?)/i);
+    const specLine=String(x.specifier||"").match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
+    const line=labelLine?Number(labelLine[1]):specLine?(side==="away"?-Number(specLine[1]):Number(specLine[1])):NaN;
+    if(side&&Number.isFinite(line)){
+      const diff=(hs-as)+(side==="home"?line:-line);
+      if(Math.abs(diff)<1e-9)return "Void";
+      return (side==="home"?diff:-diff)>0?"Won":"Lost";
+    }
   }
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(m){const line=Number(m[1]);return total===line?"Void":total>line?"Won":"Lost";}
