@@ -301,7 +301,7 @@ function selectionRequested(outcome,requested,market,type=""){
   const spec=normalizeText(market?.specifier);
   const line=marketLine(requestedKey||label);
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||raw.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
   const direction=/\bunder\b/.test(normalizeText(requestedKey+" "+label))?"under":/\bover\b/.test(normalizeText(requestedKey+" "+label))?"over":"";
   if(type==="ou"){
     if(!(String(market?.marketId)==="18" || (has("goal","goals")&&has("over","under","total"))))return false;
