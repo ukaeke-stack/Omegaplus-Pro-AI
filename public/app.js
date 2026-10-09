@@ -137,7 +137,35 @@ async function refreshHistory(date=historySelectedDate()){
       if(rr.ok)resultRows=rr.results||resultRows;
     }catch{}
     const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
+    const teamKey=v=>norm(v).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t)).join(" ");
+    const teamScore=(a,b)=>{
+      const x=teamKey(a),y=teamKey(b);if(!x||!y)return 0;if(x===y)return 1;
+      if(x.includes(y)||y.includes(x))return Math.min(x.length,y.length)/Math.max(x.length,y.length)+0.12;
+      const xt=new Set(x.split(" ")),yt=new Set(y.split(" "));let common=0;for(const t of xt)if(yt.has(t))common++;
+      return common/Math.max(1,new Set([...xt,...yt]).size);
+    };
+    const findResult=x=>{
+      const byId=resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId));
+      if(byId)return byId;
+      const candidates=resultRows.map(r=>{
+        const dateOK=!r.date||r.date==="Invalid Date"||String(r.date)===String(date);
+        const hs=teamScore(r.home,x.home),as=teamScore(r.away,x.away);
+        const reverseHs=teamScore(r.home,x.away),reverseAs=teamScore(r.away,x.home);
+        const normal=hs>=0.68&&as>=0.68?Math.min(hs,as):0;
+        const reversed=reverseHs>=0.68&&reverseAs>=0.68?Math.min(reverseHs,reverseAs):0;
+        const orientation=reversed>normal?"reversed":"normal";
+        let score=Math.max(normal,reversed);
+        if(x.league&&r.league&&norm(x.league)===norm(r.league))score+=0.04;
+        const xt=Number(x.startTimeMs||0),rt=Number(r.startingAt||0)*1000;
+        if(xt&&rt&&Math.abs(xt-rt)<=3*60*60*1000)score+=0.03;
+        return {r,score,orientation,dateOK};
+      }).filter(c=>c.dateOK&&c.score>=0.68).sort((a,b)=>b.score-a.score);
+      if(!candidates.length)return null;
+      if(candidates.length>1&&candidates[0].score-candidates[1].score<0.035)return null;
+      const best=candidates[0];
+      if(best.orientation==="reversed")return {...best.r,homeScore:best.r.awayScore,awayScore:best.r.homeScore};
+      return best.r;
+    };
     let live=new Map();
     try{
       const liveData=await jsonFetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
