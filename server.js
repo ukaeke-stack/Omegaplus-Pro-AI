@@ -1,6 +1,7 @@
 import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
-import {put,get} from "@vercel/blob";
+import {get} from "@vercel/blob";
+import {initHistoryStore,readHistoryArchive,saveHistoryArchive} from "./history-store.js";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -60,6 +61,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
 initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
+initHistoryStore().then(ok=>console.log("Central history database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
@@ -75,18 +77,24 @@ const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
-const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
-function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
-function localArchivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return path.join(LOCAL_DATA_ROOT,ARCHIVE_PREFIX,date.slice(0,4),date.slice(5,7),date.slice(8,10)+suffix+".json")}
 const blobConfigured=Boolean(process.env.BLOB_READ_WRITE_TOKEN||(process.env.VERCEL_OIDC_TOKEN&&process.env.BLOB_STORE_ID));
 async function readPersistentArchive(date,sport="football"){
-  if(blobConfigured){try{const x=await get(archivePath(date,sport),{access:"private",useCache:false});return JSON.parse(await new Response(x.stream).text())}catch{}}
-  try{return JSON.parse(await fs.readFile(localArchivePath(date,sport),"utf8"))}catch{return null}
+  // PostgreSQL is the authoritative shared store. If an older Blob archive exists,
+  // import it once into PostgreSQL; never silently fall back to ephemeral server files.
+  const stored=await readHistoryArchive(date,sport);
+  if(stored)return stored;
+  if(blobConfigured){
+    try{
+      const x=await get(ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+(sport==="football"?"":"-"+sport)+".json",{access:"private",useCache:false});
+      const legacy=JSON.parse(await new Response(x.stream).text());
+      if(legacy&&typeof legacy==="object")return await saveHistoryArchive(date,sport,legacy);
+    }catch{}
+  }
+  return null;
 }
 async function writePersistentArchive(date,data,sport="football"){
-  const payload=JSON.stringify(data);
-  if(blobConfigured){try{return await put(archivePath(date,sport),payload,{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}catch{}}
-  const file=localArchivePath(date,sport);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,payload,"utf8");return {url:"local://"+file};
+  const saved=await saveHistoryArchive(date,sport,data);
+  return {storage:"postgresql",archive:saved};
 }
 
 
@@ -594,8 +602,8 @@ async function getDayFixtures(date,force=false,sport="football"){
 app.get("/api/scan",async(req,r)=>{
   try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
-app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
-app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.correctScores))next.correctScores=req.body.correctScores.slice(0,5);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"postgresql"})}catch(e){console.error("History read failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}});
+app.post("/api/history",async(_req,r)=>r.status(405).json({ok:false,error:"History is server-managed and read-only from the public app."}));
 app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
