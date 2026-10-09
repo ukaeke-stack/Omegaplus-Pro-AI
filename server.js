@@ -1,7 +1,6 @@
 import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
-import {get} from "@vercel/blob";
-import {initHistoryStore,readHistoryArchive,saveHistoryArchive} from "./history-store.js";
+import {get,put} from "@vercel/blob";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -11,7 +10,6 @@ import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMes
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
 import path from "node:path";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
 async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
@@ -61,7 +59,6 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
 initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
-initHistoryStore().then(ok=>console.log("Central history database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
@@ -78,23 +75,16 @@ const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
 const blobConfigured=Boolean(process.env.BLOB_READ_WRITE_TOKEN||(process.env.VERCEL_OIDC_TOKEN&&process.env.BLOB_STORE_ID));
+function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
 async function readPersistentArchive(date,sport="football"){
-  // PostgreSQL is the authoritative shared store. If an older Blob archive exists,
-  // import it once into PostgreSQL; never silently fall back to ephemeral server files.
-  const stored=await readHistoryArchive(date,sport);
-  if(stored)return stored;
-  if(blobConfigured){
-    try{
-      const x=await get(ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+(sport==="football"?"":"-"+sport)+".json",{access:"private",useCache:false});
-      const legacy=JSON.parse(await new Response(x.stream).text());
-      if(legacy&&typeof legacy==="object")return await saveHistoryArchive(date,sport,legacy);
-    }catch{}
-  }
-  return null;
+  if(!blobConfigured)throw new Error("Central online history storage is not configured. Check the Vercel Blob token.");
+  const item=await get(archivePath(date,sport),{access:"private",useCache:false});
+  if(!item)return null;
+  return JSON.parse(await new Response(item.stream).text());
 }
 async function writePersistentArchive(date,data,sport="football"){
-  const saved=await saveHistoryArchive(date,sport,data);
-  return {storage:"postgresql",archive:saved};
+  if(!blobConfigured)throw new Error("Central online history storage is not configured. Check the Vercel Blob token.");
+  return put(archivePath(date,sport),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"});
 }
 
 
