@@ -290,7 +290,17 @@ function pickLabel(type,outcome){
     const x=raw.toLowerCase();
     return x.includes("home")?"HT Home":x.includes("draw")?"HT Draw":x.includes("away")?"HT Away":raw;
   }
-  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
+  if(type==="handicap"){
+    // Market 14 uses a score handicap (e.g. hcp=1:0), not a signed Asian line.
+    const h=raw.match(/^(.*?)\s*\(([-+]?\d+)\s*:\s*([-+]?\d+)\)$/);
+    if(h){
+      const homeLine=Number(h[2])-Number(h[3]);
+      const signed=homeLine>0?"+"+homeLine:String(homeLine);
+      return h[1]+" ("+(homeLine>=0?"European handicap home "+signed:"European handicap home "+signed)+ "; virtual score "+h[2]+":"+h[3]+")";
+    }
+    return raw||"Handicap (line not supplied)";
+  }
+  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":"Over/Under");
 }
 function selectionRequested(outcome,requested,market,type=""){
   const req=String(requested||"");
