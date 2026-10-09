@@ -150,6 +150,9 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
     }catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
+    const responseEventCount=tournaments.reduce((n,t)=>n+(t.events||[]).length,0);
+    const responseMarketCount=tournaments.reduce((n,t)=>n+(t.events||[]).reduce((m,e)=>m+(e.markets||[]).length,0),0);
+    if(page===1) console.log("SportyBet fixture diagnostic",JSON.stringify({sport:sportDef.id,sportId:sportDef.sportId,marketKey,todayOnly,page,tournamentCount:tournaments.length,eventCount:responseEventCount,marketCount:responseMarketCount,sample:tournaments.slice(0,3).map(t=>({league:t.name,category:t.categoryName,events:(t.events||[]).slice(0,2).map(e=>({home:e.homeTeamName,away:e.awayTeamName,startTimeMs:e.estimateStartTime,markets:(e.markets||[]).slice(0,5).map(m=>({id:m.id,name:m.desc||m.name,outcomes:(m.outcomes||[]).length}))}))}))}));
     for(const tournament of tournaments){
       for(const event of tournament.events||[]){
         pageCount++;
