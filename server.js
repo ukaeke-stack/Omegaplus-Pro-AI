@@ -367,7 +367,13 @@ function selectionRequested(outcome,requested,market,type=""){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
-  if(["table_tennis_total_points","tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+  if(type==="table_tennis_total_points"){
+    const range=String(requestedKey||label).match(/^(over|under)_range_(\d+)_([0-9]+)_(\d+)_([0-9]+)$/);
+    if(range){const low=Number(range[2]+"."+range[3]),high=Number(range[4]+"."+range[5]),actual=Number(actualLine);return Number.isFinite(actual)&&actual>=low&&actual<=high&&raw.includes(range[1]);}
+    if(line&&actualLine!==line)return false;
+    return Boolean(direction&&raw.includes(direction));
+  }
+  if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
