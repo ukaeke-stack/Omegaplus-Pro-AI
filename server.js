@@ -291,26 +291,6 @@ function pickLabel(type,outcome){
     return x.includes("home")?"HT Home":x.includes("draw")?"HT Draw":x.includes("away")?"HT Away":raw;
   }
   if(type==="handicap"){
-    const marketId=String(outcome?.marketId||"");
-    const asian=marketId==="16"||/asian handicap/i.test(String(outcome?.marketName||""));
-    const score=raw.match(/\((\d+)\s*:\s*(\d+)\)/)||spec.match(/hcp=(\d+)\s*:\s*(\d+)/i);
-    if(!asian&&score){
-      const homeGoals=Number(score[1]),awayGoals=Number(score[2]);
-      const side=/away|competitor.?2|team.?2/i.test(raw)?"Away":/draw/i.test(raw)?"Draw":"Home";
-      const advantage=side==="Home"?homeGoals-awayGoals:side==="Away"?awayGoals-homeGoals:0;
-      const sideText=side==="Draw"?"Draw after handicap":side+" "+(advantage>0?"+"+advantage:advantage<0?String(advantage):"0");
-      return sideText+" (European 3-way handicap; virtual score "+homeGoals+":"+awayGoals+")";
-    }
-    const side=/away|competitor.?2|team.?2/i.test(raw)?"Away":/draw/i.test(raw)?"Draw":"Home";
-    const rawLine=raw.match(/\(([+-]?\d+(?:\.\d+)?)\)/);
-    const specLine=spec.match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
-    let homeLine=rawLine?Number(rawLine[1]):specLine?Number(specLine[1]):NaN;
-    if(Number.isFinite(homeLine)){
-      const line=side==="Away"?-homeLine:homeLine;
-      const signed=(line>0?"+":"")+line;
-      const effect=line>0?"receives a "+line+"-goal advantage":line<0?"gives away "+Math.abs(line)+" goals":"has no goal advantage";
-      return side+" "+signed+" (Asian Handicap; "+effect+")";
-    }
     return raw||"Handicap (line not supplied)";
   }
   return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":"Over/Under");
@@ -964,42 +944,14 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 });
 
 
-function settleAsianHandicap(diff,line){
-  const quarter=Math.abs(Math.abs(line)%1-0.25)<1e-9||Math.abs(Math.abs(line)%1-0.75)<1e-9;
-  const outcomes=quarter?[diff-0.25,diff+0.25]:[diff];
-  const parts=outcomes.map(v=>Math.abs(v)<1e-9?"Void":v>0?"Won":"Lost");
-  if(parts.length===1)return parts[0];
-  if(parts[0]===parts[1])return parts[0];
-  if(parts.includes("Won")&&parts.includes("Void"))return "Half Won";
-  if(parts.includes("Lost")&&parts.includes("Void"))return "Half Lost";
-  return "Void";
-}
 function serverSettlePrediction(p,result){
   if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
   const status=String(result.status||"").toLowerCase();
   if(/postpon|cancel|void|abandon/.test(status)) return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
   if(!/finished|full time|ended|complete|ft|final/.test(status)) return "Pending";
   const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as,pick=String(p.pick||"").toLowerCase();
-  if(String(p.marketId)==="14"||/european.*handicap/.test(String(p.pick||""))){
-    const h=String(p.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
-    if(h){
-      const adjustedHome=hs+Number(h[1]),adjustedAway=as+Number(h[2]);
-      const side=String(p.outcomeId||"")==="1711"?"home":String(p.outcomeId||"")==="1712"?"draw":String(p.outcomeId||"")==="1713"?"away":/draw/.test(pick)?"draw":/away/.test(pick)?"away":/home/.test(pick)?"home":"");
-      if(side==="home")return adjustedHome>adjustedAway?"Won":"Lost";
-      if(side==="draw")return adjustedHome===adjustedAway?"Won":"Lost";
-      if(side==="away")return adjustedAway>adjustedHome?"Won":"Lost";
-    }
-  }
-  if(String(p.marketId)==="16"||/asian handicap/.test(String(p.market||""))){
-    const labelLine=String(p.pick||"").match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/i);
-    const specLine=String(p.specifier||"").match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
-    const side=labelLine?labelLine[1].toLowerCase():/away/.test(pick)?"away":/home/.test(pick)?"home":"";
-    const line=labelLine?Number(labelLine[2]):specLine?(side==="away"?-Number(specLine[1]):Number(specLine[1])):NaN;
-    if(side&&Number.isFinite(line)){
-      const diff=side==="home"?(hs-as)+line:(as-hs)+line;
-      return settleAsianHandicap(diff,line);
-    }
-  }
+
+
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(over) return total>Number(over[1])?"Won":"Lost";
   if(under) return total<Number(under[1])?"Won":"Lost";
