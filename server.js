@@ -966,7 +966,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 
 function settleAsianHandicap(diff,line){
   const quarter=Math.abs(Math.abs(line)%1-0.25)<1e-9||Math.abs(Math.abs(line)%1-0.75)<1e-9;
-  const outcomes=quarter?[diff+(line>0?-0.25:0.25),diff+(line>0?0.25:-0.25)]:[diff];
+  const outcomes=quarter?[diff-0.25,diff+0.25]:[diff];
   const parts=outcomes.map(v=>Math.abs(v)<1e-9?"Void":v>0?"Won":"Lost");
   if(parts.length===1)return parts[0];
   if(parts[0]===parts[1])return parts[0];
