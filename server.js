@@ -374,7 +374,7 @@ function selectionRequested(outcome,requested,market,type=""){
   const spec=normalizeText(market?.specifier);
   const line=marketLine(requestedKey||label);
   const has=(...terms)=>terms.some(x=>n.includes(normalizeText(x)));
-  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
+  const actualLine=(spec.match(/[0-9]+(?:\.[0-9]+)?/)||n.match(/[0-9]+(?:\.[0-9]+)?/)||raw.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||"";
   const direction=/\bunder\b/.test(normalizeText(requestedKey+" "+label))?"under":/\bover\b/.test(normalizeText(requestedKey+" "+label))?"over":"";
   if(type==="ou"){
     if(!(String(market?.marketId)==="18" || (has("goal","goals")&&has("over","under","total"))))return false;
@@ -441,6 +441,10 @@ function selectionRequested(outcome,requested,market,type=""){
     return raw===want||raw.includes(want);
   }
   if(["table_tennis_total_points","tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+    if(type==="table_tennis_total_points"&&requestedKey){
+      const range=requestedKey.match(/^(over|under)_range_(\d+)_(\d+)_to_(\d+)_(\d+)$/);
+      if(range){const low=Number(range[2]+"."+range[3]),high=Number(range[4]+"."+range[5]);const outcomeLine=Number(actualLine||((raw.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||0));return range[1]===direction&&Boolean(direction)&&Number.isFinite(outcomeLine)&&outcomeLine>=low&&outcomeLine<=high&&raw.includes(direction)}
+    }
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
