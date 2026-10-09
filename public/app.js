@@ -82,9 +82,14 @@ function settleOutcome(x){
     const specLine=String(x.specifier||"").match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
     const line=labelLine?Number(labelLine[1]):specLine?(side==="away"?-Number(specLine[1]):Number(specLine[1])):NaN;
     if(side&&Number.isFinite(line)){
-      const diff=(hs-as)+(side==="home"?line:-line);
-      if(Math.abs(diff)<1e-9)return "Void";
-      return (side==="home"?diff:-diff)>0?"Won":"Lost";
+      const diff=side==="home"?(hs-as)+line:(as-hs)+line;
+      const quarter=Math.abs(Math.abs(line)%1-0.25)<1e-9||Math.abs(Math.abs(line)%1-0.75)<1e-9;
+      const parts=(quarter?[diff-0.25,diff+0.25]:[diff]).map(v=>Math.abs(v)<1e-9?"Void":v>0?"Won":"Lost");
+      if(parts.length===1)return parts[0];
+      if(parts[0]===parts[1])return parts[0];
+      if(parts.includes("Won")&&parts.includes("Void"))return "Half Won";
+      if(parts.includes("Lost")&&parts.includes("Void"))return "Half Lost";
+      return "Void";
     }
   }
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
