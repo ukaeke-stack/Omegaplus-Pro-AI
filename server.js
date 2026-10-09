@@ -291,12 +291,25 @@ function pickLabel(type,outcome){
     return x.includes("home")?"HT Home":x.includes("draw")?"HT Draw":x.includes("away")?"HT Away":raw;
   }
   if(type==="handicap"){
-    // Market 14 uses a score handicap (e.g. hcp=1:0), not a signed Asian line.
-    const h=raw.match(/^(.*?)\s*\(([-+]?\d+)\s*:\s*([-+]?\d+)\)$/);
-    if(h){
-      const homeLine=Number(h[2])-Number(h[3]);
-      const signed=homeLine>0?"+"+homeLine:String(homeLine);
-      return h[1]+" ("+(homeLine>=0?"European handicap home "+signed:"European handicap home "+signed)+ "; virtual score "+h[2]+":"+h[3]+")";
+    const marketId=String(outcome?.marketId||"");
+    const asian=marketId==="16"||/asian handicap/i.test(String(outcome?.marketName||""));
+    const score=raw.match(/\((\d+)\s*:\s*(\d+)\)/)||spec.match(/hcp=(\d+)\s*:\s*(\d+)/i);
+    if(!asian&&score){
+      const homeGoals=Number(score[1]),awayGoals=Number(score[2]);
+      const side=/away|competitor.?2|team.?2/i.test(raw)?"Away":/draw/i.test(raw)?"Draw":"Home";
+      const advantage=side==="Home"?homeGoals-awayGoals:side==="Away"?awayGoals-homeGoals:0;
+      const sideText=side==="Draw"?"Draw after handicap":side+" "+(advantage>0?"+"+advantage:advantage<0?String(advantage):"0");
+      return sideText+" (European 3-way handicap; virtual score "+homeGoals+":"+awayGoals+")";
+    }
+    const side=/away|competitor.?2|team.?2/i.test(raw)?"Away":/draw/i.test(raw)?"Draw":"Home";
+    const rawLine=raw.match(/\(([+-]?\d+(?:\.\d+)?)\)/);
+    const specLine=spec.match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
+    let homeLine=rawLine?Number(rawLine[1]):specLine?Number(specLine[1]):NaN;
+    if(Number.isFinite(homeLine)){
+      const line=side==="Away"?-homeLine:homeLine;
+      const signed=(line>0?"+":"")+line;
+      const effect=line>0?"receives a "+line+"-goal advantage":line<0?"gives away "+Math.abs(line)+" goals":"has no goal advantage";
+      return side+" "+signed+" (Asian Handicap; "+effect+")";
     }
     return raw||"Handicap (line not supplied)";
   }
@@ -951,12 +964,37 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 });
 
 
+function settleHandicapLine(diff){
+  if(Math.abs(diff)<1e-9)return "Void";
+  return diff>0?"Won":"Lost";
+}
 function serverSettlePrediction(p,result){
   if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
   const status=String(result.status||"").toLowerCase();
   if(/postpon|cancel|void|abandon/.test(status)) return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
   if(!/finished|full time|ended|complete|ft|final/.test(status)) return "Pending";
   const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as,pick=String(p.pick||"").toLowerCase();
+  if(String(p.marketId)==="14"||/european.*handicap/.test(String(p.pick||""))){
+    const h=String(p.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+    if(h){
+      const adjustedHome=hs+Number(h[1]),adjustedAway=as+Number(h[2]);
+      const side=String(p.outcomeId||"")==="1711"?"home":String(p.outcomeId||"")==="1712"?"draw":String(p.outcomeId||"")==="1713"?"away":/draw/.test(pick)?"draw":/away/.test(pick)?"away":/home/.test(pick)?"home":"");
+      if(side==="home")return adjustedHome>adjustedAway?"Won":"Lost";
+      if(side==="draw")return adjustedHome===adjustedAway?"Won":"Lost";
+      if(side==="away")return adjustedAway>adjustedHome?"Won":"Lost";
+    }
+  }
+  if(String(p.marketId)==="16"||/asian handicap/.test(String(p.market||""))){
+    const labelLine=String(p.pick||"").match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/i);
+    const specLine=String(p.specifier||"").match(/hcp=([+-]?\d+(?:\.\d+)?)/i);
+    const side=labelLine?labelLine[1].toLowerCase():/away/.test(pick)?"away":/home/.test(pick)?"home":"";
+    const line=labelLine?Number(labelLine[2]):specLine?(side==="away"?-Number(specLine[1]):Number(specLine[1])):NaN;
+    if(side&&Number.isFinite(line)){
+      const diff=(hs-as)+(side==="home"?line:-line);
+      if(Math.abs(diff)<1e-9)return "Void";
+      return (side==="home"?diff:-diff)>0?"Won":"Lost";
+    }
+  }
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(over) return total>Number(over[1])?"Won":"Lost";
   if(under) return total<Number(under[1])?"Won":"Lost";
