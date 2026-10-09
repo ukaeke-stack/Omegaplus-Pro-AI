@@ -60,6 +60,16 @@ function settleOutcome(x){
     if(!cs)return "Pending";
     return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
   }
+  // Sportradar soccer market 14 is a three-way European handicap.
+  // hcp=1:0 gives the home side a virtual +1 goal before settlement.
+  if(String(x.marketId)==="14"&&/^hcp=1:0$/.test(String(x.specifier||""))){
+    const outcome=String(x.outcomeId||"");
+    const adjustedHome=hs+1;
+    if(outcome==="1711")return adjustedHome>as?"Won":"Lost";
+    if(outcome==="1712")return adjustedHome===as?"Won":"Lost";
+    if(outcome==="1713")return adjustedHome<as?"Won":"Lost";
+    return "Pending";
+  }
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
   if(m){const line=Number(m[1]);return total===line?"Void":total>line?"Won":"Lost";}
   if(u){const line=Number(u[1]);return total===line?"Void":total<line?"Won":"Lost";}
