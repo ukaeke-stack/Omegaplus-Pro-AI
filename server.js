@@ -1027,8 +1027,8 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
 app.get("/api/daily-best",async(req,r)=>{try{
   const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
   const existing=await readPersistentArchive(date,sport);
-  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(existing.predictions)&&(existing.predictions.length!==10||(existing.dailyCombinedOdds>=10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))))
-    return r.json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),combinedOdds:existing.dailyCombinedOdds,shortfall:0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
+  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(existing.predictions)&&((existing.predictions.length===10&&Number(existing.dailyCombinedOdds)>=10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(existing.predictions.length===0&&Boolean(existing.dailyMessage))))
+    return r.json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),combinedOdds:Number(existing.dailyCombinedOdds)||0,shortfall:Number(existing.dailyShortfall)||0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
   const built=await buildDailyBest(date,sport),predictions=built.predictions||[];
   const archive=existing||{date,sport,predictions:[],results:[]};
   archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;
