@@ -70,7 +70,8 @@ async function fotmobDate(date){
       const st=m.status||{},reason=String(st.reason?.long||st.reason?.short||"").toLowerCase();
       let status=st.cancelled?( /postpon/.test(reason)?"Postponed":"Void"):st.finished?"Finished":st.started?"Live":"Pending";
       if(/postpon/.test(reason))status="Postponed";else if(/cancel|void|abandon/.test(reason))status="Void";
-      let hs=Number(m.home?.score),as=Number(m.away?.score);
+      const rawHome=m.home?.score,rawAway=m.away?.score;
+      let hs=rawHome==null||rawHome===""?NaN:Number(rawHome),as=rawAway==null||rawAway===""?NaN:Number(rawAway);
       if(!Number.isFinite(hs)||!Number.isFinite(as)){
         const score=String(st.scoreStr||"").match(/(\d+)\s*[-–:]\s*(\d+)/);
         if(score){hs=Number(score[1]);as=Number(score[2]);}
