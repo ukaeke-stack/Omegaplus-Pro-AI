@@ -605,7 +605,7 @@ app.get("/api/history",async(req,r)=>{
       if(resultRows.length){
         let changed=false;
         const settleRows=rows=>(Array.isArray(rows)?rows:[]).map(p=>{
-          const result=matchArchiveResult(p,resultRows);
+          const result=matchArchiveResult(p,resultRows,date);
           if(!result)return p;
           const status=String(result.status||"");
           const outcome=serverSettlePrediction(p,result);
@@ -987,7 +987,7 @@ function archiveTeamScore(a,b){
   const common=x.filter(t=>y.includes(t)).length;
   return common/Math.max(1,new Set([...x,...y]).size);
 }
-function matchArchiveResult(p,results){
+function matchArchiveResult(p,results,date){
   if(p.resultProviderId){
     const byProvider=results.find(x=>String(x.providerId||"")===String(p.resultProviderId));
     if(byProvider)return byProvider;
@@ -1005,7 +1005,7 @@ function matchArchiveResult(p,results){
     if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.04;
     const pt=Number(p.startTimeMs||0),rt=Number(x.startingAt||0)*1000;
     if(pt&&rt&&Math.abs(pt-rt)<=3*60*60*1000)score+=0.03;
-    const dateOk=!x.date||x.date==="Invalid Date"||String(x.date)===String(p.date||"");
+    const dateOk=!x.date||x.date==="Invalid Date"||String(x.date)===String(date);
     return {result:x,score,reversed:reversed>normal,dateOk};
   }).filter(x=>x.dateOk&&x.score>=0.68).sort((a,b)=>b.score-a.score);
   if(!candidates.length||(candidates.length>1&&candidates[0].score-candidates[1].score<0.035))return null;
