@@ -70,8 +70,23 @@ function settleOutcome(x){
   if(/home or draw|1x/.test(pick))return hs>=as?"Won":"Lost";
   if(/home or away|12/.test(pick))return hs!==as?"Won":"Lost";
   if(/draw or away|x2/.test(pick))return as>=hs?"Won":"Lost";
-  if(/home/.test(pick)&&!/handicap/.test(pick))return hs>as?"Won":"Lost";
-  if(/away/.test(pick)&&!/handicap/.test(pick))return as>hs?"Won":"Lost";
+  // European handicap score, e.g. "Home (1:0)", adds the displayed
+  // virtual score before evaluating Home/Draw/Away.
+  const europeanHcp=pick.match(/\((\d+)\s*:\s*(\d+)\)/)||String(x.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+  if(europeanHcp&&(String(x.marketType||"")==="handicap"||/handicap/i.test(String(x.market||""))||/hcp=/i.test(String(x.specifier||"")))){
+    const ah=hs+Number(europeanHcp[1]),aa=as+Number(europeanHcp[2]);
+    if(/\bhome\b/.test(pick))return ah>aa?"Won":"Lost";
+    if(/\bdraw\b/.test(pick))return ah===aa?"Won":"Lost";
+    if(/\baway\b/.test(pick))return aa>ah?"Won":"Lost";
+    return "Pending";
+  }
+  const asianHcp=pick.match(/\b(home|away)\s*\(([+-]\d+(?:\.\d+)?)\)/)||pick.match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/);
+  if(asianHcp&&(String(x.marketType||"")==="handicap"||/handicap/i.test(String(x.market||"")))){
+    const side=asianHcp[1],line=Number(asianHcp[2]),adjusted=(side==="home"?hs:as)+line,opponent=side==="home"?as:hs;
+    return adjusted===opponent?"Void":adjusted>opponent?"Won":"Lost";
+  }
+  if(/home/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick))return as>hs?"Won":"Lost";
   if(/draw|tie/.test(pick))return hs===as?"Won":"Lost";
   return "Pending";
 }
