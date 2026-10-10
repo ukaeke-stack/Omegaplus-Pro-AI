@@ -200,6 +200,7 @@ function independentConfidence(stats,type){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
     if(type==="over2.5")vals.push((f.homeOver25+f.awayOver25)/2*100);
     if(type==="btts")vals.push((f.homeBtts+f.awayBtts)/2*100);
+    if(type==="btts_no")vals.push(100-((f.homeBtts+f.awayBtts)/2*100));
     if(type==="home")vals.push(f.homeWinRate*100);
     if(type==="away")vals.push(f.awayWinRate*100);
   }
@@ -211,6 +212,7 @@ function independentConfidence(stats,type){
     if(type==="over1.5")vals.push(clamp(poissonOver(1)*100));
     if(type==="over2.5")vals.push(clamp(poissonOver(2)*100));
     if(type==="btts")vals.push(clamp((1-Math.exp(-eh))*(1-Math.exp(-ea))*100));
+    if(type==="btts_no")vals.push(100-clamp((1-Math.exp(-eh))*(1-Math.exp(-ea))*100));
   }
   return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
 }
@@ -219,11 +221,11 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
     const stats=await independentStatsForFixture(p);
     const type=p.marketType==="ou"&&/^over\s*1\.5$/i.test(p.pick)?"over1.5":
       p.marketType==="ou"&&/^over\s*2\.5$/i.test(p.pick)?"over2.5":
-      p.marketType==="btts"?"btts":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
+      p.marketType==="btts"?(/\bno\b/i.test(p.pick||"")?"btts_no":"btts"):/\bdraw\b/i.test(p.pick||"")?"draw":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
     const independent=independentConfidence(stats,type);
     const market=Number(p.confidence)||0;
     const modelHome=stats.models?.probabilities?.home;
-    const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
+    const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="draw"?stats.models?.probabilities?.draw:type==="btts_no"?(stats.models?.probabilities?.btts==null?null:100-stats.models.probabilities.btts):type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
     const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
     const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
     return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
