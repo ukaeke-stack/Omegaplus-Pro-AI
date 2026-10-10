@@ -611,12 +611,14 @@ app.get("/api/history",async(req,r)=>{
           const outcome=serverSettlePrediction(p,result);
           const updated={...p,status:result.status||p.status,homeScore:result.homeScore??p.homeScore,awayScore:result.awayScore??p.awayScore,resultProviderId:result.providerId||p.resultProviderId,sources:result.sources||p.sources,verificationStatus:result.verificationStatus||p.verificationStatus,verificationCount:result.verificationCount||p.verificationCount};
           if(outcome!=="Pending"||result.verificationStatus==="conflict")updated.outcome=outcome;
-          if(updated.outcome!==p.outcome||updated.status!==p.status||updated.homeScore!==p.homeScore||updated.awayScore!==p.awayScore||updated.verificationStatus!==p.verificationStatus||updated.resultProviderId!==p.resultProviderId)changed=true;
+          if(updated.outcome!==p.outcome||updated.status!==p.status||updated.homeScore!==p.homeScore||updated.awayScore!==p.awayScore||updated.verificationStatus!==p.verificationStatus||updated.resultProviderId!==p.resultProviderId||updated.verificationCount!==p.verificationCount||JSON.stringify(updated.sources||[])!==JSON.stringify(p.sources||[]))changed=true;
           return updated;
         });
         const predictions=settleRows(archive.predictions);
         const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
-        if(changed){
+        const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
+        const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
+        if(changed||resultsChanged){
           archive.predictions=predictions;
           archive.correctScores=correctScores;
           archive.results=resultRows;
@@ -988,27 +990,33 @@ function archiveTeamScore(a,b){
   return common/Math.max(1,new Set([...x,...y]).size);
 }
 function matchArchiveResult(p,results,date){
-  if(p.resultProviderId){
-    const byProvider=results.find(x=>String(x.providerId||"")===String(p.resultProviderId));
-    if(byProvider)return byProvider;
-  }
-  if(p.eventId){
-    const byEvent=results.find(x=>String(x.eventId||x.fixtureId||"")===String(p.eventId));
-    if(byEvent)return byEvent;
-  }
-  const candidates=results.map(x=>{
+  // Provider IDs are not globally interchangeable. Validate teams and local date
+  // before trusting an ID, otherwise coincidental IDs can settle the wrong pick.
+  const candidates=(Array.isArray(results)?results:[]).map(x=>{
+    const resultDate=String(x.date||"");
+    const dateOk=!/^\\d{4}-\\d{2}-\\d{2}$/.test(resultDate)||resultDate===String(date);
+    if(!dateOk)return {result:x,score:0,reversed:false,dateOk:false};
     const normalHome=archiveTeamScore(p.home,x.home),normalAway=archiveTeamScore(p.away,x.away);
     const reversedHome=archiveTeamScore(p.home,x.away),reversedAway=archiveTeamScore(p.away,x.home);
     const normal=normalHome>=0.68&&normalAway>=0.68?Math.min(normalHome,normalAway):0;
     const reversed=reversedHome>=0.68&&reversedAway>=0.68?Math.min(reversedHome,reversedAway):0;
+    const isReversed=reversed>normal;
     let score=Math.max(normal,reversed);
-    if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.04;
+    if(score===0)return {result:x,score:0,reversed:isReversed,dateOk:true};
+    if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.05;
     const pt=Number(p.startTimeMs||0),rt=Number(x.startingAt||0)*1000;
-    if(pt&&rt&&Math.abs(pt-rt)<=3*60*60*1000)score+=0.03;
-    const dateOk=!x.date||x.date==="Invalid Date"||String(x.date)===String(date);
-    return {result:x,score,reversed:reversed>normal,dateOk};
+    if(pt&&rt){
+      const delta=Math.abs(pt-rt);
+      if(delta>18*60*60*1000)return {result:x,score:0,reversed:isReversed,dateOk:true};
+      if(delta<=3*60*60*1000)score+=0.04;
+    }
+    if(p.resultProviderId&&String(x.providerId||"")===String(p.resultProviderId))score+=0.12;
+    if(p.eventId&&String(x.eventId||x.fixtureId||"")===String(p.eventId))score+=0.08;
+    return {result:x,score,reversed:isReversed,dateOk:true};
   }).filter(x=>x.dateOk&&x.score>=0.68).sort((a,b)=>b.score-a.score);
-  if(!candidates.length||(candidates.length>1&&candidates[0].score-candidates[1].score<0.035))return null;
+  if(!candidates.length)return null;
+  // Ambiguous team/date matches must stay pending rather than guessing.
+  if(candidates.length>1&&candidates[0].score-candidates[1].score<0.035)return null;
   const best=candidates[0];
   return best.reversed?{...best.result,homeScore:best.result.awayScore,awayScore:best.result.homeScore}:best.result;
 }
