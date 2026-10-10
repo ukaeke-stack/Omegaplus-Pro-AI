@@ -931,10 +931,13 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     const archived=await readPersistentArchive(date,sport);
     const archivedScores=Array.isArray(archived?.correctScores)?archived.correctScores:[];
     const archiveHasRichAnalysis=archivedScores.length>0&&archivedScores.some(x=>x&&(Array.isArray(x.topScores)||x.bestScore||x.expectedGoals));
-    const generatedMs=Date.parse(archived?.correctScoresGeneratedAt||archived?.updatedAt||"");
-    const archiveFresh=Number.isFinite(generatedMs)&&(Date.now()-generatedMs)<2*60*60*1000;
-    if(!forceRefresh&&archiveHasRichAnalysis&&(date<today||archiveFresh)){
-      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt||archived.updatedAt||new Date().toISOString(),count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
+    // Only the Correct Score generation timestamp may determine prediction freshness.
+    // General archive.updatedAt can change when History settles and must never refresh old score picks.
+    const generatedMs=Date.parse(archived?.correctScoresGeneratedAt||"");
+    const hasGenerationTimestamp=Number.isFinite(generatedMs)&&generatedMs>0;
+    const archiveFresh=hasGenerationTimestamp&&(Date.now()-generatedMs)>=0&&(Date.now()-generatedMs)<2*60*60*1000;
+    if(!forceRefresh&&archiveHasRichAnalysis&&hasGenerationTimestamp&&(date<today||archiveFresh)){
+      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt,count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
     }
     const {fixtures}=await getDayFixtures(date,forceRefresh,sport);
     const now=Date.now();
