@@ -105,7 +105,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
   if(!box)return;
   const h=(Array.isArray(rows)?rows:[])
     .filter(x=>(x.sport||"football")===state.sport&&String(x.date||date)===date)
-    .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time||"").localeCompare(String(b.time||"")))
+    .sort((a,b)=>(Number(Boolean(b.isDailyBest))-Number(Boolean(a.isDailyBest)))||(a.isDailyBest&&b.isDailyBest?Number(a.dailyRank||99)-Number(b.dailyRank||99):Number(b.confidence||0)-Number(a.confidence||0))||String(a.time||"").localeCompare(String(b.time||"")))
     .slice(0,50);
   const safe=v=>esc(v==null||v===""?"—":v);
   const sourceText=x=>Array.isArray(x.sources)?x.sources.join(" + "):Array.isArray(x.independentSources)?x.independentSources.join(" + "):typeof x.sources==="string"?x.sources:"Result verification pending";
@@ -128,7 +128,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
       ? " · "+safe(x.homeScore)+"-"+safe(x.awayScore):"";
     return '<article class="history-item" style="display:flex!important;visibility:visible!important;opacity:1!important;color:var(--text,#eef5f0);align-items:center;gap:12px;padding:14px;margin:8px 0;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(255,255,255,.04)">'+
       '<div style="display:grid!important;visibility:visible;gap:5px;min-width:0;flex:1">'+
-      '<small style="display:block;color:#aab8b0">'+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
+      '<small style="display:block;color:#aab8b0">'+(x.isDailyBest?'DAILY BEST #'+safe(x.dailyRank)+' · ':'')+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
       '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
       '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
       '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":x.verificationStatus==="single-source"?" · SINGLE-SOURCE":" · UNVERIFIED")+score+'</small>'+
@@ -144,9 +144,15 @@ async function refreshHistory(date=historySelectedDate()){
     let archive=response.archive||null;
     if(!archive&&date===dateKey(new Date())){
       const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-      archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
+      archive={date,sport:state.sport,predictions:[],dailyBestPredictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    const dailySource=Array.isArray(archive?.dailyBestPredictions)?archive.dailyBestPredictions:
+      (archive?.dailySelectionVersion==="football-core-markets-combo10-v2"&&Array.isArray(archive?.predictions)&&archive.predictions.length===10?archive.predictions:[]);
+    const dailyIds=new Set(dailySource.map(x=>x.id).filter(Boolean));
+    let day=[
+      ...dailySource.slice(0,10).map((x,i)=>({...x,date,sport:state.sport,isDailyBest:true,dailyRank:x.dailyRank||i+1})),
+      ...(archive?.predictions||[]).filter(x=>!dailyIds.has(x.id)).slice(0,10).map(x=>({...x,date,sport:state.sport}))
+    ];
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
     // Use the result snapshot returned with the archive. A separate forced refresh here
