@@ -120,7 +120,9 @@ function renderHistory(date=historySelectedDate(),rows=[]){
       '</div><strong style="display:block;white-space:nowrap;color:var(--green,#18e76b)">'+safe(x.outcome||"Pending")+'</strong></article>';
   }).join("");
 }
+let historyRequestSequence=0;
 async function refreshHistory(date=historySelectedDate()){
+  const requestSequence=++historyRequestSequence;
   $("#historyStatus").textContent="Loading shared online history…";
   try{
     let response=await jsonFetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
@@ -132,10 +134,8 @@ async function refreshHistory(date=historySelectedDate()){
     let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
-    try{
-      const rr=await jsonFetch("/api/results?date="+encodeURIComponent(date)+"&sport="+encodeURIComponent(state.sport)+"&refresh=1");
-      if(rr.ok)resultRows=rr.results||resultRows;
-    }catch{}
+    // Use the result snapshot returned with the archive. A separate forced refresh here
+    // can make the UI settle against different data than the server has persisted.
     const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
     const teamKey=v=>norm(v).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t)).join(" ");
     const teamScore=(a,b)=>{
@@ -170,22 +170,18 @@ async function refreshHistory(date=historySelectedDate()){
       if(best.orientation==="reversed")return {...best.r,homeScore:best.r.awayScore,awayScore:best.r.homeScore};
       return best.r;
     };
-    let live=new Map();
-    try{
-      const liveData=await jsonFetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-      live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
-    }catch{}
     const updateRow=x=>{
-      const y=live.get(x.eventId),z=findResult(x);
-      if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}
+      const z=findResult(x);
       if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}
       x.outcome=settleOutcome(x);
       return x;
     };
+    if(requestSequence!==historyRequestSequence)return;
     day=day.map(updateRow);
     correctScoreRows=correctScoreRows.map(updateRow);
     renderHistory(date,[...day,...correctScoreRows]);
   }catch(e){
+    if(requestSequence!==historyRequestSequence)return;
     renderHistory(date,[]);
     $("#historyStatus").textContent="Could not load shared online history: "+(e.message||"server unavailable")+". Please retry.";
   }
@@ -366,7 +362,6 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
       const eg=x.expectedGoals||{};
       return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league||"")+' · '+esc(x.time||"")+'</div><div class="teams">'+esc(x.home||"")+' <span>vs</span> '+esc(x.away||"")+'</div><div class="pick"><span>Correct score</span><b>'+esc(best.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(prob)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(eg.home ?? "—")+' — '+esc(eg.away ?? "—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", ")||"Independent statistics + market model")+'</small></div><div class="prob"><strong>'+esc(x.confidence ?? prob)+'%</strong><small>best-score confidence</small></div></article>';
     }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
-  try{await refreshHistory(date)}catch{}
   try{await refreshHistory(date)}catch{}
   }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
 }
