@@ -19,7 +19,8 @@ function scoreOf(f){
   const homeId=p.find(x=>x.meta?.location==="home")?.id;
   const awayId=p.find(x=>x.meta?.location==="away")?.id;
   for(const s of Array.isArray(f.scores)?f.scores:[]){
-    const g=Number(s.score?.goals ?? s.goals);
+    const raw=s.score?.goals ?? s.goals;
+    const g=raw===null||raw===undefined||raw===""?NaN:Number(raw);
     if(!Number.isFinite(g)) continue;
     if(String(s.participant_id)===String(homeId)||String(s.description||"").toUpperCase().includes("HOME")) home=g;
     if(String(s.participant_id)===String(awayId)||String(s.description||"").toUpperCase().includes("AWAY")) away=g;
