@@ -90,27 +90,31 @@ async function fotmobDate(date){
 }
 export async function getVerifiedResults(date,force=false,sport="football"){
   if(sport!=="football"){
-    const sofa=await sofaDate(date,sport);
+    // Sofascore remains a supplementary source for non-football sports until a reliable
+    // FotMob/GOAL equivalent is configured for that sport. Do not imply dual verification.
+    let sofa=[];
+    try{sofa=await sofaDate(date,sport)}catch(e){
+      return {date,results:[],sources:{sportmonks:false,sofascore:false,fotmob:false,goalApi:false},providerDiagnostics:{sofascore:{configured:false,count:0,error:e.message,role:"supplementary non-football data"},verificationPolicy:"No reliable primary result feed available for this sport; no automatic settlement."},updatedAt:Date.now(),cached:false};
+    }
     const results=sofa.map(x=>({...x,verificationStatus:x.status==="Finished"?"single-source":"unverified",verificationCount:1,sources:["Sofascore"]}));
-    return {date,results,sources:{sportmonks:false,sofascore:true,fotmob:false},updatedAt:Date.now(),cached:false};
+    return {date,results,sources:{sportmonks:false,sofascore:true,fotmob:false,goalApi:false},providerDiagnostics:{sofascore:{configured:true,count:sofa.length,error:null,role:"supplementary non-football results; single-source only"},verificationPolicy:"Non-football results are single-source and should be treated as lower confidence."},updatedAt:Date.now(),cached:false};
   }
-  let sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:null};
-  let sofa=[],fotmob=[],goal=[],errors={};
-  try{sm=await getDateResults(date,force)}catch(e){sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:e.message};errors.sportmonks=e.message}
-  try{sofa=await sofaDate(date,"football")}catch(e){errors.sofascore=e.message}
+  // Football History settlement uses FotMob and GOAL API only. Sportmonks and
+  // Sofascore remain available for statistics/fixtures elsewhere, but their failures
+  // or score disagreements must not block this result pipeline.
+  let fotmob=[],goal=[];
+  const errors={};
   try{fotmob=await fotmobDate(date)}catch(e){errors.fotmob=e.message}
   let goalProvider={configured:Boolean(process.env.GOAL_API_KEY),data:[],error:null};
   try{goalProvider=await getGoalApiDateResults(date,force);goal=goalProvider.data||[]}catch(e){goalProvider={configured:Boolean(process.env.GOAL_API_KEY),data:[],error:e.message};errors.goalApi=e.message}
-  const combined=combine(sm.configured?sm.data:[],sofa.map(x=>({...x,sources:["Sofascore"]})));
-  const withFotmob=combine(combined,fotmob);
-  const results=combine(withFotmob,goal);
+  const results=combine(fotmob,goal);
   const providerDiagnostics={
-    sportmonks:{configured:Boolean(sm.configured),count:Array.isArray(sm.data)?sm.data.length:0,error:sm.error||errors.sportmonks||null},
-    sofascore:{configured:!errors.sofascore,count:sofa.length,error:errors.sofascore||null},
-    fotmob:{configured:!errors.fotmob,count:fotmob.length,error:errors.fotmob||null},
-    goalApi:{configured:Boolean(goalProvider.configured),count:goal.length,error:goalProvider.error||errors.goalApi||null},
-    verificationPolicy:"Confirmed when independent providers agree; validated single-source finished scores may settle with a lower-confidence label; any disagreement blocks settlement."
+    fotmob:{configured:!errors.fotmob,count:fotmob.length,error:errors.fotmob||null,role:"primary football results and full-time status"},
+    goalApi:{configured:Boolean(goalProvider.configured),count:goal.length,error:goalProvider.error||errors.goalApi||null,role:"independent result confirmation"},
+    sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),usedForSettlement:false,role:"supplementary fixtures/statistics; not used to settle History"},
+    sofascore:{configured:null,usedForSettlement:false,role:"supplementary statistics/form/lineups; not used to settle History"},
+    verificationPolicy:"FotMob and GOAL API agreement confirms a result; validated single-source finished scores may settle with a lower-confidence label; any disagreement blocks settlement."
   };
-  return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:!errors.sofascore,fotmob:!errors.fotmob,goalApi:Boolean(goalProvider.configured)},providerDiagnostics,updatedAt:Date.now(),cached:false};
+  return {date,results,sources:{sportmonks:false,sofascore:false,fotmob:!errors.fotmob,goalApi:Boolean(goalProvider.configured)},providerDiagnostics,updatedAt:Date.now(),cached:false};
 }
 export async function getVerifiedLiveResults(sport="football"){return getVerifiedResults(dayKey(Date.now()),true,sport);}
