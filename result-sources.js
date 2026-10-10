@@ -20,7 +20,7 @@ function scoreOf(e){
   const a=rawA===null||rawA===undefined||rawA===""?NaN:Number(rawA);
   return {homeScore:Number.isFinite(h)?h:null,awayScore:Number.isFinite(a)?a:null};
 }
-function dayKey(ms){return new Date(ms).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});}
+function dayKey(ms){const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Lagos",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date(ms));const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`;}
 async function sofaDate(date,sport="football"){
   const key="sofa:"+sport+":"+date,hit=cache.get(key);
   if(hit&&Date.now()-hit.at<TTL)return hit.data;
@@ -34,7 +34,7 @@ async function sofaDate(date,sport="football"){
   }finally{clearTimeout(t)}
 }
 function same(a,b){const x=norm(a),y=norm(b);return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x));}
-function match(a,b){return same(a.home,b.home)&&same(a.away,b.away);}
+function match(a,b){if(!same(a.home,b.home)||!same(a.away,b.away))return false;const da=String(a.date||""),db=String(b.date||"");if(/^\\d{4}-\\d{2}-\\d{2}$/.test(da)&&/^\\d{4}-\\d{2}-\\d{2}$/.test(db)&&da!==db)return false;const ta=Number(a.startingAt||0),tb=Number(b.startingAt||0);if(ta>0&&tb>0&&Math.abs(ta-tb)>6*60*60)return false;return true;}
 function finished(x){return x?.status==="Finished"&&Number.isFinite(x.homeScore)&&Number.isFinite(x.awayScore);}
 function combine(primary,secondary){
   const out=[];
