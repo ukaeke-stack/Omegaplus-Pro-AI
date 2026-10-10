@@ -1,6 +1,7 @@
 import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
 import {get,put} from "@vercel/blob";
+import pg from "pg";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -74,17 +75,70 @@ const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
+const {Pool}=pg;
+let historyPool=null,historySchemaPromise=null;
 const blobConfigured=Boolean(process.env.BLOB_READ_WRITE_TOKEN||(process.env.VERCEL_OIDC_TOKEN&&process.env.BLOB_STORE_ID));
+function getHistoryPool(){
+  if(!process.env.DATABASE_URL)return null;
+  if(!historyPool){
+    historyPool=new Pool({connectionString:process.env.DATABASE_URL,max:5,idleTimeoutMillis:30000,connectionTimeoutMillis:5000,ssl:process.env.DATABASE_SSL==="false"?false:{rejectUnauthorized:false}});
+    historyPool.on("error",err=>console.error("History PostgreSQL pool error:",err.message));
+  }
+  return historyPool;
+}
+async function ensureHistoryTable(){
+  const pool=getHistoryPool();
+  if(!pool)throw new Error("PostgreSQL is not configured for History.");
+  if(!historySchemaPromise)historySchemaPromise=pool.query(`
+    CREATE TABLE IF NOT EXISTS public.history_archives(
+      archive_date date NOT NULL,
+      sport text NOT NULL DEFAULT 'football',
+      archive jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(archive_date,sport)
+    );
+    CREATE INDEX IF NOT EXISTS history_archives_updated_at_idx ON public.history_archives(updated_at DESC);
+  `).catch(err=>{historySchemaPromise=null;throw err});
+  await historySchemaPromise;
+  return pool;
+}
 function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
-async function readPersistentArchive(date,sport="football"){
-  if(!blobConfigured)throw new Error("Central online history storage is not configured. Check the Vercel Blob token.");
+function validArchiveKey(date,sport){
+  if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)||!/^([a-z0-9_]{1,40})$/.test(sport))throw new Error("Invalid History date or sport.");
+}
+async function readBlobArchive(date,sport="football"){
+  if(!blobConfigured)return null;
   const item=await get(archivePath(date,sport),{access:"private",useCache:false});
   if(!item)return null;
   return JSON.parse(await new Response(item.stream).text());
 }
+async function writeBlobBackup(date,data,sport="football"){
+  if(!blobConfigured)return;
+  try{await put(archivePath(date,sport),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}
+  catch(err){console.warn("History Blob backup failed; PostgreSQL remains authoritative:",err.message)}
+}
+async function readPersistentArchive(date,sport="football"){
+  validArchiveKey(date,sport);
+  const pool=await ensureHistoryTable();
+  const saved=await pool.query("SELECT archive FROM public.history_archives WHERE archive_date=$1::date AND sport=$2",[date,sport]);
+  if(saved.rows.length)return saved.rows[0].archive;
+  // Lazy, non-destructive migration: copy an existing Blob archive to PostgreSQL without deleting the original.
+  const legacy=await readBlobArchive(date,sport);
+  if(legacy){
+    await pool.query("INSERT INTO public.history_archives(archive_date,sport,archive) VALUES($1::date,$2,$3::jsonb) ON CONFLICT(archive_date,sport) DO NOTHING",[date,sport,JSON.stringify(legacy)]);
+    const migrated=await pool.query("SELECT archive FROM public.history_archives WHERE archive_date=$1::date AND sport=$2",[date,sport]);
+    if(migrated.rows.length)return migrated.rows[0].archive;
+  }
+  return null;
+}
 async function writePersistentArchive(date,data,sport="football"){
-  if(!blobConfigured)throw new Error("Central online history storage is not configured. Check the Vercel Blob token.");
-  return put(archivePath(date,sport),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"});
+  validArchiveKey(date,sport);
+  if(!data||typeof data!=="object"||Array.isArray(data))throw new Error("Invalid History archive payload.");
+  const pool=await ensureHistoryTable();
+  await pool.query("INSERT INTO public.history_archives(archive_date,sport,archive,updated_at) VALUES($1::date,$2,$3::jsonb,now()) ON CONFLICT(archive_date,sport) DO UPDATE SET archive=EXCLUDED.archive,updated_at=now()",[date,sport,JSON.stringify(data)]);
+  // Keep the legacy copy as a recoverable backup; PostgreSQL is the source of truth.
+  await writeBlobBackup(date,data,sport);
 }
 
 
@@ -628,7 +682,7 @@ app.get("/api/history",async(req,r)=>{
         }
       }
     }
-    r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"});
+    r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"postgres"});
   }catch(e){console.error("History read/settlement failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}
 });
 app.post("/api/history",async(_req,r)=>r.status(405).json({ok:false,error:"History is server-managed and read-only from the public app."}));
