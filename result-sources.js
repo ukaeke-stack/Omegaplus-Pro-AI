@@ -13,8 +13,10 @@ function statusOf(e){
   return "Pending";
 }
 function scoreOf(e){
-  const h=Number(e?.homeScore?.normaltime??e?.homeScore?.current);
-  const a=Number(e?.awayScore?.normaltime??e?.awayScore?.current);
+  const rawH=e?.homeScore?.normaltime??e?.homeScore?.current;
+  const rawA=e?.awayScore?.normaltime??e?.awayScore?.current;
+  const h=rawH===null||rawH===undefined||rawH===""?NaN:Number(rawH);
+  const a=rawA===null||rawA===undefined||rawA===""?NaN:Number(rawA);
   return {homeScore:Number.isFinite(h)?h:null,awayScore:Number.isFinite(a)?a:null};
 }
 function dayKey(ms){return new Date(ms).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});}
@@ -30,7 +32,7 @@ async function sofaDate(date,sport="football"){
     cache.set(key,{at:Date.now(),data});return data;
   }finally{clearTimeout(t)}
 }
-function same(a,b){const x=norm(a),y=norm(b);return x===y||x.includes(y)||y.includes(x);}
+function same(a,b){const x=norm(a),y=norm(b);return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x));}
 function match(a,b){return same(a.home,b.home)&&same(a.away,b.away);}
 function finished(x){return x?.status==="Finished"&&Number.isFinite(x.homeScore)&&Number.isFinite(x.awayScore);}
 function combine(primary,secondary){
@@ -85,12 +87,19 @@ export async function getVerifiedResults(date,force=false,sport="football"){
     const results=sofa.map(x=>({...x,verificationStatus:x.status==="Finished"?"single-source":"unverified",verificationCount:1,sources:["Sofascore"]}));
     return {date,results,sources:{sportmonks:false,sofascore:true,fotmob:false},updatedAt:Date.now(),cached:false};
   }
-  const sm=await getDateResults(date,force);
-  let sofa=[],fotmob=[];
-  try{sofa=await sofaDate(date,"football")}catch{}
-  try{fotmob=await fotmobDate(date)}catch{}
+  let sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:null};
+  let sofa=[],fotmob=[],errors={};
+  try{sm=await getDateResults(date,force)}catch(e){sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:e.message};errors.sportmonks=e.message}
+  try{sofa=await sofaDate(date,"football")}catch(e){errors.sofascore=e.message}
+  try{fotmob=await fotmobDate(date)}catch(e){errors.fotmob=e.message}
   const combined=combine(sm.configured?sm.data:[],sofa.map(x=>({...x,sources:["Sofascore"]})));
   const results=combine(combined,fotmob);
-  return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:true,fotmob:true},updatedAt:Date.now(),cached:false};
+  const providerDiagnostics={
+    sportmonks:{configured:Boolean(sm.configured),count:Array.isArray(sm.data)?sm.data.length:0,error:sm.error||errors.sportmonks||null},
+    sofascore:{configured:!errors.sofascore,count:sofa.length,error:errors.sofascore||null},
+    fotmob:{configured:!errors.fotmob,count:fotmob.length,error:errors.fotmob||null},
+    verificationPolicy:"Two independent providers must agree on a finished score; any disagreement blocks settlement."
+  };
+  return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:!errors.sofascore,fotmob:!errors.fotmob},providerDiagnostics,updatedAt:Date.now(),cached:false};
 }
 export async function getVerifiedLiveResults(sport="football"){return getVerifiedResults(dayKey(Date.now()),true,sport);}
