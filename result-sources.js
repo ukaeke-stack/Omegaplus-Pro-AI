@@ -109,7 +109,7 @@ export async function getVerifiedResults(date,force=false,sport="football"){
     sofascore:{configured:!errors.sofascore,count:sofa.length,error:errors.sofascore||null},
     fotmob:{configured:!errors.fotmob,count:fotmob.length,error:errors.fotmob||null},
     goalApi:{configured:Boolean(goalProvider.configured),count:goal.length,error:goalProvider.error||errors.goalApi||null},
-    verificationPolicy:"Two independent providers must agree on a finished score; any disagreement blocks settlement."
+    verificationPolicy:"Confirmed when independent providers agree; validated single-source finished scores may settle with a lower-confidence label; any disagreement blocks settlement."
   };
   return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:!errors.sofascore,fotmob:!errors.fotmob,goalApi:Boolean(goalProvider.configured)},providerDiagnostics,updatedAt:Date.now(),cached:false};
 }
