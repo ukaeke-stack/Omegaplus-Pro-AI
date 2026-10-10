@@ -45,7 +45,10 @@ function combine(primary,secondary){
     if(!hit){out.push({...x,sources:incomingSources});continue;}
     hit.sources=[...new Set([...(hit.sources||[]),...incomingSources])];
     if(finished(hit)&&finished(x)){
-      hit.verificationStatus=hit.homeScore===x.homeScore&&hit.awayScore===x.awayScore?"confirmed":"conflict";
+      // Once any independent provider disagrees, never erase that conflict merely
+      // because a later source agrees with one side. Keep it for manual review.
+      hit.verificationStatus=hit.verificationStatus==="conflict"?"conflict":
+        (hit.homeScore===x.homeScore&&hit.awayScore===x.awayScore?"confirmed":"conflict");
     }else if(!hit.verificationStatus){
       hit.verificationStatus="unverified";
     }
