@@ -994,7 +994,7 @@ function matchArchiveResult(p,results,date){
   // before trusting an ID, otherwise coincidental IDs can settle the wrong pick.
   const candidates=(Array.isArray(results)?results:[]).map(x=>{
     const resultDate=String(x.date||"");
-    const dateOk=!/^\\d{4}-\\d{2}-\\d{2}$/.test(resultDate)||resultDate===String(date);
+    const dateOk=!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)||resultDate===String(date);
     if(!dateOk)return {result:x,score:0,reversed:false,dateOk:false};
     const normalHome=archiveTeamScore(p.home,x.home),normalAway=archiveTeamScore(p.away,x.away);
     const reversedHome=archiveTeamScore(p.home,x.away),reversedAway=archiveTeamScore(p.away,x.home);
