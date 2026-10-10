@@ -1,5 +1,5 @@
 const ESPN_BASE="https://site.api.espn.com/apis/site/v2/sports/soccer";
-const TIMEOUT=6000;
+const TIMEOUT=8000;
 const cache=new Map();
 
 function key(v){return String(v||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim()}
@@ -12,7 +12,7 @@ async function fetchJson(url){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),TIMEOUT);
   try{const r=await fetch(url,{headers:{Accept:"application/json","User-Agent":"Omegaplus-Pro-AI/1.0"},signal:c.signal});if(!r.ok)throw new Error("HTTP "+r.status);const d=await r.json();cache.set(url,{at:Date.now(),data:d});return d}catch{return null}finally{clearTimeout(t)}
 }
-function matchTeam(a,b){const x=key(a),y=key(b);return x===y||x.includes(y)||y.includes(x)}
+function matchTeam(a,b){const x=key(a),y=key(b);return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x))}
 function scoreFromEvent(e){return{home:Number(e?.homeScore?.displayValue??e?.homeScore?.value),away:Number(e?.awayScore?.displayValue??e?.awayScore?.value)}}
 function extractStats(events,teamId){
   const finished=(events||[]).filter(e=>e.competitions?.[0]?.status?.type?.completed).slice(-10);
@@ -76,9 +76,20 @@ function marketExpectedGoals(fixture){
   return{home:Math.max(.65,total*share),away:Math.max(.55,total*(1-share))};
 }
 function scoreMatrix(lh,la){
+  // Include a wider score range so high-scoring fixtures are not distorted by truncation.
   const rows=[];
-  for(let h=0;h<=6;h++)for(let a=0;a<=6;a++)rows.push({h,a,p:poisson(h,lh)*poisson(a,la)});
-  const total=rows.reduce((s,x)=>s+x.p,0);return rows.map(x=>({...x,p:x.p/total})).sort((a,b)=>b.p-a.p);
+  for(let h=0;h<=8;h++)for(let a=0;a<=8;a++){
+    let p=poisson(h,lh)*poisson(a,la);
+    // Small low-score correction for the common dependence between 0-0, 1-0, 0-1 and 1-1.
+    const rho=-0.06;
+    if(h===0&&a===0)p*=1-lh*la*rho;
+    else if(h===0&&a===1)p*=1+lh*rho;
+    else if(h===1&&a===0)p*=1+la*rho;
+    else if(h===1&&a===1)p*=1-rho;
+    rows.push({h,a,p:Math.max(0,p)});
+  }
+  const total=rows.reduce((s,x)=>s+x.p,0);
+  return rows.map(x=>({...x,p:total?x.p/total:0})).sort((a,b)=>b.p-a.p);
 }
 export async function analyzeCorrectScores(fixture,independentStats={}){
   const form=independentStats?.sofascore?.form;
@@ -97,8 +108,8 @@ export async function analyzeCorrectScores(fixture,independentStats={}){
   homeGoals=clamp(homeGoals/3,0.25,2.8)*3;awayGoals=clamp(awayGoals/3,0.2,2.6)*3;
   const matrix=scoreMatrix(homeGoals,awayGoals).slice(0,5);
   const sources=[];
-  if(form) sources.push("Sofascore recent form");
-  if(Number.isFinite(uh)||Number.isFinite(ua)||Number.isFinite(uha)||Number.isFinite(uaa)) sources.push("Understat xG/xGA");
+  if(form&&[form.homeGoalsFor,form.awayGoalsFor,form.homeGoalsAgainst,form.awayGoalsAgainst].every(v=>Number.isFinite(Number(v)))) sources.push("Sofascore recent form");
+  if((Number.isFinite(uh)&&Number.isFinite(uaa))||(Number.isFinite(ua)&&Number.isFinite(uha))) sources.push("Understat xG/xGA");
   if(espn) sources.push("ESPN recent results");
   if(market) sources.push("Live market probability");
   return{expectedGoals:{home:Number(homeGoals.toFixed(2)),away:Number(awayGoals.toFixed(2))},scores:matrix.map(x=>({score:x.h+"-"+x.a,probability:Number((x.p*100).toFixed(1))})),sources};
