@@ -1053,13 +1053,27 @@ function serverSettlePrediction(p,result){
     if(hm)return hs>Number(hm[1])?"Won":"Lost";
     if(am)return as>Number(am[1])?"Won":"Lost";
   }
+  // Handicap picks must be settled against the handicap line, not the raw score.
+  const europeanHcp=pick.match(/\((\d+)\s*:\s*(\d+)\)/)||String(p.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+  if(europeanHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||""))||/hcp=/i.test(String(p.specifier||"")))){
+    const ah=hs+Number(europeanHcp[1]),aa=as+Number(europeanHcp[2]);
+    if(/\bhome\b/.test(pick))return ah>aa?"Won":"Lost";
+    if(/\bdraw\b/.test(pick))return ah===aa?"Won":"Lost";
+    if(/\baway\b/.test(pick))return aa>ah?"Won":"Lost";
+    return "Pending";
+  }
+  const asianHcp=pick.match(/\b(home|away)\s*\(([+-]\d+(?:\.\d+)?)\)/)||pick.match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/);
+  if(asianHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||"")))){
+    const side=asianHcp[1],line=Number(asianHcp[2]),adjusted=(side==="home"?hs:as)+line,opponent=side==="home"?as:hs;
+    return adjusted===opponent?"Void":adjusted>opponent?"Won":"Lost";
+  }
   if(p.marketType==="1x2"){
     if(/home|1x2.*1|^1$/.test(pick))return hs>as?"Won":"Lost";
     if(/away|1x2.*2|^2$/.test(pick))return as>hs?"Won":"Lost";
     if(/draw|tie|^x$/.test(pick))return hs===as?"Won":"Lost";
   }
-  if(/home/.test(pick)&&!/handicap/.test(pick))return hs>as?"Won":"Lost";
-  if(/away/.test(pick)&&!/handicap/.test(pick))return as>hs?"Won":"Lost";
+  if(/home/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick))return as>hs?"Won":"Lost";
   if(/draw/.test(pick))return hs===as?"Won":"Lost";
   return "Pending";
 }
