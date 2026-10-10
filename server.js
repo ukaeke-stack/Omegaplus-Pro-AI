@@ -670,11 +670,14 @@ app.get("/api/history",async(req,r)=>{
           return updated;
         });
         const predictions=settleRows(archive.predictions);
+        const dailyBestPredictions=settleRows(archive.dailyBestPredictions);
         const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
         const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
         const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
-        if(changed||resultsChanged){
+        const dailyChanged=JSON.stringify(dailyBestPredictions)!==JSON.stringify(archive.dailyBestPredictions||[]);
+        if(changed||resultsChanged||dailyChanged){
           archive.predictions=predictions;
+          if(Array.isArray(archive.dailyBestPredictions))archive.dailyBestPredictions=dailyBestPredictions;
           archive.correctScores=correctScores;
           archive.results=resultRows;
           archive.settlementUpdatedAt=new Date().toISOString();
@@ -1027,11 +1030,21 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
 app.get("/api/daily-best",async(req,r)=>{try{
   const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
   const existing=await readPersistentArchive(date,sport);
-  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(existing.predictions)&&((existing.predictions.length===10&&Number(existing.dailyCombinedOdds)>=10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(existing.predictions.length===0&&Boolean(existing.dailyMessage))))
-    return r.json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),combinedOdds:Number(existing.dailyCombinedOdds)||0,shortfall:Number(existing.dailyShortfall)||0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
+  // Migrate a legacy Daily Best set once, while keeping the analyzer's own predictions intact.
+  if(existing&&!Array.isArray(existing.dailyBestPredictions)&&existing.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(existing.predictions)&&existing.predictions.length===10&&Number(existing.dailyCombinedOdds)>=10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS)){
+    existing.dailyBestPredictions=existing.predictions.slice(0,10);
+    existing.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;
+    existing.updatedAt=new Date().toISOString();
+    await writePersistentArchive(date,existing,sport);
+  }
+  const saved=existing?.dailyBestPredictions;
+  const validSaved=Array.isArray(saved)&&((saved.length===10&&Number(existing.dailyCombinedOdds)>=10&&saved.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(saved.length===0&&Boolean(existing.dailyMessage)));
+  // Freeze a valid saved set for the whole Lagos calendar date, even after later code releases.
+  if(existing?.sport===sport&&validSaved)
+    return r.json({ok:true,date,sport,predictions:saved.slice(0,10),combinedOdds:Number(existing.dailyCombinedOdds)||0,shortfall:Number(existing.dailyShortfall)||0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
   const built=await buildDailyBest(date,sport),predictions=built.predictions||[];
   const archive=existing||{date,sport,predictions:[],results:[]};
-  archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;
+  archive.dailyBestPredictions=predictions;archive.sport=sport;archive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;
   archive.dailyCombinedOdds=Number(built.combinedOdds)||0;archive.dailyShortfall=Number(built.shortfall)||0;archive.dailyMessage=built.message||"";
   archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
   await writePersistentArchive(date,archive,sport);
@@ -1235,7 +1248,7 @@ app.get("/api/performance",async(req,r)=>{
 });
 app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(e.code==="NO_AVAILABLE_SELECTIONS"?409:502).json({ok:false,error:e.message,unavailableSelections:e.unavailable||[]})}});
 
-app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!prevArchive||!Array.isArray(prevArchive.predictions)||prevArchive.predictions.length!==10){try{const built=await buildDailyBest(prev);const predictions=built.predictions||[];prevArchive=prevArchive||{date:prev,predictions:[],results:[]};prevArchive.predictions=predictions;prevArchive.dailyCombinedOdds=Number(built.combinedOdds)||0;prevArchive.dailyShortfall=Number(built.shortfall)||0;prevArchive.dailyMessage=built.message||"";prevArchive.dailySelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);const predictions=todayArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&todayArchive?.predictions?.length===10?todayArchive.predictions:((await buildDailyBest(date)).predictions||[]);const next=todayArchive||{date,predictions:[],results:[]};next.predictions=predictions;next.dailySelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next);r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!Array.isArray(prevArchive?.dailyBestPredictions)&&prevArchive?.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(prevArchive?.predictions)&&prevArchive.predictions.length===10&&Number(prevArchive.dailyCombinedOdds)>=10){prevArchive.dailyBestPredictions=prevArchive.predictions.slice(0,10);prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}const prevSaved=Array.isArray(prevArchive?.dailyBestPredictions)&&((prevArchive.dailyBestPredictions.length===10&&Number(prevArchive.dailyCombinedOdds)>=10)||(prevArchive.dailyBestPredictions.length===0&&Boolean(prevArchive.dailyMessage)));if(!prevSaved){try{const built=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,sport:"football",predictions:[],results:[]};prevArchive.dailyBestPredictions=built.predictions||[];prevArchive.dailyCombinedOdds=Number(built.combinedOdds)||0;prevArchive.dailyShortfall=Number(built.shortfall)||0;prevArchive.dailyMessage=built.message||"";prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);let predictions=Array.isArray(todayArchive?.dailyBestPredictions)&&((todayArchive.dailyBestPredictions.length===10&&Number(todayArchive.dailyCombinedOdds)>=10)||(todayArchive.dailyBestPredictions.length===0&&Boolean(todayArchive.dailyMessage)))?todayArchive.dailyBestPredictions:null;if(!predictions){const built=await buildDailyBest(date);predictions=built.predictions||[];const next=todayArchive||{date,sport:"football",predictions:[],results:[]};next.dailyBestPredictions=predictions;next.dailyCombinedOdds=Number(built.combinedOdds)||0;next.dailyShortfall=Number(built.shortfall)||0;next.dailyMessage=built.message||"";next.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next)}r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 
 
 // User support, feedback, suggestions and admin live-chat endpoints.
