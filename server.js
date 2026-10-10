@@ -105,7 +105,7 @@ async function ensureHistoryTable(){
 }
 function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
 function validArchiveKey(date,sport){
-  if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)||!/^([a-z0-9_]{1,40})$/.test(sport))throw new Error("Invalid History date or sport.");
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([a-z0-9_]{1,40})$/.test(sport))throw new Error("Invalid History date or sport.");
 }
 async function readBlobArchive(date,sport="football"){
   if(!blobConfigured)return null;
