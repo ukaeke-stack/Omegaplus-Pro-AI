@@ -199,8 +199,8 @@ function independentConfidence(stats,type){
   if(f){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
     if(type==="over2.5")vals.push((f.homeOver25+f.awayOver25)/2*100);
-    if(type==="btts")vals.push((f.homeBtts+f.awayBtts)/2*100);
-    if(type==="btts_no")vals.push(100-((f.homeBtts+f.awayBtts)/2*100));
+    if(type==="btts"&&Number.isFinite(f.homeBtts)&&Number.isFinite(f.awayBtts))vals.push((f.homeBtts+f.awayBtts)/2*100);
+    if(type==="btts_no"&&Number.isFinite(f.homeBtts)&&Number.isFinite(f.awayBtts))vals.push(100-((f.homeBtts+f.awayBtts)/2*100));
     if(type==="home")vals.push(f.homeWinRate*100);
     if(type==="away")vals.push(f.awayWinRate*100);
   }
