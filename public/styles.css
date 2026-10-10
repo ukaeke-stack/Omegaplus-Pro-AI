@@ -115,3 +115,5 @@ main,.page,.active-page{min-width:0;max-width:100%}
   #omegaAccount .omega-account-btn{max-width:88px;font-size:11px;padding:8px 6px}
   .icon-btn,.menu-btn{flex-basis:38px;width:38px;min-width:38px;height:38px;font-size:20px}
 }
+
+.daily-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:12px 0 16px;padding:12px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(24,231,107,.09),rgba(255,255,255,.025))}.daily-combo{font-size:13px;color:var(--muted);margin-left:auto}.daily-combo b{color:var(--green);font-size:16px}.daily-selected-combo{width:100%;color:var(--muted);font-size:12px}.daily-actions button{min-height:40px}
