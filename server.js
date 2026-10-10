@@ -23,7 +23,7 @@ const APP_VERSION_CODE=5;
 const ANDROID_TARGET_SDK=36;
 const MIN_SUPPORTED_WEB_VERSION="1.6.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="mixed-top10-v1";
+const DAILY_SELECTION_VERSION="football-core-markets-combo10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -840,55 +840,99 @@ app.get("/api/predictions",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
+function normalizedMarketProbability(market,outcome){
+  const active=(market?.outcomes||[]).filter(o=>o.isActive!==false&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1);
+  const total=active.reduce((sum,o)=>sum+1/Number(o.odds),0);
+  return total>0&&Number(outcome?.odds)>1?(1/Number(outcome.odds))/total*100:0;
+}
+function dailyCoreMarketType(market){
+  if(isDirectWinningMarket(market))return "1x2";
+  if(marketMatches(market,"btts"))return "btts";
+  if(marketMatches(market,"ou"))return "ou";
+  return "";
+}
 async function buildDailyBest(date,sport="football"){
-  const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
-  const types=sport==="basketball"?["basketball_total","basketball_handicap","basketball_moneyline","basketball_team_total"]:sport==="tennis"?["tennis_moneyline","tennis_total_games","tennis_handicap","tennis_set_betting"]:sport==="ice_hockey"?["hockey_moneyline","hockey_total_goals","hockey_puck_line","hockey_period"]:sport==="baseball"?["baseball_moneyline","baseball_total_runs","baseball_run_line","baseball_innings"]:["ou","btts","1x2","handicap","corners","cards","double_chance","team_total","first_half_ou","half_time_result","btts_goals","team_corners","team_cards"];
+  if(sport!=="football")return {predictions:[],combinedOdds:0,shortfall:10,message:"Daily Best 10 currently supports football only."};
+  const fixtures=(await getDayFixtures(date,false,sport)).fixtures||[],candidates=[];
   for(const fixture of fixtures){
-    if(localDayKey(fixture.startTimeMs)!==date) continue;
+    if(localDayKey(fixture.startTimeMs)!==date)continue;
     for(const market of fixture.markets||[]){
-      for(const type of types){
-        if(!marketMatches(market,type)) continue;
-        for(const outcome of market.outcomes||[]){
-          if(!outcome.isActive||!Number.isFinite(outcome.odds)||outcome.odds<DAILY_PREDICTION_MIN_ODDS) continue;
-          const confidence=confidenceForOutcome(market,outcome);
-          if(confidence<60) continue;
-          candidates.push({
-            id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
-            eventId:fixture.eventId,league:fixture.league,category:fixture.category,
-            time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
-            startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
-            market:market.marketName,marketId:market.marketId,specifier:market.specifier,
-            outcomeId:outcome.outcomeId,pick:pickLabel(type,outcome),odds:outcome.odds,marketType:type,
-            confidence,confidenceLabel:confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate",date
-          });
+      const type=dailyCoreMarketType(market);
+      if(!type)continue;
+      for(const outcome of market.outcomes||[]){
+        if(!outcome.isActive||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<DAILY_PREDICTION_MIN_ODDS)continue;
+        const raw=normalizeText(outcome.outcomeName);
+        let pick=pickLabel(type,outcome);
+        if(type==="ou"){
+          const line=marketLine(market.specifier||market.marketName||outcome.outcomeName);
+          if(!/\bover\b/.test(raw)||!(line==="1.5"||line==="2.5"))continue;
+          pick="Over "+line;
         }
+        if(type==="btts"&&!["yes","no"].includes(raw))continue;
+        const marketProbability=normalizedMarketProbability(market,outcome);
+        // Use de-vigged implied probability without a confidence floor; long shots are excluded.
+        if(marketProbability<40)continue;
+        candidates.push({
+          id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
+          eventId:fixture.eventId,league:fixture.league,category:fixture.category,
+          time:new Date(fixture.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),
+          startTimeMs:fixture.startTimeMs,home:fixture.home,away:fixture.away,
+          market:market.marketName,marketId:market.marketId,specifier:market.specifier,
+          outcomeId:outcome.outcomeId,pick,odds:Number(outcome.odds),marketType:type,
+          confidence:Math.round(marketProbability),marketConfidence:marketProbability,
+          confidenceLabel:marketProbability>=70?"High":marketProbability>=55?"Moderate":"Value",date
+        });
       }
     }
   }
   const seen=new Set();
   const unique=candidates.filter(x=>{
     const key=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;
-    if(seen.has(key)) return false;
-    seen.add(key); return true;
+    if(seen.has(key))return false;
+    seen.add(key);return true;
   });
-  const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,20);
+  // Enrich a broad pool so independent form/xG and the derived goal model can affect ranking.
+  const shortlist=unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||a.odds-b.odds||a.startTimeMs-b.startTimeMs).slice(0,100);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
-  const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
-  const selected=[],usedEvents=new Set(),usedMarkets=new Set();
-  // First guarantee market diversity: take the strongest available pick from each market type.
-  for(const type of types){
-    if(selected.length>=10) break;
-    const p=ranked.find(x=>x.marketType===type&&!usedEvents.has(x.eventId));
-    if(!p) continue;
-    selected.push(p); usedEvents.add(p.eventId); usedMarkets.add(type);
-  }
-  // Then fill the remaining slots strictly by model ranking, avoiding duplicate matches.
+  const ranked=enriched.map(x=>{
+    const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
+    const market=Number(x.marketConfidence??x.confidence);
+    const usableModel=Number.isFinite(model)&&model>0?model:market;
+    return {...x,modelProbability:usableModel,confidence:Math.round(usableModel),confidenceLabel:usableModel>=70?"High":usableModel>=55?"Moderate":"Value"};
+  }).sort((a,b)=>b.modelProbability-a.modelProbability||b.marketConfidence-a.marketConfidence||a.odds-b.odds||a.startTimeMs-b.startTimeMs);
+  const selected=[],usedEvents=new Set();
   for(const p of ranked){
-    if(selected.length>=10) break;
-    if(usedEvents.has(p.eventId)) continue;
-    selected.push(p); usedEvents.add(p.eventId);
+    if(usedEvents.has(p.eventId))continue;
+    selected.push(p);usedEvents.add(p.eventId);
+    if(selected.length===10)break;
   }
-  return selected.slice(0,10);
+  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,message:"Only "+selected.length+" distinct fixtures met the core-market quality filter. No Daily 10 set was published rather than filling it with weak picks."};
+  const product=rows=>rows.reduce((v,p)=>v*Number(p.odds||1),1);
+  let combinedOdds=product(selected),usedIds=new Set(selected.map(x=>x.id));
+  // If the top ten do not reach 10.00, swap in the strongest eligible alternatives with higher odds.
+  for(const candidate of ranked){
+    if(combinedOdds>=10)break;
+    if(usedIds.has(candidate.id)||selected.some(x=>x.eventId===candidate.eventId))continue;
+    let replaceIndex=-1;
+    for(let i=0;i<selected.length;i++){
+      const trial=selected.slice();trial[i]=candidate;
+      if(product(trial)>=10&&(replaceIndex<0||selected[i].modelProbability<selected[replaceIndex].modelProbability))replaceIndex=i;
+    }
+    if(replaceIndex<0){
+      const i=selected.reduce((best,x,j)=>Number(x.odds)<Number(selected[best].odds)?j:best,0);
+      const trial=selected.slice();trial[i]=candidate;
+      if(product(trial)>combinedOdds)replaceIndex=i;
+    }
+    if(replaceIndex>=0){
+      usedIds.delete(selected[replaceIndex].id);
+      selected[replaceIndex]=candidate;usedIds.add(candidate.id);
+      combinedOdds=product(selected);
+    }
+  }
+  combinedOdds=product(selected);
+  if(combinedOdds<10)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"Ten quality-qualified picks were found, but their combined odds could not reach 10.00 without weakening the quality filter. No set was published."};
+  selected.sort((a,b)=>a.startTimeMs-b.startTimeMs);
+  return {predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"10 quality-qualified picks · core markets only · combined odds "+combinedOdds.toFixed(2)};
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
@@ -980,7 +1024,19 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,refreshed:forceRefresh,scannedFixtures:candidates.length,eligiblePredictions:results.length,method:"Upcoming fixtures ranked by exact-score probability and independent-data coverage"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{
+  const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+  const existing=await readPersistentArchive(date,sport);
+  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&Array.isArray(existing.predictions)&&existing.dailyCombinedOdds>=10&&existing.predictions.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))
+    return r.json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),combinedOdds:existing.dailyCombinedOdds,shortfall:0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
+  const built=await buildDailyBest(date,sport),predictions=built.predictions||[];
+  const archive=existing||{date,sport,predictions:[],results:[]};
+  archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;
+  archive.dailyCombinedOdds=Number(built.combinedOdds)||0;archive.dailyShortfall=Number(built.shortfall)||0;archive.dailyMessage=built.message||"";
+  archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
+  await writePersistentArchive(date,archive,sport);
+  r.json({ok:true,date,sport,predictions,combinedOdds:archive.dailyCombinedOdds,shortfall:archive.dailyShortfall,message:archive.dailyMessage,qualifiedCount:built.qualifiedCount||0,archived:true});
+}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
     const body=req.body||{}, admin=await getAdminSettings();
