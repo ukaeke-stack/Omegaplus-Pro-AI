@@ -1,4 +1,5 @@
 import {getDateResults,norm} from "./sportmonks-results.js";
+import {getGoalApiDateResults} from "./goal-api-results.js";
 
 const SOFA="https://www.sofascore.com/api/v1";
 const cache=new Map();
@@ -89,18 +90,22 @@ export async function getVerifiedResults(date,force=false,sport="football"){
     return {date,results,sources:{sportmonks:false,sofascore:true,fotmob:false},updatedAt:Date.now(),cached:false};
   }
   let sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:null};
-  let sofa=[],fotmob=[],errors={};
+  let sofa=[],fotmob=[],goal=[],errors={};
   try{sm=await getDateResults(date,force)}catch(e){sm={configured:Boolean(process.env.SPORTMONKS_API_TOKEN),data:[],error:e.message};errors.sportmonks=e.message}
   try{sofa=await sofaDate(date,"football")}catch(e){errors.sofascore=e.message}
   try{fotmob=await fotmobDate(date)}catch(e){errors.fotmob=e.message}
+  let goalProvider={configured:Boolean(process.env.GOAL_API_KEY),data:[],error:null};
+  try{goalProvider=await getGoalApiDateResults(date,force);goal=goalProvider.data||[]}catch(e){goalProvider={configured:Boolean(process.env.GOAL_API_KEY),data:[],error:e.message};errors.goalApi=e.message}
   const combined=combine(sm.configured?sm.data:[],sofa.map(x=>({...x,sources:["Sofascore"]})));
-  const results=combine(combined,fotmob);
+  const withFotmob=combine(combined,fotmob);
+  const results=combine(withFotmob,goal);
   const providerDiagnostics={
     sportmonks:{configured:Boolean(sm.configured),count:Array.isArray(sm.data)?sm.data.length:0,error:sm.error||errors.sportmonks||null},
     sofascore:{configured:!errors.sofascore,count:sofa.length,error:errors.sofascore||null},
     fotmob:{configured:!errors.fotmob,count:fotmob.length,error:errors.fotmob||null},
+    goalApi:{configured:Boolean(goalProvider.configured),count:goal.length,error:goalProvider.error||errors.goalApi||null},
     verificationPolicy:"Two independent providers must agree on a finished score; any disagreement blocks settlement."
   };
-  return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:!errors.sofascore,fotmob:!errors.fotmob},providerDiagnostics,updatedAt:Date.now(),cached:false};
+  return {date,results,sources:{sportmonks:Boolean(sm.configured),sofascore:!errors.sofascore,fotmob:!errors.fotmob,goalApi:Boolean(goalProvider.configured)},providerDiagnostics,updatedAt:Date.now(),cached:false};
 }
 export async function getVerifiedLiveResults(sport="football"){return getVerifiedResults(dayKey(Date.now()),true,sport);}
