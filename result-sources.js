@@ -25,7 +25,7 @@ async function sofaDate(date,sport="football"){
   if(hit&&Date.now()-hit.at<TTL)return hit.data;
   const c=new AbortController(),t=setTimeout(()=>c.abort(),10000);
   try{
-    const res=await fetch(SOFA+"/sport/"+encodeURIComponent(sport)+"/scheduled-events/"+encodeURIComponent(date),{headers:{Accept:"application/json"},signal:c.signal});
+    const res=await fetch(SOFA+"/sport/"+encodeURIComponent(sport)+"/scheduled-events/"+encodeURIComponent(date),{headers:{Accept:"application/json","User-Agent":"Mozilla/5.0 (compatible; OmegaplusProAI/1.0)","Referer":"https://www.sofascore.com/"},signal:c.signal});
     if(!res.ok)throw new Error("Sofascore HTTP "+res.status);
     const body=await res.json();
     const data=(body.events||[]).map(e=>{const s=scoreOf(e);return{providerId:String(e.id||""),date:dayKey(Number(e.startTimestamp||0)*1000),startingAt:e.startTimestamp,home:String(e.homeTeam?.name||""),away:String(e.awayTeam?.name||""),homeKey:norm(e.homeTeam?.name),awayKey:norm(e.awayTeam?.name),homeScore:s.homeScore,awayScore:s.awayScore,status:statusOf(e),state:String(e.status?.description||e.status?.type||"")};});
