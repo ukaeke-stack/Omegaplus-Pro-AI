@@ -351,16 +351,44 @@ async function loadCalendar(){
 }
 async function loadDailyBest(){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Analyzing the strongest 1X2, BTTS, Over 1.5 and Over 2.5 picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
-    let rows=(d.predictions||[]).slice(0,10);
-    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date));
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    const rows=(d.predictions||[]).slice(0,10).map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const odds=rows.reduce((v,x)=>v*Number(x.odds||1),1);
+    if($("#bestPicksStatus"))$("#bestPicksStatus").textContent=d.message||"Core markets only · combined odds "+Number(d.combinedOdds||odds).toFixed(2);
     updateOutcomeSummary(rows,"daily");
-    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
+    if(!rows.length){
+      box.innerHTML='<div class="empty">'+esc(d.message||("No quality-qualified Daily 10 set is available for "+prettyDate(date)+"."))+'</div>';
+      return;
+    }
+    const actionBar='<div class="daily-actions"><button class="primary" id="dailySelectAll">Select All 10</button><button class="secondary" id="dailyClearAll">Clear Daily Selections</button><span class="daily-combo">Combined odds: <b>'+esc(Number(d.combinedOdds||odds).toFixed(2))+'</b></span></div>';
+    box.innerHTML=actionBar+rows.map(x=>'<article class="match compact"><div><div class="meta">#'+esc(x.dailyRank||"—")+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS":x.pick)+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join("");
+    box.querySelector(".daily-actions").insertAdjacentHTML("beforeend",'<small id="dailySelectedCombo" class="daily-selected-combo">0 selected</small>');
+    const renderDailyActions=()=>{
+      const selectedRows=rows.filter(x=>state.selected.has(x.id));
+      const combined=selectedRows.reduce((v,x)=>v*Number(x.odds||1),selectedRows.length?1:0);
+      const badge=$("#dailySelectedCombo");
+      if(badge)badge.textContent=selectedRows.length+" selected"+(selectedRows.length?" · odds "+combined.toFixed(2):"");
+      const all=$("#dailySelectAll");if(all)all.textContent=rows.every(x=>state.selected.has(x.id))?"All 10 Selected":"Select All 10";
+      document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>{const on=state.selected.has(b.dataset.topId);b.classList.toggle("selected",on);b.textContent=on?"Remove":"Select"});
+      renderSlip();
+    };
+    $("#dailySelectAll").onclick=()=>{
+      const allSelected=rows.every(x=>state.selected.has(x.id));
+      if(allSelected)rows.forEach(x=>state.selected.delete(x.id));
+      else rows.forEach(x=>state.selected.set(x.id,x));
+      renderDailyActions();
+    };
+    $("#dailyClearAll").onclick=()=>{rows.forEach(x=>state.selected.delete(x.id));renderDailyActions()};
+    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{
+      const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;
+      if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);
+      renderDailyActions();
+    });
+    renderDailyActions();
     refreshHistory(date).catch(()=>{});
-    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date,forceRefresh=false){
