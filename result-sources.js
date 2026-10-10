@@ -34,7 +34,7 @@ async function sofaDate(date,sport="football"){
   }finally{clearTimeout(t)}
 }
 function same(a,b){const x=norm(a),y=norm(b);return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x));}
-function match(a,b){if(!same(a.home,b.home)||!same(a.away,b.away))return false;const da=String(a.date||""),db=String(b.date||"");if(/^\\d{4}-\\d{2}-\\d{2}$/.test(da)&&/^\\d{4}-\\d{2}-\\d{2}$/.test(db)&&da!==db)return false;const ta=Number(a.startingAt||0),tb=Number(b.startingAt||0);if(ta>0&&tb>0&&Math.abs(ta-tb)>6*60*60)return false;return true;}
+function match(a,b){if(!same(a.home,b.home)||!same(a.away,b.away))return false;const da=String(a.date||""),db=String(b.date||"");const validDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(v);if(validDate(da)&&validDate(db)&&da!==db)return false;const ta=Number(a.startingAt||0),tb=Number(b.startingAt||0);if(ta>0&&tb>0&&Math.abs(ta-tb)>6*60*60)return false;return true;}
 function finished(x){return x?.status==="Finished"&&Number.isFinite(x.homeScore)&&Number.isFinite(x.awayScore);}
 function combine(primary,secondary){
   const out=[];
@@ -45,17 +45,19 @@ function combine(primary,secondary){
     if(!hit){out.push({...x,sources:incomingSources});continue;}
     hit.sources=[...new Set([...(hit.sources||[]),...incomingSources])];
     if(finished(hit)&&finished(x)){
-      // Once any independent provider disagrees, never erase that conflict merely
-      // because a later source agrees with one side. Keep it for manual review.
+      // Any disagreement from a second provider blocks automatic settlement.
       hit.verificationStatus=hit.verificationStatus==="conflict"?"conflict":
         (hit.homeScore===x.homeScore&&hit.awayScore===x.awayScore?"confirmed":"conflict");
+    }else if(!finished(hit)&&finished(x)){
+      Object.assign(hit,{homeScore:x.homeScore,awayScore:x.awayScore,status:x.status,state:x.state,providerId:hit.providerId||x.providerId,startingAt:hit.startingAt||x.startingAt,date:hit.date||x.date});
+      if(hit.verificationStatus!=="conflict")hit.verificationStatus="unverified";
     }else if(!hit.verificationStatus){
       hit.verificationStatus="unverified";
     }
-    hit.verificationCount=hit.sources.length;
+    hit.verificationCount=new Set(hit.sources).size;
   }
   return out.map(x=>{
-    if(!x.verificationStatus)x.verificationStatus=finished(x)?(x.sources?.length>1?"confirmed":"single-source"):"unverified";
+    if(!x.verificationStatus)x.verificationStatus=finished(x)?"single-source":"unverified";
     x.verificationCount=x.verificationCount||x.sources?.length||1;
     return x;
   });
