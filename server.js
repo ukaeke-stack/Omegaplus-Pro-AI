@@ -595,7 +595,40 @@ async function getDayFixtures(date,force=false,sport="football"){
 app.get("/api/scan",async(req,r)=>{
   try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
-app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){console.error("History read failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}});
+app.get("/api/history",async(req,r)=>{
+  try{
+    const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+    const archive=await readPersistentArchive(date,sport);
+    if(archive){
+      let resultRows=[];
+      try{const rr=await getVerifiedResults(date,false,sport);resultRows=Array.isArray(rr.results)?rr.results:[]}catch(e){console.warn("History settlement results unavailable:",e.message)}
+      if(resultRows.length){
+        let changed=false;
+        const settleRows=rows=>(Array.isArray(rows)?rows:[]).map(p=>{
+          const result=matchArchiveResult(p,resultRows);
+          if(!result)return p;
+          const status=String(result.status||"");
+          const outcome=serverSettlePrediction(p,result);
+          const updated={...p,status:result.status||p.status,homeScore:result.homeScore??p.homeScore,awayScore:result.awayScore??p.awayScore,resultProviderId:result.providerId||p.resultProviderId,sources:result.sources||p.sources,verificationStatus:result.verificationStatus||p.verificationStatus,verificationCount:result.verificationCount||p.verificationCount};
+          if(outcome!=="Pending"||result.verificationStatus==="conflict")updated.outcome=outcome;
+          if(updated.outcome!==p.outcome||updated.status!==p.status||updated.homeScore!==p.homeScore||updated.awayScore!==p.awayScore||updated.verificationStatus!==p.verificationStatus||updated.resultProviderId!==p.resultProviderId)changed=true;
+          return updated;
+        });
+        const predictions=settleRows(archive.predictions);
+        const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
+        if(changed){
+          archive.predictions=predictions;
+          archive.correctScores=correctScores;
+          archive.results=resultRows;
+          archive.settlementUpdatedAt=new Date().toISOString();
+          archive.updatedAt=archive.settlementUpdatedAt;
+          await writePersistentArchive(date,archive,sport);
+        }
+      }
+    }
+    r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"});
+  }catch(e){console.error("History read/settlement failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}
+});
 app.post("/api/history",async(_req,r)=>r.status(405).json({ok:false,error:"History is server-managed and read-only from the public app."}));
 app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
@@ -944,40 +977,82 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 });
 
 
+function archiveTeamScore(a,b){
+  const x=resultNorm(a).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  const y=resultNorm(b).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  if(!x.length||!y.length)return 0;
+  const xs=x.join(" "),ys=y.join(" ");
+  if(xs===ys)return 1;
+  if(xs.includes(ys)||ys.includes(xs))return Math.min(xs.length,ys.length)/Math.max(xs.length,ys.length)+0.12;
+  const common=x.filter(t=>y.includes(t)).length;
+  return common/Math.max(1,new Set([...x,...y]).size);
+}
+function matchArchiveResult(p,results){
+  if(p.resultProviderId){
+    const byProvider=results.find(x=>String(x.providerId||"")===String(p.resultProviderId));
+    if(byProvider)return byProvider;
+  }
+  if(p.eventId){
+    const byEvent=results.find(x=>String(x.eventId||x.fixtureId||"")===String(p.eventId));
+    if(byEvent)return byEvent;
+  }
+  const candidates=results.map(x=>{
+    const normalHome=archiveTeamScore(p.home,x.home),normalAway=archiveTeamScore(p.away,x.away);
+    const reversedHome=archiveTeamScore(p.home,x.away),reversedAway=archiveTeamScore(p.away,x.home);
+    const normal=normalHome>=0.68&&normalAway>=0.68?Math.min(normalHome,normalAway):0;
+    const reversed=reversedHome>=0.68&&reversedAway>=0.68?Math.min(reversedHome,reversedAway):0;
+    let score=Math.max(normal,reversed);
+    if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.04;
+    const pt=Number(p.startTimeMs||0),rt=Number(x.startingAt||0)*1000;
+    if(pt&&rt&&Math.abs(pt-rt)<=3*60*60*1000)score+=0.03;
+    const dateOk=!x.date||x.date==="Invalid Date"||String(x.date)===String(p.date||"");
+    return {result:x,score,reversed:reversed>normal,dateOk};
+  }).filter(x=>x.dateOk&&x.score>=0.68).sort((a,b)=>b.score-a.score);
+  if(!candidates.length||(candidates.length>1&&candidates[0].score-candidates[1].score<0.035))return null;
+  const best=candidates[0];
+  return best.reversed?{...best.result,homeScore:best.result.awayScore,awayScore:best.result.homeScore}:best.result;
+}
 function serverSettlePrediction(p,result){
-  if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
+  if(!result)return "Pending";
   const status=String(result.status||"").toLowerCase();
-  if(/postpon|cancel|void|abandon/.test(status)) return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
-  if(!/finished|full time|ended|complete|ft|final/.test(status)) return "Pending";
-  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as,pick=String(p.pick||"").toLowerCase();
-
-
+  if(/postpon/.test(status))return "Postponed";
+  if(/cancel|void|abandon/.test(status))return "Void";
+  if(!/finished|full time|ended|complete|ft|final|after extra|penalt/.test(status))return "Pending";
+  if(result.verificationStatus!=="confirmed")return "Pending";
+  if(!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore)))return "Pending";
+  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as;
+  const pick=String(p.pick||p.selection||p.bestScore?.score||p.bestScore?.label||p.bestScore?.result||"").toLowerCase();
+  if(String(p.market||"").toLowerCase()==="correct score"||p.bestScore){
+    const cs=pick.match(/(\d+)\s*[-:–]\s*(\d+)/);
+    if(cs)return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
+    return "Pending";
+  }
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(over) return total>Number(over[1])?"Won":"Lost";
-  if(under) return total<Number(under[1])?"Won":"Lost";
-  if(result.verificationStatus!=="confirmed") return "Pending";
-  if(p.marketType==="btts"||/btts/.test(pick)){
-    const yes=/yes|gg|both.*score/.test(pick),actual=hs>0&&as>0;
+  if(over){const line=Number(over[1]);return total===line?"Void":total>line?"Won":"Lost";}
+  if(under){const line=Number(under[1]);return total===line?"Void":total<line?"Won":"Lost";}
+  if(p.marketType==="btts"||/btts|both teams to score/.test(pick)){
+    const yes=!/\bno\b|not|ng/.test(pick),actual=hs>0&&as>0;
     return actual===yes?"Won":"Lost";
   }
-  if(p.marketType==="basketball_moneyline"){ if(/home|1/.test(pick)) return hs>as?"Won":"Lost"; if(/away|2/.test(pick)) return as>hs?"Won":"Lost"; }
+  if(p.marketType==="basketball_moneyline"){if(/home|\b1\b/.test(pick))return hs>as?"Won":"Lost";if(/away|\b2\b/.test(pick))return as>hs?"Won":"Lost";}
   if(p.marketType==="double_chance"){
-    if(/home or draw|1x/.test(pick)) return hs>=as?"Won":"Lost";
-    if(/home or away|12/.test(pick)) return hs!==as?"Won":"Lost";
-    if(/draw or away|x2/.test(pick)) return as>=hs?"Won":"Lost";
+    if(/home or draw|\b1x\b/.test(pick))return hs>=as?"Won":"Lost";
+    if(/home or away|\b12\b/.test(pick))return hs!==as?"Won":"Lost";
+    if(/draw or away|\bx2\b/.test(pick))return as>=hs?"Won":"Lost";
   }
   if(p.marketType==="team_total"){
     const hm=pick.match(/home\s*over\s*(\d+(?:\.\d+)?)/),am=pick.match(/away\s*over\s*(\d+(?:\.\d+)?)/);
-    if(hm)return hs>Number(hm[1])?"Won":"Lost"; if(am)return as>Number(am[1])?"Won":"Lost";
+    if(hm)return hs>Number(hm[1])?"Won":"Lost";
+    if(am)return as>Number(am[1])?"Won":"Lost";
   }
   if(p.marketType==="1x2"){
-    if(/home|1x2.*1|\b1\b/.test(pick)) return hs>as?"Won":"Lost";
-    if(/away|1x2.*2|\b2\b/.test(pick)) return as>hs?"Won":"Lost";
-    if(/draw|tie|x/.test(pick)) return hs===as?"Won":"Lost";
+    if(/home|1x2.*1|^1$/.test(pick))return hs>as?"Won":"Lost";
+    if(/away|1x2.*2|^2$/.test(pick))return as>hs?"Won":"Lost";
+    if(/draw|tie|^x$/.test(pick))return hs===as?"Won":"Lost";
   }
-  if(/home/.test(pick)&&!/handicap/.test(pick)) return hs>as?"Won":"Lost";
-  if(/away/.test(pick)&&!/handicap/.test(pick)) return as>hs?"Won":"Lost";
-  if(/draw/.test(pick)) return hs===as?"Won":"Lost";
+  if(/home/.test(pick)&&!/handicap/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick)&&!/handicap/.test(pick))return as>hs?"Won":"Lost";
+  if(/draw/.test(pick))return hs===as?"Won":"Lost";
   return "Pending";
 }
 function dateListInclusive(from,to){
