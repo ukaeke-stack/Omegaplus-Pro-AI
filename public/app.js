@@ -41,47 +41,57 @@ function renderDateChips(){
   box.innerHTML=[...state.dates].sort().map(d=>'<button class="date-chip" data-date="'+esc(d)+'">'+esc(prettyDate(d))+' ×</button>').join("");
   $$("#selectedDates .date-chip").forEach(b=>b.onclick=()=>{state.dates.delete(b.dataset.date);if(!state.dates.size)state.dates.add(state.date);renderDateChips()});
 }
-function historyKey(){return "omegaplus_history_v3"}
 function archiveKey(){return "omegaplus_day_archive_v1"}
 function readArchive(){try{return JSON.parse(localStorage.getItem(archiveKey())||"{}")}catch{return{}}}
 function writeArchive(a){try{localStorage.setItem(archiveKey(),JSON.stringify(a));return true}catch{return false}}
 function archiveDay(date,payload={}){const a=readArchive();a[date]={...(a[date]||{}),...payload,savedAt:new Date().toISOString()};writeArchive(a)}
-function readHistory(){try{return JSON.parse(localStorage.getItem(historyKey())||"[]")}catch{return[]}}
-function writeHistory(rows){try{localStorage.setItem(historyKey(),JSON.stringify(rows.slice(-2000)));return true}catch{return false}}
-function saveHistoryRows(rows,replaceDate=null){
-  const history=readHistory();
-  const targetDate=replaceDate||state.date;
-  const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
-  const now=new Date().toISOString();
-  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:now}));
-  return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
-}
 
 function settleOutcome(x){
   const status=String(x.status||x.matchStatus||"").toLowerCase();
-  if(/postpon|cancel|void|abandon|suspend/.test(status))return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
+  if(/postpon/.test(status))return "Postponed";
+  if(/cancel|void|abandon/.test(status))return "Void";
   const finished=/finished|full.?time|ended|closed|complete|final|\bft\b|after extra|penalt(y|ies)/i.test(status);
-  // A 0-0 (or any current score) from a scheduled/live fixture is NOT a final result.
-  // Only settle a prediction after the provider explicitly reports a completed match.
   if(!finished)return "Pending";
-  if(String(x.verificationStatus||"")!=="confirmed")return "Pending";
-  const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||"").toLowerCase();
+  if(!["confirmed","single-source"].includes(String(x.verificationStatus||"")))return "Pending";
+  const hs=Number(x.homeScore),as=Number(x.awayScore),pick=String(x.pick||x.selection||"").toLowerCase();
   if(!Number.isFinite(hs)||!Number.isFinite(as))return "Pending";
   if(String(x.market||"").toLowerCase()==="correct score"){
     const cs=pick.match(/^(\d+)\s*[-:]\s*(\d+)$/);
     if(!cs)return "Pending";
     return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
   }
+
   const total=hs+as,m=pick.match(/over\s*(\d+(?:\.\d+)?)/),u=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(m)return total>Number(m[1])?"Won":"Lost";
-  if(u)return total<Number(u[1])?"Won":"Lost";
-  if(pick.includes("home"))return hs>as?"Won":"Lost";
-  if(pick.includes("away"))return as>hs?"Won":"Lost";
-  if(pick.includes("draw"))return hs===as?"Won":"Lost";
-  return "Finished";
+  if(m){const line=Number(m[1]);return total===line?"Void":total>line?"Won":"Lost";}
+  if(u){const line=Number(u[1]);return total===line?"Void":total<line?"Won":"Lost";}
+  if(/btts|both teams to score|gg/.test(pick)||/both teams to score|btts/i.test(String(x.market||""))){
+    const yes=!/no|not|ng/.test(pick),actual=hs>0&&as>0;return actual===yes?"Won":"Lost";
+  }
+  if(/home or draw|1x/.test(pick))return hs>=as?"Won":"Lost";
+  if(/home or away|12/.test(pick))return hs!==as?"Won":"Lost";
+  if(/draw or away|x2/.test(pick))return as>=hs?"Won":"Lost";
+  // European handicap score, e.g. "Home (1:0)", adds the displayed
+  // virtual score before evaluating Home/Draw/Away.
+  const europeanHcp=pick.match(/\((\d+)\s*:\s*(\d+)\)/)||String(x.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+  if(europeanHcp&&(String(x.marketType||"")==="handicap"||/handicap/i.test(String(x.market||""))||/hcp=/i.test(String(x.specifier||"")))){
+    const ah=hs+Number(europeanHcp[1]),aa=as+Number(europeanHcp[2]);
+    if(/\bhome\b/.test(pick))return ah>aa?"Won":"Lost";
+    if(/\bdraw\b/.test(pick))return ah===aa?"Won":"Lost";
+    if(/\baway\b/.test(pick))return aa>ah?"Won":"Lost";
+    return "Pending";
+  }
+  const asianHcp=pick.match(/\b(home|away)\s*\(([+-]\d+(?:\.\d+)?)\)/)||pick.match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/);
+  if(asianHcp&&(String(x.marketType||"")==="handicap"||/handicap/i.test(String(x.market||"")))){
+    const side=asianHcp[1],line=Number(asianHcp[2]),adjusted=(side==="home"?hs:as)+line,opponent=side==="home"?as:hs;
+    return adjusted===opponent?"Void":adjusted>opponent?"Won":"Lost";
+  }
+  if(/home/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick))return as>hs?"Won":"Lost";
+  if(/draw|tie/.test(pick))return hs===as?"Won":"Lost";
+  return "Pending";
 }
 function updateOutcomeSummary(rows,prefix){
-  const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost"].includes(x.outcome)).length;
+  const won=rows.filter(x=>x.outcome==="Won").length,lost=rows.filter(x=>x.outcome==="Lost").length,pending=rows.filter(x=>!["Won","Lost","Void","Postponed"].includes(x.outcome)).length;
   const settled=won+lost,accuracy=settled?Math.round(won/settled*100):null;
   const set=(id,v)=>{if($("#"+id))$("#"+id).textContent=v};
   if(prefix==="history"){set("historyWon",won);set("historyLost",lost);set("historyPending",pending);set("historyAccuracy",accuracy===null?"—":accuracy+"%")}
@@ -90,59 +100,105 @@ function updateOutcomeSummary(rows,prefix){
 function historySelectedDate(){
   return $("#historyDate")?.value||dateKey(new Date());
 }
-function renderHistory(date=historySelectedDate(),fallbackRows=[]){
-  const box=$("#historyList");if(!box)return;
-  const all=readHistory();
-  let h=all.filter(x=>(x.sport||"football")===state.sport&&x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
-  if(!h.length&&fallbackRows.length){
-    const now=new Date().toISOString();
-    h=fallbackRows.slice(0,10).map(x=>({...x,id:x.id,date:x.date||date,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick||"Prediction",market:x.market||"Goals Over/Under",odds:x.odds??"—",confidence:Number(x.confidence||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||settleOutcome(x),recordedAt:now}));
-  }
+function renderHistory(date=historySelectedDate(),rows=[]){
+  const box=$("#historyList");
+  if(!box)return;
+  const h=(Array.isArray(rows)?rows:[])
+    .filter(x=>(x.sport||"football")===state.sport&&String(x.date||date)===date)
+    .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time||"").localeCompare(String(b.time||"")))
+    .slice(0,50);
+  const safe=v=>esc(v==null||v===""?"—":v);
+  const sourceText=x=>Array.isArray(x.sources)?x.sources.join(" + "):Array.isArray(x.independentSources)?x.independentSources.join(" + "):typeof x.sources==="string"?x.sources:"Result verification pending";
   updateOutcomeSummary(h,"history");
-  $("#historyStatus").textContent=h.length?h.length+" record(s) for "+prettyDate(date)+".":"No prediction records saved for "+prettyDate(date)+".";
-  box.innerHTML=h.length?h.map(x=>'<article class="history-item"><div><small>'+esc(prettyDate(x.date))+' · '+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><span>'+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</span><small>'+esc((x.sources||[]).join(" + ")||"Result verification pending")+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":" · UNVERIFIED")+(Number.isFinite(Number(x.homeScore))?" · "+x.homeScore+"-"+x.awayScore:"")+'</small></div><strong>'+esc(x.outcome)+'</strong></article>').join(""):'<div class="empty">No records for this date.</div>';
+  $("#historyStatus").textContent=h.length?h.length+" shared record(s) for "+prettyDate(date)+".":"No archived prediction records for "+prettyDate(date)+".";
+  box.style.display="block";
+  box.style.visibility="visible";
+  box.style.color="var(--text, #eef5f0)";
+  if(!h.length){
+    box.innerHTML='<div class="empty" style="display:block;visibility:visible;padding:16px;color:var(--text,#eef5f0)">No records archived online for this date.</div>';
+    return;
+  }
+  box.innerHTML=h.map(x=>{
+    const teams=safe(x.home)+" vs "+safe(x.away);
+    const rawPick=String(x.pick||x.selection||x.market||"");
+    const pick=safe(rawPick);
+    const odds=x.odds==null?"—":safe(x.odds);
+    const confidence=x.confidence==null?"—":safe(x.confidence);
+    const score=Number.isFinite(Number(x.homeScore))&&Number.isFinite(Number(x.awayScore))&&x.homeScore!==null&&x.awayScore!==null
+      ? " · "+safe(x.homeScore)+"-"+safe(x.awayScore):"";
+    return '<article class="history-item" style="display:flex!important;visibility:visible!important;opacity:1!important;color:var(--text,#eef5f0);align-items:center;gap:12px;padding:14px;margin:8px 0;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(255,255,255,.04)">'+
+      '<div style="display:grid!important;visibility:visible;gap:5px;min-width:0;flex:1">'+
+      '<small style="display:block;color:#aab8b0">'+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
+      '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
+      '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
+      '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":x.verificationStatus==="single-source"?" · SINGLE-SOURCE":" · UNVERIFIED")+score+'</small>'+
+      '</div><strong style="display:block;white-space:nowrap;color:var(--green,#18e76b)">'+safe(x.outcome||"Pending")+'</strong></article>';
+  }).join("");
 }
+let historyRequestSequence=0;
 async function refreshHistory(date=historySelectedDate()){
-  let h=readHistory(),fallback=[];
+  const requestSequence=++historyRequestSequence;
+  $("#historyStatus").textContent="Loading shared online history…";
   try{
-    const archiveResponse=await (await fetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
-    const archive=archiveResponse.ok&&archiveResponse.archive?archiveResponse.archive:null;
-    if(Array.isArray(archive?.correctScores)&&archive.correctScores.length){
-      const existingCs=archive.correctScores.slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
-      h=[...h.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score")),...existingCs];
+    let response=await jsonFetch("/api/history?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
+    let archive=response.archive||null;
+    if(!archive&&date===dateKey(new Date())){
+      const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
+      archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date}));
-    if(!day.length){
-      const data=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();
-      const liveRows=data.predictions||[];
-      day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,10);
-      if(!day.length){
-        try{const analyzed=await (await fetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json();fallback=(analyzed.predictions||[]).slice(0,10).map(x=>({...x,date}));}catch{}
-        if(!fallback.length)fallback=liveRows.slice(0,10).map(x=>({...x,date,pick:"Fixture",market:"Fixture",confidence:0,odds:"—"}));
-        day=fallback;
-      }
-    }
+    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
-    try{const rr=await (await fetch("/api/results?date="+encodeURIComponent(date))).json();if(rr.ok)resultRows=rr.results||resultRows;}catch{}
+    // Use the result snapshot returned with the archive. A separate forced refresh here
+    // can make the UI settle against different data than the server has persisted.
     const norm=v=>String(v||"").toLowerCase().normalize("NFKD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const findResult=x=>resultRows.find(r=>x.resultProviderId&&String(r.providerId)===String(x.resultProviderId))||resultRows.find(r=>norm(r.home)===norm(x.home)&&norm(r.away)===norm(x.away));
-    const liveData=await (await fetch("/api/predictions?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date))).json().catch(()=>({predictions:[]}));
-    const live=new Map((liveData.predictions||[]).map(x=>[x.eventId,x]));
-    day.forEach(x=>{const y=live.get(x.eventId),z=findResult(x);if(y){x.status=y.matchStatus||x.status;x.homeScore=y.homeScore??x.homeScore;x.awayScore=y.awayScore??x.awayScore}if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}x.outcome=settleOutcome(x)});
-    const correctScoreRows=h.filter(x=>x.date===date&&(x.market||"")==="Correct Score").map(x=>{
+    const teamKey=v=>norm(v).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t)).join(" ");
+    const teamScore=(a,b)=>{
+      const x=teamKey(a),y=teamKey(b);if(!x||!y)return 0;if(x===y)return 1;
+      if(x.includes(y)||y.includes(x))return Math.min(x.length,y.length)/Math.max(x.length,y.length)+0.12;
+      const xt=new Set(x.split(" ")),yt=new Set(y.split(" "));let common=0;for(const t of xt)if(yt.has(t))common++;
+      return common/Math.max(1,new Set([...xt,...yt]).size);
+    };
+    const findResult=x=>{
+      const candidates=resultRows.map(r=>{
+        const dateOK=!r.date||r.date==="Invalid Date"||String(r.date)===String(date);
+        const hs=teamScore(r.home,x.home),as=teamScore(r.away,x.away);
+        const reverseHs=teamScore(r.home,x.away),reverseAs=teamScore(r.away,x.home);
+        const normal=hs>=0.68&&as>=0.68?Math.min(hs,as):0;
+        const reversed=reverseHs>=0.68&&reverseAs>=0.68?Math.min(reverseHs,reverseAs):0;
+        const orientation=reversed>normal?"reversed":"normal";
+        let score=Math.max(normal,reversed);
+        if(x.league&&r.league&&norm(x.league)===norm(r.league))score+=0.04;
+        const xt=Number(x.startTimeMs||0),rt=Number(r.startingAt||0)*1000;
+        if(xt&&rt){
+          const delta=Math.abs(xt-rt);
+          if(delta>18*60*60*1000)score=0;
+          else if(delta<=3*60*60*1000)score+=0.04;
+        }
+        if(score>0&&x.resultProviderId&&String(r.providerId||"")===String(x.resultProviderId))score+=0.12;
+        if(score>0&&x.eventId&&String(r.eventId||r.fixtureId||"")===String(x.eventId))score+=0.08;
+        return {r,score,orientation,dateOK};
+      }).filter(c=>c.dateOK&&c.score>=0.68).sort((a,b)=>b.score-a.score);
+      if(!candidates.length)return null;
+      if(candidates.length>1&&candidates[0].score-candidates[1].score<0.035)return null;
+      const best=candidates[0];
+      if(best.orientation==="reversed")return {...best.r,homeScore:best.r.awayScore,awayScore:best.r.homeScore};
+      return best.r;
+    };
+    const updateRow=x=>{
       const z=findResult(x);
-      const next={...x};
-      if(z){next.status=z.status||next.status;next.homeScore=z.homeScore??next.homeScore;next.awayScore=z.awayScore??next.awayScore;next.resultProviderId=z.providerId||next.resultProviderId;next.sources=z.sources||next.sources||[];next.verificationStatus=z.verificationStatus||next.verificationStatus||"unverified";next.verificationCount=z.verificationCount||next.verificationCount||1;next.outcome=settleOutcome(next);}
-      return next;
-    });
-    const merged=[...h.filter(x=>x.date!==date),...day.filter(x=>x.market!=="Correct Score"),...correctScoreRows];
-    writeHistory(merged);
-    archiveDay(date,{history:merged.filter(x=>x.date===date),predictions:day,correctScores:correctScoreRows,results:resultRows});
-    try{await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,date,predictions:day,correctScores:correctScoreRows,results:resultRows})});}catch{}
-    renderHistory(date,merged.filter(x=>x.date===date));
-  }catch{
-    const day=h.filter(x=>x.date===date).sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time).localeCompare(String(b.time))).slice(0,50);
-    renderHistory(date,day);
+      if(z){x.status=z.status||x.status;x.homeScore=z.homeScore??x.homeScore;x.awayScore=z.awayScore??x.awayScore;x.resultProviderId=z.providerId||x.resultProviderId;x.sources=z.sources||x.sources||[];x.verificationStatus=z.verificationStatus||x.verificationStatus||"unverified";x.verificationCount=z.verificationCount||x.verificationCount||1}
+      x.outcome=settleOutcome(x);
+      return x;
+    };
+    if(requestSequence!==historyRequestSequence)return;
+    day=day.map(updateRow);
+    correctScoreRows=correctScoreRows.map(updateRow);
+    renderHistory(date,[...day,...correctScoreRows]);
+  }catch(e){
+    if(requestSequence!==historyRequestSequence)return;
+    renderHistory(date,[]);
+    $("#historyStatus").textContent="Could not load shared online history: "+(e.message||"server unavailable")+". Please retry.";
   }
 }
 function renderDropdown(id,items,selectedSet){
@@ -300,13 +356,9 @@ async function loadDailyBest(){
     const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
     let rows=(d.predictions||[]).slice(0,10);
-    const saved=readHistory().filter(x=>x.date===date);
-    const byId=new Map(saved.map(x=>[x.id,x]));
-    rows=rows.map(x=>({...x,outcome:byId.get(x.id)?.outcome||"Pending"}));
+    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
     updateOutcomeSummary(rows,"daily");
     box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
-    saveHistoryRows(rows.map(x=>({...x,date,sport:state.sport})),date);
-    archiveDay(date,{dailyBest:rows.map(x=>({...x,date}))});
     refreshHistory(date).catch(()=>{});
     document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
@@ -325,13 +377,6 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
       const eg=x.expectedGoals||{};
       return '<article class="match compact"><div><div class="meta">#'+(i+1)+' · '+esc(x.league||"")+' · '+esc(x.time||"")+'</div><div class="teams">'+esc(x.home||"")+' <span>vs</span> '+esc(x.away||"")+'</div><div class="pick"><span>Correct score</span><b>'+esc(best.score||"—")+'</b></div><div class="pick"><span>Score probability</span><b>'+esc(prob)+'%</b></div><div class="pick"><span>Expected goals</span><b>'+esc(eg.home ?? "—")+' — '+esc(eg.away ?? "—")+'</b></div><small class="muted">Analysis sources: '+esc((x.sources||[]).join(", ")||"Independent statistics + market model")+'</small></div><div class="prob"><strong>'+esc(x.confidence ?? prob)+'%</strong><small>best-score confidence</small></div></article>';
     }).join(''):'<div class="empty">No score analysis is available for this date.</div>';
-  const existing=readHistory();
-  const csRows=rows.slice(0,5).map((x,i)=>{const best=x.topScores?.[0];return {id:"cs_"+(x.eventId||x.id||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,league:x.league,time:x.time,home:x.home,away:x.away,pick:best?.score||"—",market:"Correct Score",odds:best?.probability??"—",confidence:Number(x.confidence||best?.probability||0),status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",sources:x.sources||[],topScores:Array.isArray(x.topScores)?x.topScores.slice(0,5):[],bestScore:x.bestScore||best||null,expectedGoals:x.expectedGoals||null,verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:new Date().toISOString()};});
-  const other=existing.filter(x=>!(x.date===date&&(x.sport||"football")==="football"&&x.market==="Correct Score"));
-  writeHistory([...other,...csRows].slice(-2000));
-  try{
-    await fetch("/api/history",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:"football",date,correctScores:csRows})});
-  }catch{}
   try{await refreshHistory(date)}catch{}
   }catch(e){$("#csStatus").textContent=e.message||"Correct-score analysis failed.";box.innerHTML='<div class="empty">'+esc(e.message||"Correct-score analysis failed.")+'</div>'}
 }
@@ -398,7 +443,7 @@ function scheduleMidnightReset(){
   const now=new Date(),next=new Date(now);next.setHours(24,0,0,0);
   setTimeout(()=>{resetDailyState();scheduleMidnightReset()},Math.max(1000,next-now+100));
 }
-const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(async()=>{const h=readHistory();const pending=h.some(x=>x.outcome==="Pending"&&x.date<=dateKey(new Date()));if(!pending)return;const d=$("#historyDate")?.value||dateKey(new Date());try{await refreshHistory(d)}catch{}},30*60*1000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
+const today=dateKey(new Date());if($("#sportSelect"))$("#sportSelect").value=state.sport;state.settings=readSavedSettings();setDate(today);appDay=today;renderDateChips();renderMarketOptions();renderSelectionOptions();applySettings(state.settings);bindMarketDropdowns();loadLeagues();loadBase();loadBookmakers();renderSlip();$("#historyDate").value=today;renderHistory(today);scheduleMidnightReset();setInterval(resetDailyState,30000);setInterval(()=>{if($("#page-history")?.classList.contains("active-page")){const d=$("#historyDate")?.value||dateKey(new Date());refreshHistory(d).catch(()=>{})}},5*60*1000);(async()=>{try{const d=await (await fetch("/api/results/status")).json();if($("#resultProviderStatus"))$("#resultProviderStatus").textContent=d.verification||"Multi-source result verification active."}catch{}})();
 // Public read-only bridge for additive upgrade modules. No existing state is replaced.
 window.omegaRows=()=>Array.isArray(state.rows)?state.rows.slice():[];
 window.omegaStateDate=()=>state.date||new Date().toISOString().slice(0,10);
