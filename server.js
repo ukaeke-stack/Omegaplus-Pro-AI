@@ -546,6 +546,7 @@ app.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
+app.get("/api/public/features",async(_,r)=>{try{const settings=await getAdminSettings();r.json({ok:true,features:{correctScoreEnabled:settings.correctScoreEnabled}})}catch(e){r.status(503).json({ok:false,error:"Feature settings are temporarily unavailable."})}});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
@@ -925,31 +926,50 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
   try{
     const sport=String(req.query.sport||"football");
     const date=String(req.query.date||localDayKey(Date.now()));
+    const forceRefresh=String(req.query.refresh||"")==="1";
     if(sport!=="football")return r.status(400).json({ok:false,error:"Correct-score analysis is currently available for football."});
+    const today=localDayKey(Date.now());
     const archived=await readPersistentArchive(date,sport);
     const archivedScores=Array.isArray(archived?.correctScores)?archived.correctScores:[];
     const archiveHasRichAnalysis=archivedScores.length>0&&archivedScores.some(x=>x&&(Array.isArray(x.topScores)||x.bestScore||x.expectedGoals));
-    if(archiveHasRichAnalysis){
-      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt||archived.updatedAt||new Date().toISOString(),count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
+    // Only the Correct Score generation timestamp may determine prediction freshness.
+    // General archive.updatedAt can change when History settles and must never refresh old score picks.
+    const generatedMs=Date.parse(archived?.correctScoresGeneratedAt||"");
+    const hasGenerationTimestamp=Number.isFinite(generatedMs)&&generatedMs>0;
+    const archiveFresh=hasGenerationTimestamp&&(Date.now()-generatedMs)>=0&&(Date.now()-generatedMs)<2*60*60*1000;
+    if(!forceRefresh&&archiveHasRichAnalysis&&hasGenerationTimestamp&&(date<today||archiveFresh)){
+      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt,count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
     }
-    const {fixtures}=await getDayFixtures(date,false,sport);
-    // Analyze a broad pool, then return exactly the five strongest matches for the selected day.
-    const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,40);
-    if(!candidates.length)return r.json({ok:true,date,predictions:[],sources:[],message:"No football fixtures found for this date."});
+    const {fixtures}=await getDayFixtures(date,forceRefresh,sport);
+    const now=Date.now();
+    const candidates=fixtures.filter(f=>localDayKey(Number(f.startTimeMs))===date)
+      .filter(f=>String(f.home||"").trim()&&String(f.away||"").trim()&&Number.isFinite(Number(f.startTimeMs)))
+      .filter(f=>date<today||Number(f.startTimeMs)>now+5*60*1000)
+      .sort((a,b)=>Number(a.startTimeMs)-Number(b.startTimeMs)).slice(0,80);
+    if(!candidates.length)return r.json({ok:true,date,sport,predictions:[],sources:[],count:0,requiredCount:5,archived:false,message:"No eligible upcoming football fixtures found for this date. Try refresh or select another date."});
     const base=candidates.map(f=>({id:f.eventId,eventId:f.eventId,home:f.home,away:f.away,league:f.league,time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,marketType:"1x2",pick:"Home",confidence:50,odds:1.5}));
     const enriched=await enrichAndModel(base,{concurrency:3});
     const ranked=enriched.sort((a,b)=>{
-      const as=(a.independentSources||[]).length,bs=(b.independentSources||[]).length;
-      return bs-as||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs;
+      const score=p=>{
+        const sourceCount=(p.independentSources||[]).length;
+        const independent=Number(p.independentConfidence||0);
+        const stats=p.independentStats||{};
+        const hasForm=Boolean(stats.sofascore?.form);
+        const hasXg=Boolean(stats.understat?.home||stats.understat?.away);
+        return sourceCount*8+(Number.isFinite(independent)?independent:0)*0.25+(hasForm?5:0)+(hasXg?7:0);
+      };
+      return score(b)-score(a)||Number(a.startTimeMs)-Number(b.startTimeMs);
     });
     const results=[];
     for(const p of ranked){
-      const f=candidates.find(x=>x.eventId===p.eventId);
+      const f=candidates.find(x=>String(x.eventId)===String(p.eventId));
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
-      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
+      const best=model.scores?.[0];
+      if(!best||!Number.isFinite(Number(best.probability))||Number(best.probability)<3.5)continue;
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,startTimeMs:f.startTimeMs,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number(Number(best.probability).toFixed(1)),independentConfidence:p.independentConfidence??null});
     }
-    results.sort((a,b)=>b.confidence-a.confidence);
+    results.sort((a,b)=>b.confidence-a.confidence||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs);
     const topFive=results.slice(0,5).map(x=>({...x,bestScore:x.topScores?.[0]||null,topScores:x.topScores?.slice(0,5)||[]}));
     const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};
     archive.correctScores=topFive;
@@ -957,7 +977,7 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     archive.updatedAt=new Date().toISOString();
     if(!archive.savedAt)archive.savedAt=archive.updatedAt;
     await writePersistentArchive(date,archive,sport);
-    r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,method:"Top five correct-score matches ranked with independent form/xG/recent-results signals plus live market probability"});
+    r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,refreshed:forceRefresh,scannedFixtures:candidates.length,eligiblePredictions:results.length,method:"Upcoming fixtures ranked by exact-score probability and independent-data coverage"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
