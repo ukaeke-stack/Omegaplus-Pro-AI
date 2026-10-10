@@ -1025,7 +1025,7 @@ function serverSettlePrediction(p,result){
   const status=String(result.status||"").toLowerCase();
   if(/postpon/.test(status))return "Postponed";
   if(/cancel|void|abandon/.test(status))return "Void";
-  if(!/finished|full time|ended|complete|\\bft\\b|final|after extra|penalt/.test(status))return "Pending";
+  if(!/finished|full time|ended|complete|\bft\b|final|after extra|penalt/.test(status))return "Pending";
   if(!["confirmed","single-source"].includes(String(result.verificationStatus||"")))return "Pending";
   if(!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore)))return "Pending";
   const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as;
