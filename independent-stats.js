@@ -286,7 +286,7 @@ export async function independentHealth(){
   out.understat=Boolean(under.data?.teams&&Object.keys(under.data.teams).length);
   out.details.understat={available:out.understat,cached:Boolean(under.cached),stale:Boolean(under.stale),error:under.error||null,teamCount:under.data?.teams?Object.keys(under.data.teams).length:0};
   out.goalApi=Boolean(goalApi.available);
-  out.details.goalApi={...goalApi,role:"cached recent-form fallback when Sofascore samples are missing"};
+  out.details.goalApi={...goalApi,role:"cached recent-form fallback and independent History result confirmation"};
   if(process.env.SPORTMONKS_API_TOKEN){
     if(!sportmonksHealthCache||Date.now()-sportmonksHealthCache.at>5*60*1000){
       try{const leagues=await getMyLeagues();sportmonksHealthCache={at:Date.now(),available:Boolean(leagues.configured&&Array.isArray(leagues.data)),count:Array.isArray(leagues.data)?leagues.data.length:0,error:leagues.error||null};}
