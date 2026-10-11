@@ -62,3 +62,28 @@ test("goal model withholds probabilities when independent inputs are missing", (
   assert.equal(result.probabilities, null);
   assert.equal(result.modelInputsAvailable, false);
 });
+
+test("GOAL API recent-form samples count toward evidence quality", () => {
+  const result = assessPredictionReliability({
+    confidence: 74, marketConfidence: 74, independentConfidence: 72, modelProbability: 71,
+    marketType: "ou", pick: "Over 1.5", independentSources: ["goalapi"],
+    independentStats: { goalApi: { form: { homeMatches: 9, awayMatches: 8 } } }
+  });
+  assert.equal(result.evidenceLevel, "Moderate");
+  assert.equal(result.recentSampleSize, 8);
+  assert.equal(result.independentSourceCount, 1);
+});
+
+test("derived model confidence blends market and model once, not duplicate form signal", () => {
+  const result = deriveModel({
+    marketConfidence: 80, independentConfidence: 20, marketType: "ou", pick: "Over 1.5",
+    independentStats: { sofascore: { form: {
+      homeMatches: 8, awayMatches: 8, homeGoalsFor: 1.8, awayGoalsFor: 1.4,
+      homeGoalsAgainst: 1.1, awayGoalsAgainst: 1.2,
+      homeWinRate: 0.5, awayWinRate: 0.4
+    } } }
+  });
+  assert.equal(result.modelInputsAvailable, undefined);
+  assert.ok(Number.isFinite(result.modelProbability));
+  assert.equal(result.ensembleConfidence, Math.round(80 * 0.65 + result.modelProbability * 0.35));
+});
