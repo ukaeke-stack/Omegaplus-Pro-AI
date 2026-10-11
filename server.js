@@ -165,38 +165,75 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-// SportyBet's upcoming-events endpoint requires marketId, including for
-// non-football sports. Never retry by omitting it: that produces HTTP 422
-// "Invalid". If the broad market list is rejected, retry the minimal query shape
-// while retaining marketId, then probe known common IDs one by one.
+// SportyBet's upcoming-events endpoint validates marketId for non-football
+// feeds too. A retry without marketId causes HTTP 422 "Invalid". If the broad
+// market query is rejected or returns no useful feed, probe known market IDs
+// while retaining the required parameters and merge only provider-returned data.
 async function fetchUpcomingSportPage(sportDef,params){
+  const endpoint="/factsCenter/pcUpcomingEvents?";
+  const eventCount=body=>(body?.data?.tournaments||[]).reduce((n,t)=>n+(t.events||[]).length,0);
+  const marketCount=body=>(body?.data?.tournaments||[]).reduce((n,t)=>n+(t.events||[]).reduce((m,e)=>m+(e.markets||[]).length,0),0);
+  let firstBody=null,firstError=null;
   try{
-    return await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-  }catch(firstError){
-    if(sportDef.id==="football"||!String(firstError?.message||"").includes("HTTP 422"))throw firstError;
-    const pageSize=params.get("pageSize")||"100";
-    const pageNum=params.get("pageNum")||"1";
-    const candidates=[params.get("marketId"),"1","18","10","29","11"].filter(Boolean);
-    const seen=new Set();
-    const errors=[];
-    for(const marketId of candidates){
-      if(seen.has(marketId))continue;
-      seen.add(marketId);
-      const fallback=new URLSearchParams({
-        sportId:sportDef.sportId,
-        marketId,
-        pageSize,
-        pageNum,
-        _t:String(Date.now())
-      });
-      try{
-        return await sportyFetch("/factsCenter/pcUpcomingEvents?"+fallback);
-      }catch(error){
-        errors.push("marketId="+marketId+": "+String(error?.message||error));
+    firstBody=await sportyFetch(endpoint+params);
+    if(sportDef.id==="football"||(eventCount(firstBody)>0&&marketCount(firstBody)>0))return firstBody;
+  }catch(error){
+    firstError=error;
+    if(sportDef.id==="football"&&!String(error?.message||"").includes("HTTP 422"))throw error;
+  }
+  if(sportDef.id==="football"){
+    if(firstBody)return firstBody;
+    throw firstError||new Error("SportyBet returned no fixture data");
+  }
+  const pageSize=params.get("pageSize")||"100";
+  const pageNum=params.get("pageNum")||"1";
+  const candidates=[params.get("marketId"),"1","18","10","29","11"].filter(Boolean);
+  const bodies=[];
+  if(firstBody)bodies.push(firstBody);
+  const errors=[];
+  const seen=new Set();
+  for(const marketId of candidates){
+    if(seen.has(marketId))continue;
+    seen.add(marketId);
+    // The initial request already tried this exact query.
+    if(firstBody&&marketId===params.get("marketId"))continue;
+    const fallback=new URLSearchParams({sportId:sportDef.sportId,marketId,pageSize,pageNum,_t:String(Date.now())});
+    try{
+      const body=await sportyFetch(endpoint+fallback);
+      bodies.push(body);
+      if(eventCount(body)>0&&marketCount(body)>0)break;
+    }catch(error){
+      errors.push("marketId="+marketId+": "+String(error?.message||error));
+    }
+  }
+  if(!bodies.length)throw new Error("SportyBet rejected non-football fixture queries. "+[firstError?.message,...errors].filter(Boolean).join(" | ").slice(0,500));
+  // Deduplicate events across market probes and merge only real markets/outcomes
+  // returned by SportyBet; no synthetic fixtures or odds are created.
+  const tournaments=new Map();
+  for(const body of bodies){
+    for(const tournament of body?.data?.tournaments||[]){
+      const tournamentKey=String(tournament.id||tournament.name||"unknown");
+      if(!tournaments.has(tournamentKey))tournaments.set(tournamentKey,{...tournament,events:[]});
+      const target=tournaments.get(tournamentKey);
+      const eventMap=new Map(target.events.map(event=>[String(event.eventId||""),event]));
+      for(const event of tournament.events||[]){
+        const id=String(event.eventId||"");
+        if(!id)continue;
+        const current=eventMap.get(id);
+        if(!current){
+          const copy={...event,markets:[...(event.markets||[])]};
+          target.events.push(copy);eventMap.set(id,copy);continue;
+        }
+        const known=new Set((current.markets||[]).map(m=>String(m.id||"")+"|"+String(m.specifier||"")));
+        for(const market of event.markets||[]){
+          const key=String(market.id||"")+"|"+String(market.specifier||"");
+          if(!known.has(key)){current.markets.push(market);known.add(key);}
+        }
       }
     }
-    throw new Error("SportyBet rejected non-football fixture queries. "+errors.join(" | ").slice(0,500));
   }
+  const merged={...(bodies.find(body=>body?.data)||bodies[0]),data:{...(bodies.find(body=>body?.data)?.data||{}),tournaments:[...tournaments.values()]}};
+  return merged;
 }
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
