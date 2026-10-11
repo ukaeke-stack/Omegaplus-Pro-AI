@@ -1,9 +1,13 @@
+import { getGoalApiTeamForm, checkGoalApiStatsHealth } from "./goal-api-stats.js";
+import { getMyLeagues } from "./sportmonks-results.js";
+
 const SOFASCORE_BASE="https://api.sofascore.com/api/v1";
 const UNDERSTAT_BASE="https://understat.com/";
 const FETCH_TIMEOUT=7000;
 const CACHE_TTL=6*60*60*1000;
 const MAX_CONCURRENCY=4;
 const cache=new Map();
+let sportmonksHealthCache=null;
 
 function key(v){return String(v||"").toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim()}
 function seasonStart(date){const d=new Date(date+"T12:00:00Z");const y=d.getUTCFullYear();return d.getUTCMonth()>=6?y:y-1}
@@ -50,7 +54,7 @@ async function mapLimit(items,limit,fn){
 }
 function teamNamesMatch(a,b){
   const x=key(a),y=key(b);
-  return x===y||x.includes(y)||y.includes(x);
+  return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x));
 }
 function eventTeamsMatch(e,home,away){
   const eh=e.homeTeam?.name||e.homeTeam?.shortName||"";
@@ -110,11 +114,15 @@ async function sofaTeamRecent(teamId){
   }catch{return[]}
 }
 function summarizeRecent(events,teamId){
-  const finished=events.filter(e=>e.status?.type==="finished"||e.status?.code===100).slice(-10);
+  const finished=events.filter(e=>e.status?.type==="finished"||e.status?.code===100)
+    .sort((a,b)=>Number(b.startTimestamp||0)-Number(a.startTimestamp||0)).slice(0,10);
   let gf=0,ga=0,w=0,d=0,l=0,over15=0,over25=0,btts=0;
   for(const e of finished){
     const home=e.homeTeam?.id===teamId;
-    const hs=Number(e.homeScore?.normaltime??e.homeScore?.current??0),as=Number(e.awayScore?.normaltime??e.awayScore?.current??0);
+    const rawHome=e.homeScore?.normaltime??e.homeScore?.current,rawAway=e.awayScore?.normaltime??e.awayScore?.current;
+    if(rawHome===null||rawHome===undefined||rawAway===null||rawAway===undefined||rawHome===""||rawAway==="")continue;
+    const hs=Number(rawHome),as=Number(rawAway);
+    if(!Number.isFinite(hs)||!Number.isFinite(as)||hs<0||as<0)continue;
     const f=home?hs:as,a=home?as:hs;
     gf+=f;ga+=a;if(f>a)w++;else if(f===a)d++;else l++;
     if(hs+as>1.5)over15++;if(hs+as>2.5)over25++;if(hs>0&&as>0)btts++;
@@ -135,11 +143,12 @@ function understatTeamSummary(data,teamName){
   const team=Object.values(data.teams).find(t=>teamNamesMatch(t.title,teamName));
   if(!team?.history?.length)return null;
   const h=team.history.slice(-10);
-  const avg=(field)=>{const vals=h.map(x=>Number(x[field])).filter(Number.isFinite);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null};
+  const avg=(field)=>{const vals=h.map(x=>x[field]).filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))).map(Number);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null};
   return{xg:avg("xG"),xga:avg("xGA"),npxg:avg("npxG"),npxga:avg("npxGA"),shots:avg("shots"),deep:avg("deep"),wins:h.filter(x=>Number(x.wins)>0).length};
 }
-async function independentStatsForFixture(fixture){
+async function independentStatsForFixture(fixture,sport="football"){
   const date=new Date(fixture.startTimeMs).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});
+  if(sport!=="football")return{available:[],date,sofascore:{eventId:null,form:null,stats:null,lineups:null,injuries:{home:null,away:null}},goalApi:{available:false,form:null,home:null,away:null,error:null},understat:{home:null,away:null},models:{expectedGoals:null,probabilities:null,strengthSignals:{recentForm:null,xgEdge:null},modelAgreement:null,methodology:"Football-only xG and goal models are not applied to non-football sports."}};
   const sofa=await findSofaEvent(fixture);
   let homeRecent=null,awayRecent=null,sofaStats={},lineups=null,injuries={home:null,away:null};
   if(sofa.found){
@@ -151,7 +160,8 @@ async function independentStatsForFixture(fixture){
   }
   const season=seasonStart(date),ud=await understatLeagueData(fixture.league,season);
   const uh=understatTeamSummary(ud,fixture.home),ua=understatTeamSummary(ud,fixture.away);
-  const form=homeRecent&&awayRecent?{
+  const sofaForm=homeRecent&&awayRecent?{
+    homeMatches:homeRecent.matches,awayMatches:awayRecent.matches,
     homeWinRate:homeRecent.winRate,awayWinRate:awayRecent.winRate,
     homeOver15:homeRecent.over15Rate,awayOver15:awayRecent.over15Rate,
     homeOver25:homeRecent.over25Rate,awayOver25:awayRecent.over25Rate,
@@ -159,6 +169,7 @@ async function independentStatsForFixture(fixture){
     homeGoalsFor:homeRecent.goalsFor,awayGoalsFor:awayRecent.goalsFor,
     homeGoalsAgainst:homeRecent.goalsAgainst,awayGoalsAgainst:awayRecent.goalsAgainst
   }:null;
+  let form=sofaForm;
   const shots=(sofaStats.totalShots||sofaStats.shotsOnTarget||sofaStats.bigChances||sofaStats.expectedGoals)?{
     homeShots:sofaStats.totalShots?.home??null,awayShots:sofaStats.totalShots?.away??null,
     homeOnTarget:sofaStats.shotsOnTarget?.home??null,awayOnTarget:sofaStats.shotsOnTarget?.away??null,
@@ -168,16 +179,42 @@ async function independentStatsForFixture(fixture){
     homeXg:sofaStats.expectedGoals?.home??null,awayXg:sofaStats.expectedGoals?.away??null,
     homePPDA:sofaStats.ppda?.home??null,awayPPDA:sofaStats.ppda?.away??null
   }:null;
-  const available=[sofa.found?"sofascore":null,ud?"understat":null].filter(Boolean);
+  let goalApi={available:false,home:null,away:null,form:null,error:null};
+  // Use GOAL API as a cached form fallback only when Sofascore's recent sample is missing or too small.
+  if(!form||Number(form.homeMatches)<5||Number(form.awayMatches)<5){
+    const result=await getGoalApiTeamForm(fixture.home,fixture.away,date);
+    goalApi={...result,form:result.available?{
+      homeMatches:result.home.matches,awayMatches:result.away.matches,
+      homeWinRate:result.home.winRate,awayWinRate:result.away.winRate,
+      homeOver15:result.home.over15Rate,awayOver15:result.away.over15Rate,
+      homeOver25:result.home.over25Rate,awayOver25:result.away.over25Rate,
+      homeBtts:result.home.bttsRate,awayBtts:result.away.bttsRate,
+      homeGoalsFor:result.home.goalsFor,awayGoalsFor:result.away.goalsFor,
+      homeGoalsAgainst:result.home.goalsAgainst,awayGoalsAgainst:result.away.goalsAgainst
+    }:null};
+    if(goalApi.form&&(!form||Number(form.homeMatches)<5||Number(form.awayMatches)<5))form=goalApi.form;
+  }
+  const available=[
+    (sofaForm&&(Number(sofaForm.homeMatches)>0||Number(sofaForm.awayMatches)>0))||shots||lineups||injuries.home||injuries.away?"sofascore":null,
+    uh&&ua?"understat":null,
+    goalApi.available?"goalapi":null
+  ].filter(Boolean);
   const derived=buildIndependentModels({form,uh,ua,shots});
-  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots,lineups,injuries},understat:{home:uh,away:ua},models:derived};
+  return{available,date,sofascore:{eventId:sofa.eventId||null,form:sofaForm,stats:shots,lineups,injuries},goalApi:{available:goalApi.available,form:goalApi.form,home:goalApi.home,away:goalApi.away,error:goalApi.error||null},understat:{home:uh,away:ua},models:derived};
 }
 function poissonPmf(lambda,k){if(!Number.isFinite(lambda)||lambda<0)return 0;let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p}
 function poissonOver(lambda,line){let s=0;const max=Math.max(12,Math.ceil(lambda+10));for(let k=0;k<=max;k++)if(k<=line)s+=poissonPmf(lambda,k);return clamp(1-s,0,1)}
 function buildIndependentModels({form,uh,ua,shots}){
-  const hx=Number(uh?.xg),ax=Number(ua?.xg),hxa=Number(uh?.xga),axa=Number(ua?.xga);
-  const homeGoals=(Number.isFinite(hx)&&Number.isFinite(axa))?(hx+axa)/2:(Number.isFinite(form?.homeGoalsFor)?form.homeGoalsFor:null);
-  const awayGoals=(Number.isFinite(ax)&&Number.isFinite(hxa))?(ax+hxa)/2:(Number.isFinite(form?.awayGoalsFor)?form.awayGoalsFor:null);
+  const hasForm=Number(form?.homeMatches)>=5&&Number(form?.awayMatches)>=5&&Number.isFinite(Number(form?.homeGoalsFor))&&Number.isFinite(Number(form?.awayGoalsFor));
+  const hasXg=[uh?.xg,ua?.xg,uh?.xga,ua?.xga].every(v=>v!==null&&v!==undefined&&Number.isFinite(Number(v)));
+  if(!hasForm&&!hasXg)return{expectedGoals:null,probabilities:null,strengthSignals:{recentForm:null,xgEdge:null},modelAgreement:null,methodology:"No valid independent inputs; model probabilities withheld rather than synthesized."};
+  const hasHomeXg=uh?.xg!==null&&uh?.xg!==undefined&&Number.isFinite(Number(uh.xg));
+  const hasAwayXg=ua?.xg!==null&&ua?.xg!==undefined&&Number.isFinite(Number(ua.xg));
+  const hasHomeXga=uh?.xga!==null&&uh?.xga!==undefined&&Number.isFinite(Number(uh.xga));
+  const hasAwayXga=ua?.xga!==null&&ua?.xga!==undefined&&Number.isFinite(Number(ua.xga));
+  const hx=hasHomeXg?Number(uh.xg):null,ax=hasAwayXg?Number(ua.xg):null,hxa=hasHomeXga?Number(uh.xga):null,axa=hasAwayXga?Number(ua.xga):null;
+  const homeGoals=(hasHomeXg&&hasAwayXga)?(hx+axa)/2:(form?.homeGoalsFor!==null&&form?.homeGoalsFor!==undefined?Number(form.homeGoalsFor):null);
+  const awayGoals=(hasAwayXg&&hasHomeXga)?(ax+hxa)/2:(form?.awayGoalsFor!==null&&form?.awayGoalsFor!==undefined?Number(form.awayGoalsFor):null);
   const h=Math.max(0.05,Number(homeGoals)||0.05),a=Math.max(0.05,Number(awayGoals)||0.05),total=h+a;
   const over15=poissonOver(total,1),over25=poissonOver(total,2),btts=(1-Math.exp(-h))*(1-Math.exp(-a));
   const homeWin=(()=>{let p=0;for(let i=0;i<=10;i++)for(let j=0;j<i;j++)p+=poissonPmf(h,i)*poissonPmf(a,j);return p})();
@@ -185,7 +222,7 @@ function buildIndependentModels({form,uh,ua,shots}){
   const draw=Math.max(0,1-homeWin-awayWin);
   const formEdge=form?.homeWinRate!=null&&form?.awayWinRate!=null?form.homeWinRate-form.awayWinRate:null;
   const formStrength=formEdge==null?null:clamp(50+formEdge*50);
-  const xgStrength=Number.isFinite(hx)&&Number.isFinite(ax)?clamp(50+(hx-ax)*18):null;
+  const xgStrength=hasHomeXg&&hasAwayXg?clamp(50+(hx-ax)*18):null;
   const signals=[formStrength,xgStrength,homeWin*100].filter(Number.isFinite);
   return{expectedGoals:{home:Number(h.toFixed(2)),away:Number(a.toFixed(2)),total:Number(total.toFixed(2))},
     probabilities:{home:Number((homeWin*100).toFixed(1)),draw:Number((draw*100).toFixed(1)),away:Number((awayWin*100).toFixed(1)),over15:Number((over15*100).toFixed(1)),over25:Number((over25*100).toFixed(1)),btts:Number((btts*100).toFixed(1))},
@@ -194,7 +231,9 @@ function buildIndependentModels({form,uh,ua,shots}){
 }
 function clamp(n,min=0,max=100){return Math.max(min,Math.min(max,n))}
 function independentConfidence(stats,type){
-  const f=stats?.sofascore?.form,u=stats?.understat;
+  const sf=stats?.sofascore?.form,gf=stats?.goalApi?.form;
+  const sfN=Math.min(Number(sf?.homeMatches)||0,Number(sf?.awayMatches)||0),gfN=Math.min(Number(gf?.homeMatches)||0,Number(gf?.awayMatches)||0);
+  const f=gfN>sfN?gf:sf,u=stats?.understat;
   const vals=[];
   if(f){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
@@ -214,9 +253,9 @@ function independentConfidence(stats,type){
   }
   return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
 }
-export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY}={}){
+export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY,sport="football",confidenceFloor=50}={}){
   const enriched=await mapLimit(predictions,concurrency,async p=>{
-    const stats=await independentStatsForFixture(p);
+    const stats=await independentStatsForFixture(p,sport);
     const type=p.marketType==="ou"&&/^over\s*1\.5$/i.test(p.pick)?"over1.5":
       p.marketType==="ou"&&/^over\s*2\.5$/i.test(p.pick)?"over2.5":
       p.marketType==="btts"?"btts":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
@@ -224,15 +263,37 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
     const market=Number(p.confidence)||0;
     const modelHome=stats.models?.probabilities?.home;
     const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
-    const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
-    const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
-    return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
+    // Model and independentConfidence can come from the same form/xG sample. Do not count both twice.
+    const confidence=modelSignal!==null&&modelSignal!==undefined&&Number.isFinite(modelSignal)
+      ? (Number.isFinite(market)?Math.round(market*0.65+modelSignal*0.35):Math.round(modelSignal))
+      : independent!==null&&independent!==undefined&&Number.isFinite(independent)
+        ? (Number.isFinite(market)?Math.round(market*0.75+independent*0.25):Math.round(independent))
+        : market;
+    return{...p,confidence:clamp(confidence,confidenceFloor,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
   });
   return enriched;
 }
 export async function independentHealth(){
-  const out={sofascore:false,understat:false};
-  try{await cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+new Date().toISOString().slice(0,10));out.sofascore=true}catch{}
-  try{await cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(new Date().toISOString().slice(0,10)),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE});out.understat=true}catch{}
+  const date=new Date().toISOString().slice(0,10);
+  const out={sofascore:false,understat:false,goalApi:false,sportmonks:false,checkedAt:new Date().toISOString(),details:{}};
+  const [sofa,under,goalApi]=await Promise.all([
+    cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+date),
+    cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(date),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE}),
+    checkGoalApiStatsHealth()
+  ]);
+  out.sofascore=Array.isArray(sofa.data?.events);
+  out.details.sofascore={available:out.sofascore,cached:Boolean(sofa.cached),stale:Boolean(sofa.stale),error:sofa.error||null,count:Array.isArray(sofa.data?.events)?sofa.data.events.length:0};
+  out.understat=Boolean(under.data?.teams&&Object.keys(under.data.teams).length);
+  out.details.understat={available:out.understat,cached:Boolean(under.cached),stale:Boolean(under.stale),error:under.error||null,teamCount:under.data?.teams?Object.keys(under.data.teams).length:0};
+  out.goalApi=Boolean(goalApi.available);
+  out.details.goalApi={...goalApi,role:"cached recent-form fallback and independent History result confirmation"};
+  if(process.env.SPORTMONKS_API_TOKEN){
+    if(!sportmonksHealthCache||Date.now()-sportmonksHealthCache.at>5*60*1000){
+      try{const leagues=await getMyLeagues();sportmonksHealthCache={at:Date.now(),available:Boolean(leagues.configured&&Array.isArray(leagues.data)),count:Array.isArray(leagues.data)?leagues.data.length:0,error:leagues.error||null};}
+      catch(error){sportmonksHealthCache={at:Date.now(),available:false,count:0,error:error?.message||"Sportmonks health check failed"};}
+    }
+    out.sportmonks=sportmonksHealthCache.available;
+    out.details.sportmonks={...sportmonksHealthCache,configured:true,role:"fixtures/results source; not counted as an extra model probability"};
+  }else out.details.sportmonks={available:false,configured:false,count:0,error:"SPORTMONKS_API_TOKEN is not configured"};
   return out;
 }
