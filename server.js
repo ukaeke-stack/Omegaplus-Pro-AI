@@ -901,7 +901,10 @@ async function buildDailyBest(date,sport="football"){
   });
   // Keep a broad but bounded shortlist: the independent-stat provider calls dominate cold-start latency.
   // Sixty candidates preserve a useful ranking pool while avoiding slow enrichment of marginal picks.
-  const shortlist=unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||a.odds-b.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
+  // Enrich at most one candidate per match. Multiple markets from the same fixture cannot all be selected, and previously crowded the shortlist while slowing the first load.
+  const byEvent=new Map();
+  for(const candidate of unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs))if(!byEvent.has(candidate.eventId))byEvent.set(candidate.eventId,candidate);
+  const shortlist=[...byEvent.values()].slice(0,60);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:8}));
   const ranked=enriched.map(x=>{
     const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
