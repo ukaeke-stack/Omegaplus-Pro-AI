@@ -1,6 +1,7 @@
 import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
 import {put,get} from "@vercel/blob";
+import pg from "pg";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
@@ -23,7 +24,7 @@ const APP_VERSION_CODE=5;
 const ANDROID_TARGET_SDK=36;
 const MIN_SUPPORTED_WEB_VERSION="1.6.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="mixed-top10-v1";
+const DAILY_SELECTION_VERSION="rollback-quality-top10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -75,18 +76,70 @@ const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
 const ARCHIVE_PREFIX="omegaplus-history";
-const LOCAL_DATA_ROOT=process.env.DATA_DIR||"/data";
-function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
-function localArchivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return path.join(LOCAL_DATA_ROOT,ARCHIVE_PREFIX,date.slice(0,4),date.slice(5,7),date.slice(8,10)+suffix+".json")}
+const {Pool}=pg;
+let historyPool=null,historySchemaPromise=null;
 const blobConfigured=Boolean(process.env.BLOB_READ_WRITE_TOKEN||(process.env.VERCEL_OIDC_TOKEN&&process.env.BLOB_STORE_ID));
+function getHistoryPool(){
+  if(!process.env.DATABASE_URL)return null;
+  if(!historyPool){
+    historyPool=new Pool({connectionString:process.env.DATABASE_URL,max:5,idleTimeoutMillis:30000,connectionTimeoutMillis:5000,ssl:process.env.DATABASE_SSL==="false"?false:{rejectUnauthorized:false}});
+    historyPool.on("error",err=>console.error("History PostgreSQL pool error:",err.message));
+  }
+  return historyPool;
+}
+async function ensureHistoryTable(){
+  const pool=getHistoryPool();
+  if(!pool)throw new Error("PostgreSQL is not configured for History.");
+  if(!historySchemaPromise)historySchemaPromise=pool.query(`
+    CREATE TABLE IF NOT EXISTS public.history_archives(
+      archive_date date NOT NULL,
+      sport text NOT NULL DEFAULT 'football',
+      archive jsonb NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(archive_date,sport)
+    );
+    CREATE INDEX IF NOT EXISTS history_archives_updated_at_idx ON public.history_archives(updated_at DESC);
+  `).catch(err=>{historySchemaPromise=null;throw err});
+  await historySchemaPromise;
+  return pool;
+}
+function archivePath(date,sport="football"){const suffix=sport==="football"?"":"-"+sport;return ARCHIVE_PREFIX+"/"+date.slice(0,4)+"/"+date.slice(5,7)+"/"+date.slice(8,10)+suffix+".json"}
+function validArchiveKey(date,sport){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([a-z0-9_]{1,40})$/.test(sport))throw new Error("Invalid History date or sport.");
+}
+async function readBlobArchive(date,sport="football"){
+  if(!blobConfigured)return null;
+  const item=await get(archivePath(date,sport),{access:"private",useCache:false});
+  if(!item)return null;
+  return JSON.parse(await new Response(item.stream).text());
+}
+async function writeBlobBackup(date,data,sport="football"){
+  if(!blobConfigured)return;
+  try{await put(archivePath(date,sport),JSON.stringify(data),{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}
+  catch(err){console.warn("History Blob backup failed; PostgreSQL remains authoritative:",err.message)}
+}
 async function readPersistentArchive(date,sport="football"){
-  if(blobConfigured){try{const x=await get(archivePath(date,sport),{access:"private",useCache:false});return JSON.parse(await new Response(x.stream).text())}catch{}}
-  try{return JSON.parse(await fs.readFile(localArchivePath(date,sport),"utf8"))}catch{return null}
+  validArchiveKey(date,sport);
+  const pool=await ensureHistoryTable();
+  const saved=await pool.query("SELECT archive FROM public.history_archives WHERE archive_date=$1::date AND sport=$2",[date,sport]);
+  if(saved.rows.length)return saved.rows[0].archive;
+  // Lazy, non-destructive migration: copy an existing Blob archive to PostgreSQL without deleting the original.
+  const legacy=await readBlobArchive(date,sport);
+  if(legacy){
+    await pool.query("INSERT INTO public.history_archives(archive_date,sport,archive) VALUES($1::date,$2,$3::jsonb) ON CONFLICT(archive_date,sport) DO NOTHING",[date,sport,JSON.stringify(legacy)]);
+    const migrated=await pool.query("SELECT archive FROM public.history_archives WHERE archive_date=$1::date AND sport=$2",[date,sport]);
+    if(migrated.rows.length)return migrated.rows[0].archive;
+  }
+  return null;
 }
 async function writePersistentArchive(date,data,sport="football"){
-  const payload=JSON.stringify(data);
-  if(blobConfigured){try{return await put(archivePath(date,sport),payload,{access:"private",addRandomSuffix:false,allowOverwrite:true,contentType:"application/json"})}catch{}}
-  const file=localArchivePath(date,sport);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,payload,"utf8");return {url:"local://"+file};
+  validArchiveKey(date,sport);
+  if(!data||typeof data!=="object"||Array.isArray(data))throw new Error("Invalid History archive payload.");
+  const pool=await ensureHistoryTable();
+  await pool.query("INSERT INTO public.history_archives(archive_date,sport,archive,updated_at) VALUES($1::date,$2,$3::jsonb,now()) ON CONFLICT(archive_date,sport) DO UPDATE SET archive=EXCLUDED.archive,updated_at=now()",[date,sport,JSON.stringify(data)]);
+  // Keep the legacy copy as a recoverable backup; PostgreSQL is the source of truth.
+  await writeBlobBackup(date,data,sport);
 }
 
 
@@ -563,6 +616,7 @@ app.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{
 });
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
+app.get("/api/public/features",async(_,r)=>{try{const settings=await getAdminSettings();r.json({ok:true,features:{correctScoreEnabled:settings.correctScoreEnabled}})}catch(e){r.status(503).json({ok:false,error:"Feature settings are temporarily unavailable."})}});
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
@@ -667,8 +721,43 @@ async function getDayFixtures(date,force=false,sport="football"){
 app.get("/api/scan",async(req,r)=>{
   try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
-app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
-app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.correctScores))next.correctScores=req.body.correctScores.slice(0,5);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.get("/api/history",async(req,r)=>{
+  try{
+    const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+    const archive=await readPersistentArchive(date,sport);
+    if(archive){
+      let resultRows=[];
+      try{const rr=await getVerifiedResults(date,false,sport);resultRows=Array.isArray(rr.results)?rr.results:[]}catch(e){console.warn("History settlement results unavailable:",e.message)}
+      if(resultRows.length){
+        let changed=false;
+        const settleRows=rows=>(Array.isArray(rows)?rows:[]).map(p=>{
+          const result=matchArchiveResult(p,resultRows,date);
+          if(!result)return p;
+          const status=String(result.status||"");
+          const outcome=serverSettlePrediction(p,result);
+          const updated={...p,status:result.status||p.status,homeScore:result.homeScore??p.homeScore,awayScore:result.awayScore??p.awayScore,resultProviderId:result.providerId||p.resultProviderId,sources:result.sources||p.sources,verificationStatus:result.verificationStatus||p.verificationStatus,verificationCount:result.verificationCount||p.verificationCount};
+          if(outcome!=="Pending"||result.verificationStatus==="conflict")updated.outcome=outcome;
+          if(updated.outcome!==p.outcome||updated.status!==p.status||updated.homeScore!==p.homeScore||updated.awayScore!==p.awayScore||updated.verificationStatus!==p.verificationStatus||updated.resultProviderId!==p.resultProviderId||updated.verificationCount!==p.verificationCount||JSON.stringify(updated.sources||[])!==JSON.stringify(p.sources||[]))changed=true;
+          return updated;
+        });
+        const predictions=settleRows(archive.predictions);
+        const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
+        const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
+        const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
+        if(changed||resultsChanged){
+          archive.predictions=predictions;
+          archive.correctScores=correctScores;
+          archive.results=resultRows;
+          archive.settlementUpdatedAt=new Date().toISOString();
+          archive.updatedAt=archive.settlementUpdatedAt;
+          await writePersistentArchive(date,archive,sport);
+        }
+      }
+    }
+    r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"postgres"});
+  }catch(e){console.error("History read/settlement failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}
+});
+app.post("/api/history",async(_req,r)=>r.status(405).json({ok:false,error:"History is server-managed and read-only from the public app."}));
 app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
@@ -855,7 +944,7 @@ async function buildDailyBest(date,sport="football"){
   });
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
-  const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
+  const ranked=enriched.filter(x=>!["D","F"].includes(String(x.qualityGrade||"").toUpperCase())).sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
   // First guarantee market diversity: take the strongest available pick from each market type.
   for(const type of types){
@@ -908,31 +997,53 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
   try{
     const sport=String(req.query.sport||"football");
     const date=String(req.query.date||localDayKey(Date.now()));
+    const forceRefresh=String(req.query.refresh||"")==="1";
     if(sport!=="football")return r.status(400).json({ok:false,error:"Correct-score analysis is currently available for football."});
+    const today=localDayKey(Date.now());
     const archived=await readPersistentArchive(date,sport);
     const archivedScores=Array.isArray(archived?.correctScores)?archived.correctScores:[];
     const archiveHasRichAnalysis=archivedScores.length>0&&archivedScores.some(x=>x&&(Array.isArray(x.topScores)||x.bestScore||x.expectedGoals));
-    if(archiveHasRichAnalysis){
-      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt||archived.updatedAt||new Date().toISOString(),count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
+    // Only the Correct Score generation timestamp may determine prediction freshness.
+    // General archive.updatedAt can change when History settles and must never refresh old score picks.
+    const generatedMs=Date.parse(archived?.correctScoresGeneratedAt||"");
+    const hasGenerationTimestamp=Number.isFinite(generatedMs)&&generatedMs>0;
+    const archiveFresh=hasGenerationTimestamp&&(Date.now()-generatedMs)>=0&&(Date.now()-generatedMs)<2*60*60*1000;
+    if(!forceRefresh&&archiveHasRichAnalysis&&hasGenerationTimestamp&&(date<today||archiveFresh)){
+      return r.json({ok:true,date,sport,predictions:archivedScores.slice(0,5),generatedAt:archived.correctScoresGeneratedAt,count:Math.min(5,archivedScores.length),requiredCount:5,archived:true,method:"Archived correct-score analysis"});
     }
-    const {fixtures}=await getDayFixtures(date,false,sport);
-    // Analyze a broad pool, then return exactly the five strongest matches for the selected day.
-    const candidates=fixtures.filter(f=>localDayKey(f.startTimeMs)===date).filter(f=>f.home&&f.away).slice(0,40);
-    if(!candidates.length)return r.json({ok:true,date,predictions:[],sources:[],message:"No football fixtures found for this date."});
+    const {fixtures}=await getDayFixtures(date,forceRefresh,sport);
+    const now=Date.now();
+    const candidates=fixtures.filter(f=>localDayKey(Number(f.startTimeMs))===date)
+      .filter(f=>String(f.home||"").trim()&&String(f.away||"").trim()&&Number.isFinite(Number(f.startTimeMs)))
+      .filter(f=>date<today||Number(f.startTimeMs)>now+5*60*1000)
+      .sort((a,b)=>Number(a.startTimeMs)-Number(b.startTimeMs)).slice(0,80);
+    if(!candidates.length)return r.json({ok:true,date,sport,predictions:[],sources:[],count:0,requiredCount:5,archived:false,message:"No eligible upcoming football fixtures found for this date. Try refresh or select another date."});
     const base=candidates.map(f=>({id:f.eventId,eventId:f.eventId,home:f.home,away:f.away,league:f.league,time:new Date(f.startTimeMs).toLocaleTimeString("en-NG",{hour:"2-digit",minute:"2-digit",hour12:false}),startTimeMs:f.startTimeMs,marketType:"1x2",pick:"Home",confidence:50,odds:1.5}));
     const enriched=await enrichAndModel(base,{concurrency:3});
     const ranked=enriched.sort((a,b)=>{
-      const as=(a.independentSources||[]).length,bs=(b.independentSources||[]).length;
-      return bs-as||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs;
+      const score=p=>{
+        const sourceCount=(p.independentSources||[]).length;
+        const independent=Number(p.independentConfidence||0);
+        const stats=p.independentStats||{};
+        const hasForm=Boolean(stats.sofascore?.form);
+        const hasXg=Boolean(stats.understat?.home||stats.understat?.away);
+        return sourceCount*8+(Number.isFinite(independent)?independent:0)*0.25+(hasForm?5:0)+(hasXg?7:0);
+      };
+      return score(b)-score(a)||Number(a.startTimeMs)-Number(b.startTimeMs);
     });
     const results=[];
     for(const p of ranked){
-      const f=candidates.find(x=>x.eventId===p.eventId);
+      const f=candidates.find(x=>String(x.eventId)===String(p.eventId));
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
-      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number((model.scores[0]?.probability||0).toFixed(1))});
+      const best=model.scores?.[0];
+      const hasRealInputs=(model.sources||[]).some(source=>!String(source).startsWith("Fallback goal model"));
+      const egHome=Number(model.expectedGoals?.home),egAway=Number(model.expectedGoals?.away);
+      if(!hasRealInputs||!Number.isFinite(egHome)||!Number.isFinite(egAway)||egHome<0.3||egAway<0.3||egHome+egAway>5.8)continue;
+      if(!best||!Number.isFinite(Number(best.probability))||Number(best.probability)<3.5)continue;
+      results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,startTimeMs:f.startTimeMs,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number(Number(best.probability).toFixed(1)),independentConfidence:p.independentConfidence??null});
     }
-    results.sort((a,b)=>b.confidence-a.confidence);
+    results.sort((a,b)=>b.confidence-a.confidence||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs);
     const topFive=results.slice(0,5).map(x=>({...x,bestScore:x.topScores?.[0]||null,topScores:x.topScores?.slice(0,5)||[]}));
     const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};
     archive.correctScores=topFive;
@@ -940,10 +1051,28 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     archive.updatedAt=new Date().toISOString();
     if(!archive.savedAt)archive.savedAt=archive.updatedAt;
     await writePersistentArchive(date,archive,sport);
-    r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,method:"Top five correct-score matches ranked with independent form/xG/recent-results signals plus live market probability"});
+    r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,refreshed:forceRefresh,scannedFixtures:candidates.length,eligiblePredictions:results.length,method:"Upcoming fixtures ranked by exact-score probability and independent-data coverage"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{
+  const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+  const existing=await readPersistentArchive(date,sport);
+  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),archived:true});
+  let fixtureResult=await getDayFixtures(date,false,sport);
+  if(!fixtureResult.fixtures?.length){await sleep(800);fixtureResult=await getDayFixtures(date,true,sport);}
+  if(!fixtureResult.fixtures?.length)
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:[],archived:false,fixtureCount:0,retryable:true,message:"Fixtures are temporarily unavailable. Retrying automatically."});
+  const predictions=(await buildDailyBest(date,sport)).slice(0,10);
+  const qualityFiltered=predictions.filter(p=>!["D","F"].includes(String(p.qualityGrade||"").toUpperCase()));
+  if(qualityFiltered.length<10)
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:[],archived:false,fixtureCount:fixtureResult.fixtures.length,qualifiedCount:qualityFiltered.length,message:"Fewer than 10 distinct picks met the quality filter. Weak picks were not added to fill the list."});
+  const archive=existing||{date,sport,predictions:[],results:[]};
+  archive.predictions=qualityFiltered;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;
+  archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
+  await writePersistentArchive(date,archive,sport);
+  return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:qualityFiltered,fixtureCount:fixtureResult.fixtures.length,combinedOdds:qualityFiltered.reduce((v,p)=>v*Number(p.odds||1),1),archived:true});
+}catch(e){r.status(502).set("Cache-Control","no-store").json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
     const body=req.body||{}, admin=await getAdminSettings();
@@ -1016,6 +1145,47 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 });
 
 
+function archiveTeamScore(a,b){
+  const x=resultNorm(a).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  const y=resultNorm(b).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  if(!x.length||!y.length)return 0;
+  const xs=x.join(" "),ys=y.join(" ");
+  if(xs===ys)return 1;
+  if(xs.includes(ys)||ys.includes(xs))return Math.min(xs.length,ys.length)/Math.max(xs.length,ys.length)+0.12;
+  const common=x.filter(t=>y.includes(t)).length;
+  return common/Math.max(1,new Set([...x,...y]).size);
+}
+function matchArchiveResult(p,results,date){
+  // Provider IDs are not globally interchangeable. Validate teams and local date
+  // before trusting an ID, otherwise coincidental IDs can settle the wrong pick.
+  const candidates=(Array.isArray(results)?results:[]).map(x=>{
+    const resultDate=String(x.date||"");
+    const dateOk=!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)||resultDate===String(date);
+    if(!dateOk)return {result:x,score:0,reversed:false,dateOk:false};
+    const normalHome=archiveTeamScore(p.home,x.home),normalAway=archiveTeamScore(p.away,x.away);
+    const reversedHome=archiveTeamScore(p.home,x.away),reversedAway=archiveTeamScore(p.away,x.home);
+    const normal=normalHome>=0.68&&normalAway>=0.68?Math.min(normalHome,normalAway):0;
+    const reversed=reversedHome>=0.68&&reversedAway>=0.68?Math.min(reversedHome,reversedAway):0;
+    const isReversed=reversed>normal;
+    let score=Math.max(normal,reversed);
+    if(score===0)return {result:x,score:0,reversed:isReversed,dateOk:true};
+    if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.05;
+    const pt=Number(p.startTimeMs||0),rt=Number(x.startingAt||0)*1000;
+    if(pt&&rt){
+      const delta=Math.abs(pt-rt);
+      if(delta>18*60*60*1000)return {result:x,score:0,reversed:isReversed,dateOk:true};
+      if(delta<=3*60*60*1000)score+=0.04;
+    }
+    if(p.resultProviderId&&String(x.providerId||"")===String(p.resultProviderId))score+=0.12;
+    if(p.eventId&&String(x.eventId||x.fixtureId||"")===String(p.eventId))score+=0.08;
+    return {result:x,score,reversed:isReversed,dateOk:true};
+  }).filter(x=>x.dateOk&&x.score>=0.68).sort((a,b)=>b.score-a.score);
+  if(!candidates.length)return null;
+  // Ambiguous team/date matches must stay pending rather than guessing.
+  if(candidates.length>1&&candidates[0].score-candidates[1].score<0.035)return null;
+  const best=candidates[0];
+  return best.reversed?{...best.result,homeScore:best.result.awayScore,awayScore:best.result.homeScore}:best.result;
+}
 function serverSettlePrediction(p,result){
   if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
   const status=String(result.status||"").toLowerCase();
