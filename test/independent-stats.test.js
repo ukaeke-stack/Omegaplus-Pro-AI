@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { deriveModel } from "../model-ensemble.js";
 import { enrichPredictions } from "../independent-stats.js";
+import { assessPredictionReliability, rankByReliability } from "../analyzer-reliability.js";
 
 test("model withholds probabilities when there is no valid independent evidence", () => {
   const result = deriveModel({ marketConfidence: 84, pick: "Over 1.5", marketType: "ou" });
@@ -48,4 +49,37 @@ test("form sample selection favors the source with a complete recent sample", ()
   });
   assert.equal(result.modelInputsAvailable, true);
   assert.ok(result.expectedGoals.total > 2);
+});
+
+test("GOAL API form samples contribute to reliability and quality grade", () => {
+  const prediction = {
+    confidence: 78, marketConfidence: 78, independentConfidence: 74, modelProbability: 73,
+    marketType: "ou", pick: "Over 1.5", independentSources: ["goalapi"],
+    independentStats: { goalApi: { form: { homeMatches: 9, awayMatches: 8 } } }
+  };
+  const result = assessPredictionReliability(prediction);
+  assert.equal(result.recentSampleSize, 8);
+  assert.equal(result.independentSourceCount, 1);
+  assert.equal(result.evidenceLevel, "Moderate");
+  assert.ok(result.reliabilityScore > 0);
+});
+
+test("conflicting independent and market signals reduce reliability", () => {
+  const result = assessPredictionReliability({
+    confidence: 90, marketConfidence: 90, independentConfidence: 52, modelProbability: 50,
+    modelAgreement: 48, marketType: "btts", pick: "Yes", independentSources: ["sofascore"],
+    independentStats: { sofascore: { form: { homeMatches: 8, awayMatches: 8 } } }
+  });
+  assert.equal(result.evidenceLevel, "Conflicting");
+  assert.ok(result.disagreementPenalty >= 15);
+});
+
+test("reliability ranking prefers supported evidence over confidence alone", () => {
+  const ranked = rankByReliability([
+    { id: "unsupported", confidence: 88, marketConfidence: 88, marketType: "ou", pick: "Over 1.5" },
+    { id: "supported", confidence: 76, marketConfidence: 76, independentConfidence: 74, modelProbability: 73,
+      marketType: "ou", pick: "Over 1.5", modelAgreement: 90, independentSources: ["goalapi", "understat"],
+      independentStats: { goalApi: { form: { homeMatches: 9, awayMatches: 8 } } } }
+  ]);
+  assert.equal(ranked[0].id, "supported");
 });
