@@ -1,0 +1,31 @@
+name: Multisport syntax checks
+
+on:
+  push:
+    branches:
+      - fix/multisport-fixture-feed
+  pull_request:
+    branches:
+      - recovery/a2e24684-baseline
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check server syntax
+        run: node --check server.js
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check public/other-sports.js
+          node --check public/market-options.js
+          node --check public/admin.js
+          node --check correct-score.js
+          node --check independent-stats.js
+          node --check result-sources.js
