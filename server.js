@@ -176,7 +176,7 @@ async function fetchUpcomingSportPage(sportDef,params){
   let firstBody=null,firstError=null;
   try{
     firstBody=await sportyFetch(endpoint+params);
-    if(sportDef.id==="football"||(eventCount(firstBody)>0&&marketCount(firstBody)>0))return firstBody;
+    if(sportDef.id==="football"||(sportDef.id!=="table_tennis"&&eventCount(firstBody)>0&&marketCount(firstBody)>0))return firstBody;
   }catch(error){
     firstError=error;
     if(sportDef.id==="football"&&!String(error?.message||"").includes("HTTP 422"))throw error;
@@ -201,7 +201,7 @@ async function fetchUpcomingSportPage(sportDef,params){
     try{
       const body=await sportyFetch(endpoint+fallback);
       bodies.push(body);
-      if(eventCount(body)>0&&marketCount(body)>0)break;
+      if(sportDef.id!=="table_tennis"&&eventCount(body)>0&&marketCount(body)>0)break;
     }catch(error){
       errors.push("marketId="+marketId+": "+String(error?.message||error));
     }
