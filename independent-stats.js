@@ -7,6 +7,7 @@ const FETCH_TIMEOUT=7000;
 const CACHE_TTL=6*60*60*1000;
 const MAX_CONCURRENCY=4;
 const cache=new Map();
+let sportmonksHealthCache=null;
 
 function key(v){return String(v||"").toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim()}
 function seasonStart(date){const d=new Date(date+"T12:00:00Z");const y=d.getUTCFullYear();return d.getUTCMonth()>=6?y:y-1}
@@ -29,7 +30,7 @@ async function fetchJson(url,headers={}){
 }
 async function cachedJson(cacheKey,url,headers={}){
   const hit=cache.get(cacheKey);
-  if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true,stale:Boolean(hit.failed),error:hit.error||null};
+  if(hit&&Date.now()-hit.at<(hit.failed?5*60*1000:CACHE_TTL))return{data:hit.data,cached:true,stale:Boolean(hit.failed),error:hit.error||null};
   try{
     const data=await fetchJson(url,headers);
     cache.set(cacheKey,{at:Date.now(),data});
@@ -201,7 +202,7 @@ async function independentStatsForFixture(fixture,sport="football"){
   }
   const available=[
     (sofaForm&&(Number(sofaForm.homeMatches)>0||Number(sofaForm.awayMatches)>0))||shots||lineups||injuries.home||injuries.away?"sofascore":null,
-    ud?"understat":null,
+    uh&&ua?"understat":null,
     goalApi.available?"goalapi":null
   ].filter(Boolean);
   const derived=buildIndependentModels({form,uh,ua,shots});
@@ -294,9 +295,14 @@ export async function independentHealth(){
   out.details.goalApi={...goalApi,role:"fallback recent team form; cached by team"};
   if(process.env.SPORTMONKS_API_TOKEN){
     try{
-      const leagues=await getMyLeagues();
-      out.sportmonks=Boolean(leagues.configured&&Array.isArray(leagues.data));
-      out.details.sportmonks={available:out.sportmonks,configured:true,count:Array.isArray(leagues.data)?leagues.data.length:0,error:leagues.error||null,role:"fixtures/results provider; not double-counted as prediction probability"};
+      if(!sportmonksHealthCache||Date.now()-sportmonksHealthCache.at>5*60*1000){
+        try{
+          const leagues=await getMyLeagues();
+          sportmonksHealthCache={at:Date.now(),available:Boolean(leagues.configured&&Array.isArray(leagues.data)),count:Array.isArray(leagues.data)?leagues.data.length:0,error:leagues.error||null};
+        }catch(error){sportmonksHealthCache={at:Date.now(),available:false,count:0,error:error?.message||"Sportmonks health check failed"};}
+      }
+      out.sportmonks=sportmonksHealthCache.available;
+      out.details.sportmonks={...sportmonksHealthCache,configured:true,role:"fixtures/results provider; not double-counted as prediction probability"};
     }catch(error){
       out.details.sportmonks={available:false,configured:true,count:0,error:error?.message||"Sportmonks health check failed"};
     }
