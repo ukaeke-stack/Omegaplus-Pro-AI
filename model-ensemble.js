@@ -12,8 +12,8 @@ export function deriveModel(p={}){
   const hasXg=[u.home?.xg,u.away?.xg,u.home?.xga,u.away?.xga].every(v=>v!==null&&v!==undefined&&num(v)!==null);
   const market=num(p.marketConfidence),ind=num(p.independentConfidence);
   if(!hasForm&&!hasXg)return{expectedGoals:null,probabilities:null,modelProbability:null,ensembleConfidence:market??ind??null,modelInputsAvailable:false};
-  const home=Math.max(.05,num((hx!=null&&axa!=null)?(hx+axa)/2:f.homeGoalsFor)||.05);
-  const away=Math.max(.05,num((ax!=null&&hxa!=null)?(ax+hxa)/2:f.awayGoalsFor)||.05);
+  const home=Math.max(.05,num(hasXg?(hx+axa)/2:f.homeGoalsFor)||.05);
+  const away=Math.max(.05,num(hasXg?(ax+hxa)/2:f.awayGoalsFor)||.05);
   let hw=0,aw=0;for(let i=0;i<=10;i++)for(let j=0;j<=10;j++){const q=pmf(home,i)*pmf(away,j);if(i>j)hw+=q;else if(j>i)aw+=q}
   const total=home+away,draw=Math.max(0,1-hw-aw);
   const probs={home:hw*100,draw:draw*100,away:aw*100,over15:over(total,1)*100,over25:over(total,2)*100,btts:(1-Math.exp(-home))*(1-Math.exp(-away))*100};
