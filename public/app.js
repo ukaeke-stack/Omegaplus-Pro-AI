@@ -293,12 +293,19 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(attempt=0){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading archived Daily Best picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
+    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date),{cache:"no-store"});
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    if(d.retryable&&attempt<2){
+      if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="No fixture response yet — retrying automatically ("+(attempt+1)+"/2)…";
+      await new Promise(resolve=>setTimeout(resolve,1400));
+      if(date!==state.date)return;
+      return loadDailyBest(attempt+1);
+    }
+    if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
     let rows=(d.predictions||[]).slice(0,10);
     const saved=readHistory().filter(x=>x.date===date);
     const byId=new Map(saved.map(x=>[x.id,x]));
