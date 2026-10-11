@@ -1,5 +1,5 @@
 const ESPN_BASE="https://site.api.espn.com/apis/site/v2/sports/soccer";
-const TIMEOUT=6000;
+const TIMEOUT=8000;
 const cache=new Map();
 
 function key(v){return String(v||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim()}
@@ -12,7 +12,7 @@ async function fetchJson(url){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),TIMEOUT);
   try{const r=await fetch(url,{headers:{Accept:"application/json","User-Agent":"Omegaplus-Pro-AI/1.0"},signal:c.signal});if(!r.ok)throw new Error("HTTP "+r.status);const d=await r.json();cache.set(url,{at:Date.now(),data:d});return d}catch{return null}finally{clearTimeout(t)}
 }
-function matchTeam(a,b){const x=key(a),y=key(b);return x===y||x.includes(y)||y.includes(x)}
+function matchTeam(a,b){const x=key(a),y=key(b);return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x))}
 function scoreFromEvent(e){return{home:Number(e?.homeScore?.displayValue??e?.homeScore?.value),away:Number(e?.awayScore?.displayValue??e?.awayScore?.value)}}
 function extractStats(events,teamId){
   const finished=(events||[]).filter(e=>e.competitions?.[0]?.status?.type?.completed).slice(-10);
@@ -47,38 +47,44 @@ function leagueSlug(league){
   return null;
 }
 function marketExpectedGoals(fixture){
-  const one=fixture.markets?.find(m=>m.marketId==="1"||key(m.marketName).includes("1x2")||key(m.marketName).includes("match result"));
-  const vals=one?.outcomes?.filter(o=>o.isActive&&Number(o.odds)>1).map(o=>({name:key(o.outcomeName),p:1/Number(o.odds)}))||[];
+  const markets=Array.isArray(fixture?.markets)?fixture.markets:[];
+  const one=markets.find(m=>String(m.marketId)==="1"||key(m.marketName).includes("1x2")||key(m.marketName).includes("match result")||key(m.marketName).includes("full time result"));
+  const vals=(one?.outcomes||[]).filter(o=>o.isActive&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1).map(o=>({name:key(o.outcomeName),p:1/Number(o.odds)}));
   const sum=vals.reduce((s,x)=>s+x.p,0);
-  let hp=.45,ap=.35;
+  let hp=.45,ap=.35,hasResultMarket=false;
   if(sum){
-    const home=vals.find(x=>x.name.includes("home")),away=vals.find(x=>x.name.includes("away"));
-    if(home&&away){hp=home.p/sum;ap=away.p/sum;}
+    const isHome=n=>n==="1"||n==="home"||n.startsWith("home ")||n.includes("home win")||n.includes("home team");
+    const isDraw=n=>n==="x"||n==="draw"||n==="tie";
+    const isAway=n=>n==="2"||n==="away"||n.startsWith("away ")||n.includes("away win")||n.includes("away team");
+    const home=vals.find(x=>isHome(x.name)),away=vals.find(x=>isAway(x.name)),draw=vals.find(x=>isDraw(x.name));
+    if(home&&away){const denominator=home.p+away.p+(draw?.p||0);if(denominator>0){hp=home.p/denominator;ap=away.p/denominator;hasResultMarket=true;}}
   }
-  const ou=fixture.markets?.find(m=>{
-    const n=key(m.marketName);
-    return ["18","900300","900301"].includes(String(m.marketId))||n.includes("over under")||n.includes("total goals")||n.includes("goals total");
-  });
-  let total=2.55;
+  const ou=markets.find(m=>{const n=key(m.marketName),id=String(m.marketId);return ["18","900300","900301"].includes(id)||((n.includes("over under")||n.includes("total goals")||n.includes("goals total")||n.includes("total goal"))&&!n.includes("team")&&!n.includes("corner")&&!n.includes("card"));});
+  let total=2.55,hasTotalMarket=false;
   if(ou){
-    const parsed=(ou.outcomes||[]).filter(o=>o.isActive&&Number(o.odds)>1).map(o=>{
-      const name=key(o.outcomeName),line=String(ou.specifier||"").match(/([0-9]+(?:\.[0-9]+)?)/)?.[1]||name.match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];
-      return line?{name,line:Number(line),p:1/Number(o.odds)}:null;
-    }).filter(Boolean);
+    const parsed=(ou.outcomes||[]).filter(o=>o.isActive&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1).map(o=>{const name=key(o.outcomeName);const line=String(ou.specifier||"").match(/([0-9]+(?:\.[0-9]+)?)/)?.[1]||name.match(/([0-9]+(?:\.[0-9]+)?)/)?.[1];return line?{name,line:Number(line),p:1/Number(o.odds)}:null;}).filter(Boolean);
     const line25=parsed.filter(x=>Math.abs(x.line-2.5)<0.01);
-    const over=line25.find(x=>x.name.includes("over")),under=line25.find(x=>x.name.includes("under"));
-    if(over&&under){
-      const s=over.p+under.p,po=over.p/s;
-      total=Math.max(1.75,Math.min(3.8,2.5+(po-.5)*2.2));
-    }
+    const over=line25.find(x=>x.name==="o"||x.name.startsWith("over")),under=line25.find(x=>x.name==="u"||x.name.startsWith("under"));
+    if(over&&under){const s=over.p+under.p,po=over.p/s;if(Number.isFinite(po)&&s>0){total=Math.max(1.75,Math.min(3.8,2.5+(po-.5)*2.2));hasTotalMarket=true;}}
   }
   const share=(hp+ap)>0?hp/(hp+ap):.56;
-  return{home:Math.max(.65,total*share),away:Math.max(.55,total*(1-share))};
+  return{home:Math.max(.65,total*share),away:Math.max(.55,total*(1-share)),hasResultMarket,hasTotalMarket};
 }
 function scoreMatrix(lh,la){
+  // Include a wider score range so high-scoring fixtures are not distorted by truncation.
   const rows=[];
-  for(let h=0;h<=6;h++)for(let a=0;a<=6;a++)rows.push({h,a,p:poisson(h,lh)*poisson(a,la)});
-  const total=rows.reduce((s,x)=>s+x.p,0);return rows.map(x=>({...x,p:x.p/total})).sort((a,b)=>b.p-a.p);
+  for(let h=0;h<=8;h++)for(let a=0;a<=8;a++){
+    let p=poisson(h,lh)*poisson(a,la);
+    // Small low-score correction for the common dependence between 0-0, 1-0, 0-1 and 1-1.
+    const rho=-0.06;
+    if(h===0&&a===0)p*=1-lh*la*rho;
+    else if(h===0&&a===1)p*=1+lh*rho;
+    else if(h===1&&a===0)p*=1+la*rho;
+    else if(h===1&&a===1)p*=1-rho;
+    rows.push({h,a,p:Math.max(0,p)});
+  }
+  const total=rows.reduce((s,x)=>s+x.p,0);
+  return rows.map(x=>({...x,p:total?x.p/total:0})).sort((a,b)=>b.p-a.p);
 }
 export async function analyzeCorrectScores(fixture,independentStats={}){
   const form=independentStats?.sofascore?.form;
@@ -97,9 +103,11 @@ export async function analyzeCorrectScores(fixture,independentStats={}){
   homeGoals=clamp(homeGoals/3,0.25,2.8)*3;awayGoals=clamp(awayGoals/3,0.2,2.6)*3;
   const matrix=scoreMatrix(homeGoals,awayGoals).slice(0,5);
   const sources=[];
-  if(form) sources.push("Sofascore recent form");
-  if(Number.isFinite(uh)||Number.isFinite(ua)||Number.isFinite(uha)||Number.isFinite(uaa)) sources.push("Understat xG/xGA");
+  if(form&&[form.homeGoalsFor,form.awayGoalsFor,form.homeGoalsAgainst,form.awayGoalsAgainst].every(v=>Number.isFinite(Number(v)))) sources.push("Sofascore recent form");
+  if((Number.isFinite(uh)&&Number.isFinite(uaa))||(Number.isFinite(ua)&&Number.isFinite(uha))) sources.push("Understat xG/xGA");
   if(espn) sources.push("ESPN recent results");
-  if(market) sources.push("Live market probability");
+  if(market?.hasResultMarket) sources.push("Live 1X2 market probabilities");
+  if(market?.hasTotalMarket) sources.push("Live Over/Under 2.5 market");
+  if(!market?.hasResultMarket&&!market?.hasTotalMarket) sources.push("Fallback goal model (usable odds unavailable)");
   return{expectedGoals:{home:Number(homeGoals.toFixed(2)),away:Number(awayGoals.toFixed(2))},scores:matrix.map(x=>({score:x.h+"-"+x.a,probability:Number((x.p*100).toFixed(1))})),sources};
 }
