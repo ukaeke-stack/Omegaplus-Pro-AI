@@ -891,7 +891,6 @@ async function buildDailyBest(date,sport="football"){
         }
         if(type==="btts"&&!["yes","no"].includes(raw))continue;
         const marketProbability=normalizedMarketProbability(market,outcome);
-        // Use de-vigged implied probability without a confidence floor; long shots are excluded.
         if(marketProbability<40)continue;
         candidates.push({
           id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
@@ -912,17 +911,28 @@ async function buildDailyBest(date,sport="football"){
     if(seen.has(key))return false;
     seen.add(key);return true;
   });
-  // Keep a broad but bounded shortlist: the independent-stat provider calls dominate cold-start latency.
-  // Sixty candidates preserve a useful ranking pool while avoiding slow enrichment of marginal picks.
-  // Enrich at most one candidate per match. Multiple markets from the same fixture cannot all be selected, and previously crowded the shortlist while slowing the first load.
+  // Keep one top market candidate per fixture, but widen the search pool so Daily Best
+  // does not stop early just because the first few fixtures lack independent statistics.
   const byEvent=new Map();
-  for(const candidate of unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs))if(!byEvent.has(candidate.eventId))byEvent.set(candidate.eventId,candidate);
-  const shortlist=[...byEvent.values()].slice(0,60);
-  const enrichedAll=decoratePredictions(await enrichAndModel(shortlist,{concurrency:8}));
-  // Fail closed: Daily Best must have usable independent form/xG inputs, plausible derived goal rates, and no Grade D picks.
-  const enriched=enrichedAll.filter(x=>x.qualityGrade!=="D"&&hasUsableIndependentStats(x)&&hasPlausibleDerivedGoals(x));
-  const rejectedQualityCount=enrichedAll.length-enriched.length;
-  const ranked=enriched.map(x=>{
+  for(const candidate of unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs)){
+    if(!byEvent.has(candidate.eventId))byEvent.set(candidate.eventId,candidate);
+  }
+  const shortlist=[...byEvent.values()].slice(0,180);
+  const eligibleByEvent=new Map();
+  const batchSize=30;
+  // Enrich in batches. Stop once ten genuinely qualified matches are found; if not,
+  // continue through the expanded pool rather than immediately publishing a short list.
+  for(let offset=0;offset<shortlist.length;offset+=batchSize){
+    const batch=shortlist.slice(offset,offset+batchSize);
+    const enrichedBatch=decoratePredictions(await enrichAndModel(batch,{concurrency:8}));
+    for(const x of enrichedBatch){
+      if(x.qualityGrade==="D"||!hasUsableIndependentStats(x)||!hasPlausibleDerivedGoals(x))continue;
+      eligibleByEvent.set(x.eventId,x);
+    }
+    if(eligibleByEvent.size>=10)break;
+  }
+  const rejectedQualityCount=Math.min(shortlist.length,eligibleByEvent.size)===shortlist.length?0:Math.max(0,Math.min(shortlist.length,unique.length)-eligibleByEvent.size);
+  const ranked=[...eligibleByEvent.values()].map(x=>{
     const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
     const market=Number(x.marketConfidence??x.confidence);
     const usableModel=Number.isFinite(model)&&model>0?model:market;
@@ -934,34 +944,39 @@ async function buildDailyBest(date,sport="football"){
     selected.push(p);usedEvents.add(p.eventId);
     if(selected.length===10)break;
   }
-  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,fixtureCount:fixtures.length,rejectedQualityCount,message:"Only "+selected.length+" distinct fixtures passed the quality gate (Grade C or better, usable independent statistics, and plausible expected goals). No Daily 10 set was published rather than filling it with weak picks."};
   const product=rows=>rows.reduce((v,p)=>v*Number(p.odds||1),1);
   let combinedOdds=product(selected),usedIds=new Set(selected.map(x=>x.id));
-  // If the top ten do not reach 5.00, swap in the strongest eligible alternatives with higher odds.
-  for(const candidate of ranked){
-    if(combinedOdds>=5)break;
-    if(usedIds.has(candidate.id)||selected.some(x=>x.eventId===candidate.eventId))continue;
-    let replaceIndex=-1;
-    for(let i=0;i<selected.length;i++){
-      const trial=selected.slice();trial[i]=candidate;
-      if(product(trial)>=5&&(replaceIndex<0||selected[i].modelProbability<selected[replaceIndex].modelProbability))replaceIndex=i;
-    }
-    if(replaceIndex<0){
-      const i=selected.reduce((best,x,j)=>Number(x.odds)<Number(selected[best].odds)?j:best,0);
-      const trial=selected.slice();trial[i]=candidate;
-      if(product(trial)>combinedOdds)replaceIndex=i;
-    }
-    if(replaceIndex>=0){
-      usedIds.delete(selected[replaceIndex].id);
-      selected[replaceIndex]=candidate;usedIds.add(candidate.id);
-      combinedOdds=product(selected);
+  // When ten qualified picks exist, prefer a combination reaching 5.00 if a qualified
+  // alternative can achieve it. Never discard qualified picks just because it cannot.
+  if(selected.length===10){
+    for(const candidate of ranked){
+      if(combinedOdds>=5)break;
+      if(usedIds.has(candidate.id)||selected.some(x=>x.eventId===candidate.eventId))continue;
+      let replaceIndex=-1;
+      for(let i=0;i<selected.length;i++){
+        const trial=selected.slice();trial[i]=candidate;
+        if(product(trial)>=5&&(replaceIndex<0||selected[i].modelProbability<selected[replaceIndex].modelProbability))replaceIndex=i;
+      }
+      if(replaceIndex<0){
+        const i=selected.reduce((best,x,j)=>Number(x.odds)<Number(selected[best].odds)?j:best,0);
+        const trial=selected.slice();trial[i]=candidate;
+        if(product(trial)>combinedOdds)replaceIndex=i;
+      }
+      if(replaceIndex>=0){
+        usedIds.delete(selected[replaceIndex].id);
+        selected[replaceIndex]=candidate;usedIds.add(candidate.id);
+        combinedOdds=product(selected);
+      }
     }
   }
   combinedOdds=product(selected);
-  if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"Ten quality-qualified picks were found, but their combined odds are below the 5.00 minimum. No set was published rather than weakening the quality filter."};
   selected.sort((a,b)=>a.startTimeMs-b.startTimeMs);
-  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"10 quality-qualified picks · core markets only · minimum combined odds 5.00 · actual combined odds "+combinedOdds.toFixed(2)};
-  console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,enriched:shortlist.length,qualityRejected:rejectedQualityCount,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
+  const shortfall=Math.max(0,10-selected.length);
+  const message=shortfall
+    ? (selected.length+" qualified pick"+(selected.length===1?"":"s")+" found after checking "+Math.min(shortlist.length,180)+" candidate fixtures. Only matches with Grade C or better, usable independent statistics, and plausible expected goals are included; more fixtures or refreshed statistics may increase the count.")
+    : ("10 quality-qualified picks · core markets only · actual combined odds "+combinedOdds.toFixed(2)+(combinedOdds<5+"":""));
+  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall,qualifiedCount:selected.length,fixtureCount:fixtures.length,candidateFixtures:shortlist.length,rejectedQualityCount,message};
+  console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,checked:shortlist.length,qualified:ranked.length,qualityRejected:rejectedQualityCount,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
   return result;
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
@@ -1284,7 +1299,7 @@ app.get("/api/performance",async(req,r)=>{
 });
 app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(e.code==="NO_AVAILABLE_SELECTIONS"?409:502).json({ok:false,error:e.message,unavailableSelections:e.unavailable||[]})}});
 
-app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!Array.isArray(prevArchive?.dailyBestPredictions)&&[DAILY_SELECTION_VERSION,LEGACY_DAILY_SELECTION_VERSION].includes(prevArchive?.dailySelectionVersion)&&Array.isArray(prevArchive?.predictions)&&prevArchive.predictions.length===10&&Number(prevArchive.dailyCombinedOdds)>=5){prevArchive.dailyBestPredictions=prevArchive.predictions.slice(0,10);prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}const prevSaved=Array.isArray(prevArchive?.dailyBestPredictions)&&((prevArchive.dailyBestPredictions.length===10&&Number(prevArchive.dailyCombinedOdds)>=5)||(prevArchive.dailyBestPredictions.length===0&&prevArchive.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&Boolean(prevArchive.dailyMessage)));if(!prevSaved){try{const built=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,sport:"football",predictions:[],results:[]};prevArchive.dailyBestPredictions=built.predictions||[];prevArchive.dailyCombinedOdds=Number(built.combinedOdds)||0;prevArchive.dailyShortfall=Number(built.shortfall)||0;prevArchive.dailyMessage=built.message||"";prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);let predictions=Array.isArray(todayArchive?.dailyBestPredictions)&&((todayArchive.dailyBestPredictions.length===10&&Number(todayArchive.dailyCombinedOdds)>=5)||(todayArchive.dailyBestPredictions.length===0&&todayArchive.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&Boolean(todayArchive.dailyMessage)))?todayArchive.dailyBestPredictions:null;if(!predictions){const built=await buildDailyBest(date);predictions=built.predictions||[];const next=todayArchive||{date,sport:"football",predictions:[],results:[]};next.dailyBestPredictions=predictions;next.dailyCombinedOdds=Number(built.combinedOdds)||0;next.dailyShortfall=Number(built.shortfall)||0;next.dailyMessage=built.message||"";next.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next)}r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
+app.get("/api/daily-rollover",async(req,r)=>{if(process.env.CRON_SECRET&&req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});try{const date=localDayKey(Date.now()),prev=localDayKey(Date.now()-86400000);let prevArchive=await readPersistentArchive(prev);let resultRows=[];try{const rr=await getDateResults(prev,true);if(rr.configured)resultRows=rr.data||[]}catch{}if(!Array.isArray(prevArchive?.dailyBestPredictions)&&[DAILY_SELECTION_VERSION,LEGACY_DAILY_SELECTION_VERSION].includes(prevArchive?.dailySelectionVersion)&&Array.isArray(prevArchive?.predictions)&&prevArchive.predictions.length===10&&Number(prevArchive.dailyCombinedOdds)>=5){prevArchive.dailyBestPredictions=prevArchive.predictions.slice(0,10);prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}const prevSaved=Array.isArray(prevArchive?.dailyBestPredictions)&&prevArchive.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&prevArchive.dailyBestPredictions.length<=10&&Boolean(prevArchive.dailyMessage);if(!prevSaved){try{const built=await buildDailyBest(prev);prevArchive=prevArchive||{date:prev,sport:"football",predictions:[],results:[]};prevArchive.dailyBestPredictions=built.predictions||[];prevArchive.dailyCombinedOdds=Number(built.combinedOdds)||0;prevArchive.dailyShortfall=Number(built.shortfall)||0;prevArchive.dailyMessage=built.message||"";prevArchive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION}catch{}}if(prevArchive){prevArchive.predictions=Array.isArray(prevArchive.predictions)?prevArchive.predictions.slice(0,10):[];prevArchive.results=resultRows;prevArchive.updatedAt=new Date().toISOString();if(!prevArchive.savedAt)prevArchive.savedAt=prevArchive.updatedAt;await writePersistentArchive(prev,prevArchive)}const todayArchive=await readPersistentArchive(date);let predictions=Array.isArray(todayArchive?.dailyBestPredictions)&&todayArchive.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&todayArchive.dailyBestPredictions.length<=10&&Boolean(todayArchive.dailyMessage)?todayArchive.dailyBestPredictions:null;if(!predictions){const built=await buildDailyBest(date);predictions=built.predictions||[];const next=todayArchive||{date,sport:"football",predictions:[],results:[]};next.dailyBestPredictions=predictions;next.dailyCombinedOdds=Number(built.combinedOdds)||0;next.dailyShortfall=Number(built.shortfall)||0;next.dailyMessage=built.message||"";next.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next)}r.json({ok:true,date,previousDate:prev,previousResults:resultRows.length,newDailyBest:predictions.length})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 
 
 // User support, feedback, suggestions and admin live-chat endpoints.
