@@ -667,7 +667,42 @@ async function getDayFixtures(date,force=false,sport="football"){
 app.get("/api/scan",async(req,r)=>{
   try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const x=await getDayFixtures(date,true,sport);r.json({ok:true,date,sport,cached:false,scannedAt:x.scannedAt,fixtureCount:x.fixtures.length,leagues:[...new Set(x.fixtures.map(f=>f.league).filter(Boolean))].sort(sortLeagues)});}catch(e){r.status(502).json({ok:false,error:e.message})}
 });
-app.get("/api/history",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const archive=await readPersistentArchive(date,sport);r.json({ok:true,date,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message,archive:null})}});
+app.get("/api/history",async(req,r)=>{
+  try{
+    const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+    const archive=await readPersistentArchive(date,sport);
+    if(archive){
+      let resultRows=[];
+      try{const rr=await getVerifiedResults(date,false,sport);resultRows=Array.isArray(rr.results)?rr.results:[]}catch(e){console.warn("History settlement results unavailable:",e.message)}
+      if(resultRows.length){
+        let changed=false;
+        const settleRows=rows=>(Array.isArray(rows)?rows:[]).map(p=>{
+          const result=matchArchiveResult(p,resultRows,date);
+          if(!result)return p;
+          const status=String(result.status||"");
+          const outcome=serverSettlePrediction(p,result);
+          const updated={...p,status:result.status||p.status,homeScore:result.homeScore??p.homeScore,awayScore:result.awayScore??p.awayScore,resultProviderId:result.providerId||p.resultProviderId,sources:result.sources||p.sources,verificationStatus:result.verificationStatus||p.verificationStatus,verificationCount:result.verificationCount||p.verificationCount};
+          if(outcome!=="Pending"||result.verificationStatus==="conflict")updated.outcome=outcome;
+          if(updated.outcome!==p.outcome||updated.status!==p.status||updated.homeScore!==p.homeScore||updated.awayScore!==p.awayScore||updated.verificationStatus!==p.verificationStatus||updated.resultProviderId!==p.resultProviderId||updated.verificationCount!==p.verificationCount||JSON.stringify(updated.sources||[])!==JSON.stringify(p.sources||[]))changed=true;
+          return updated;
+        });
+        const predictions=settleRows(archive.predictions);
+        const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
+        const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
+        const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
+        if(changed||resultsChanged){
+          archive.predictions=predictions;
+          archive.correctScores=correctScores;
+          archive.results=resultRows;
+          archive.settlementUpdatedAt=new Date().toISOString();
+          archive.updatedAt=archive.settlementUpdatedAt;
+          await writePersistentArchive(date,archive,sport);
+        }
+      }
+    }
+    r.json({ok:true,date,sport,found:Boolean(archive),archive:archive||null,storage:"vercel-blob"});
+  }catch(e){console.error("History read/settlement failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}
+});
 app.post("/api/history",async(req,r)=>{try{const sport=String(req.body?.sport||"football");const date=String(req.body?.date||localDayKey(Date.now()));const old=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};const next={...old};if(Array.isArray(req.body?.predictions))next.predictions=req.body.predictions.slice(0,10);if(Array.isArray(req.body?.correctScores))next.correctScores=req.body.correctScores.slice(0,5);if(Array.isArray(req.body?.results))next.results=req.body.results;next.updatedAt=new Date().toISOString();if(!next.savedAt)next.savedAt=next.updatedAt;await writePersistentArchive(date,next,sport);r.json({ok:true,date,sport,archive:next,storage:"vercel-blob"})}catch(e){r.status(500).json({ok:false,error:e.message})}});
 app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
@@ -1016,38 +1051,102 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
 });
 
 
+function archiveTeamScore(a,b){
+  const x=resultNorm(a).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  const y=resultNorm(b).split(" ").filter(t=>t&&!["fc","cf","sc","afc","club","football","soccer","the"].includes(t));
+  if(!x.length||!y.length)return 0;
+  const xs=x.join(" "),ys=y.join(" ");
+  if(xs===ys)return 1;
+  if(xs.includes(ys)||ys.includes(xs))return Math.min(xs.length,ys.length)/Math.max(xs.length,ys.length)+0.12;
+  const common=x.filter(t=>y.includes(t)).length;
+  return common/Math.max(1,new Set([...x,...y]).size);
+}
+function matchArchiveResult(p,results,date){
+  // Provider IDs are not globally interchangeable. Validate teams and local date
+  // before trusting an ID, otherwise coincidental IDs can settle the wrong pick.
+  const candidates=(Array.isArray(results)?results:[]).map(x=>{
+    const resultDate=String(x.date||"");
+    const dateOk=!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)||resultDate===String(date);
+    if(!dateOk)return {result:x,score:0,reversed:false,dateOk:false};
+    const normalHome=archiveTeamScore(p.home,x.home),normalAway=archiveTeamScore(p.away,x.away);
+    const reversedHome=archiveTeamScore(p.home,x.away),reversedAway=archiveTeamScore(p.away,x.home);
+    const normal=normalHome>=0.68&&normalAway>=0.68?Math.min(normalHome,normalAway):0;
+    const reversed=reversedHome>=0.68&&reversedAway>=0.68?Math.min(reversedHome,reversedAway):0;
+    const isReversed=reversed>normal;
+    let score=Math.max(normal,reversed);
+    if(score===0)return {result:x,score:0,reversed:isReversed,dateOk:true};
+    if(p.league&&x.league&&resultNorm(p.league)===resultNorm(x.league))score+=0.05;
+    const pt=Number(p.startTimeMs||0),rt=Number(x.startingAt||0)*1000;
+    if(pt&&rt){
+      const delta=Math.abs(pt-rt);
+      if(delta>18*60*60*1000)return {result:x,score:0,reversed:isReversed,dateOk:true};
+      if(delta<=3*60*60*1000)score+=0.04;
+    }
+    if(p.resultProviderId&&String(x.providerId||"")===String(p.resultProviderId))score+=0.12;
+    if(p.eventId&&String(x.eventId||x.fixtureId||"")===String(p.eventId))score+=0.08;
+    return {result:x,score,reversed:isReversed,dateOk:true};
+  }).filter(x=>x.dateOk&&x.score>=0.68).sort((a,b)=>b.score-a.score);
+  if(!candidates.length)return null;
+  // Ambiguous team/date matches must stay pending rather than guessing.
+  if(candidates.length>1&&candidates[0].score-candidates[1].score<0.035)return null;
+  const best=candidates[0];
+  return best.reversed?{...best.result,homeScore:best.result.awayScore,awayScore:best.result.homeScore}:best.result;
+}
 function serverSettlePrediction(p,result){
-  if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
+  if(!result)return "Pending";
   const status=String(result.status||"").toLowerCase();
-  if(/postpon|cancel|void|abandon/.test(status)) return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
-  if(!/finished|full time|ended|complete|ft|final/.test(status)) return "Pending";
-  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as,pick=String(p.pick||"").toLowerCase();
+  if(/postpon/.test(status))return "Postponed";
+  if(/cancel|void|abandon/.test(status))return "Void";
+  if(!/finished|full time|ended|complete|\bft\b|final|after extra|penalt/.test(status))return "Pending";
+  if(!["confirmed","single-source"].includes(String(result.verificationStatus||"")))return "Pending";
+  if(!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore)))return "Pending";
+  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as;
+  const pick=String(p.pick||p.selection||p.bestScore?.score||p.bestScore?.label||p.bestScore?.result||"").toLowerCase();
+  if(String(p.market||"").toLowerCase()==="correct score"||p.bestScore){
+    const cs=pick.match(/(\d+)\s*[-:–]\s*(\d+)/);
+    if(cs)return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
+    return "Pending";
+  }
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(over) return total>Number(over[1])?"Won":"Lost";
-  if(under) return total<Number(under[1])?"Won":"Lost";
-  if(result.verificationStatus!=="confirmed") return "Pending";
-  if(p.marketType==="btts"||/btts/.test(pick)){
-    const yes=/yes|gg|both.*score/.test(pick),actual=hs>0&&as>0;
+  if(over){const line=Number(over[1]);return total===line?"Void":total>line?"Won":"Lost";}
+  if(under){const line=Number(under[1]);return total===line?"Void":total<line?"Won":"Lost";}
+  if(p.marketType==="btts"||/btts|both teams to score/.test(pick)){
+    const yes=!/\bno\b|not|ng/.test(pick),actual=hs>0&&as>0;
     return actual===yes?"Won":"Lost";
   }
-  if(p.marketType==="basketball_moneyline"){ if(/home|1/.test(pick)) return hs>as?"Won":"Lost"; if(/away|2/.test(pick)) return as>hs?"Won":"Lost"; }
+  if(p.marketType==="basketball_moneyline"){if(/home|\b1\b/.test(pick))return hs>as?"Won":"Lost";if(/away|\b2\b/.test(pick))return as>hs?"Won":"Lost";}
   if(p.marketType==="double_chance"){
-    if(/home or draw|1x/.test(pick)) return hs>=as?"Won":"Lost";
-    if(/home or away|12/.test(pick)) return hs!==as?"Won":"Lost";
-    if(/draw or away|x2/.test(pick)) return as>=hs?"Won":"Lost";
+    if(/home or draw|\b1x\b/.test(pick))return hs>=as?"Won":"Lost";
+    if(/home or away|\b12\b/.test(pick))return hs!==as?"Won":"Lost";
+    if(/draw or away|\bx2\b/.test(pick))return as>=hs?"Won":"Lost";
   }
   if(p.marketType==="team_total"){
     const hm=pick.match(/home\s*over\s*(\d+(?:\.\d+)?)/),am=pick.match(/away\s*over\s*(\d+(?:\.\d+)?)/);
-    if(hm)return hs>Number(hm[1])?"Won":"Lost"; if(am)return as>Number(am[1])?"Won":"Lost";
+    if(hm)return hs>Number(hm[1])?"Won":"Lost";
+    if(am)return as>Number(am[1])?"Won":"Lost";
+  }
+  // Handicap picks must be settled against the handicap line, not the raw score.
+  const europeanHcp=pick.match(/\((\d+)\s*:\s*(\d+)\)/)||String(p.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
+  if(europeanHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||""))||/hcp=/i.test(String(p.specifier||"")))){
+    const ah=hs+Number(europeanHcp[1]),aa=as+Number(europeanHcp[2]);
+    if(/\bhome\b/.test(pick))return ah>aa?"Won":"Lost";
+    if(/\bdraw\b/.test(pick))return ah===aa?"Won":"Lost";
+    if(/\baway\b/.test(pick))return aa>ah?"Won":"Lost";
+    return "Pending";
+  }
+  const asianHcp=pick.match(/\b(home|away)\s*\(([+-]\d+(?:\.\d+)?)\)/)||pick.match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/);
+  if(asianHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||"")))){
+    const side=asianHcp[1],line=Number(asianHcp[2]),adjusted=(side==="home"?hs:as)+line,opponent=side==="home"?as:hs;
+    return adjusted===opponent?"Void":adjusted>opponent?"Won":"Lost";
   }
   if(p.marketType==="1x2"){
-    if(/home|1x2.*1|\b1\b/.test(pick)) return hs>as?"Won":"Lost";
-    if(/away|1x2.*2|\b2\b/.test(pick)) return as>hs?"Won":"Lost";
-    if(/draw|tie|x/.test(pick)) return hs===as?"Won":"Lost";
+    if(/home|1x2.*1|^1$/.test(pick))return hs>as?"Won":"Lost";
+    if(/away|1x2.*2|^2$/.test(pick))return as>hs?"Won":"Lost";
+    if(/draw|tie|^x$/.test(pick))return hs===as?"Won":"Lost";
   }
-  if(/home/.test(pick)&&!/handicap/.test(pick)) return hs>as?"Won":"Lost";
-  if(/away/.test(pick)&&!/handicap/.test(pick)) return as>hs?"Won":"Lost";
-  if(/draw/.test(pick)) return hs===as?"Won":"Lost";
+  if(/home/.test(pick))return hs>as?"Won":"Lost";
+  if(/away/.test(pick))return as>hs?"Won":"Lost";
+  if(/draw/.test(pick))return hs===as?"Won":"Lost";
   return "Pending";
 }
 function dateListInclusive(from,to){
