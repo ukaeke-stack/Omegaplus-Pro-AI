@@ -856,6 +856,7 @@ function dailyCoreMarketType(market){
   return "";
 }
 async function buildDailyBest(date,sport="football"){
+  const buildStartedAt=Date.now();
   if(sport!=="football")return {predictions:[],combinedOdds:0,shortfall:10,message:"Daily Best 10 currently supports football only."};
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures||[],candidates=[];
   for(const fixture of fixtures){
@@ -895,9 +896,10 @@ async function buildDailyBest(date,sport="football"){
     if(seen.has(key))return false;
     seen.add(key);return true;
   });
-  // Enrich a broad pool so independent form/xG and the derived goal model can affect ranking.
-  const shortlist=unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||a.odds-b.odds||a.startTimeMs-b.startTimeMs).slice(0,100);
-  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
+  // Keep a broad but bounded shortlist: the independent-stat provider calls dominate cold-start latency.
+  // Sixty candidates preserve a useful ranking pool while avoiding slow enrichment of marginal picks.
+  const shortlist=unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||a.odds-b.odds||a.startTimeMs-b.startTimeMs).slice(0,60);
+  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:8}));
   const ranked=enriched.map(x=>{
     const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
     const market=Number(x.marketConfidence??x.confidence);
@@ -934,9 +936,11 @@ async function buildDailyBest(date,sport="football"){
     }
   }
   combinedOdds=product(selected);
-  if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"Ten quality-qualified picks were found, but their combined odds could not reach 5.00 without weakening the quality filter. No set was published."};
+  if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"Ten quality-qualified picks were found, but their combined odds are below the 5.00 minimum. No set was published rather than weakening the quality filter."};
   selected.sort((a,b)=>a.startTimeMs-b.startTimeMs);
-  return {predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"10 quality-qualified picks · core markets only · combined odds target 5.00 · combined odds "+combinedOdds.toFixed(2)};
+  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"10 quality-qualified picks · core markets only · minimum combined odds 5.00 · actual combined odds "+combinedOdds.toFixed(2)};
+  console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,enriched:shortlist.length,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
+  return result;
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures,candidates=[];
