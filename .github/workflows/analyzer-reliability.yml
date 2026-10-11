@@ -5,6 +5,8 @@ on:
     paths:
       - "server.js"
       - "independent-stats.js"
+      - "goal-api-stats.js"
+      - "model-ensemble.js"
       - "analyzer-reliability.js"
       - "test/analyzer-reliability.test.js"
       - "package.json"
@@ -30,5 +32,7 @@ jobs:
           node-version: 20
       - run: node --check server.js
       - run: node --check independent-stats.js
+      - run: node --check goal-api-stats.js
+      - run: node --check model-ensemble.js
       - run: node --check analyzer-reliability.js
       - run: npm test
