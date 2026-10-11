@@ -216,7 +216,8 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
     }
     if(pageCount<pageSize) break;
   }
-  liveCache={at:Date.now(),key:cacheKey,fixtures:all};
+  // Do not cache a transient empty provider response; the next request should retry.
+  if(all.length)liveCache={at:Date.now(),key:cacheKey,fixtures:all};
   return all;
   })();
   try{return await liveFetchPromise}finally{liveFetchPromise=null}
@@ -644,7 +645,9 @@ async function getDayFixtures(date,force=false,sport="football"){
   if(!force&&hit&&Date.now()-hit.at<DAY_CACHE_MS)return {fixtures:hit.fixtures,cached:true,scannedAt:hit.at};
   const fixtures=await getSportyFixtures(date===localDayKey(Date.now()),force,sport);
   const day=fixtures.filter(x=>localDayKey(x.startTimeMs)===date);
-  dayCache.set(cacheKey,{at:Date.now(),fixtures:day});
+  // Empty fixture responses can be transient during provider cold starts. Keep them out of the day cache.
+  if(day.length)dayCache.set(cacheKey,{at:Date.now(),fixtures:day});
+  else dayCache.delete(cacheKey);
   return {fixtures:day,cached:false,scannedAt:Date.now()};
 }
 
@@ -857,7 +860,7 @@ function dailyCoreMarketType(market){
 }
 async function buildDailyBest(date,sport="football"){
   const buildStartedAt=Date.now();
-  if(sport!=="football")return {predictions:[],combinedOdds:0,shortfall:10,message:"Daily Best 10 currently supports football only."};
+  if(sport!=="football")return {predictions:[],combinedOdds:0,shortfall:10,fixtureCount:0,message:"Daily Best 10 currently supports football only."};
   const fixtures=(await getDayFixtures(date,false,sport)).fixtures||[],candidates=[];
   for(const fixture of fixtures){
     if(localDayKey(fixture.startTimeMs)!==date)continue;
@@ -912,7 +915,7 @@ async function buildDailyBest(date,sport="football"){
     selected.push(p);usedEvents.add(p.eventId);
     if(selected.length===10)break;
   }
-  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,message:"Only "+selected.length+" distinct fixtures met the core-market quality filter. No Daily 10 set was published rather than filling it with weak picks."};
+  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,fixtureCount:fixtures.length,message:"Only "+selected.length+" distinct fixtures met the core-market quality filter. No Daily 10 set was published rather than filling it with weak picks."};
   const product=rows=>rows.reduce((v,p)=>v*Number(p.odds||1),1);
   let combinedOdds=product(selected),usedIds=new Set(selected.map(x=>x.id));
   // If the top ten do not reach 5.00, swap in the strongest eligible alternatives with higher odds.
@@ -936,9 +939,9 @@ async function buildDailyBest(date,sport="football"){
     }
   }
   combinedOdds=product(selected);
-  if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"Ten quality-qualified picks were found, but their combined odds are below the 5.00 minimum. No set was published rather than weakening the quality filter."};
+  if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"Ten quality-qualified picks were found, but their combined odds are below the 5.00 minimum. No set was published rather than weakening the quality filter."};
   selected.sort((a,b)=>a.startTimeMs-b.startTimeMs);
-  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,message:"10 quality-qualified picks · core markets only · minimum combined odds 5.00 · actual combined odds "+combinedOdds.toFixed(2)};
+  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"10 quality-qualified picks · core markets only · minimum combined odds 5.00 · actual combined odds "+combinedOdds.toFixed(2)};
   console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,enriched:shortlist.length,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
   return result;
 }
@@ -1043,17 +1046,23 @@ app.get("/api/daily-best",async(req,r)=>{try{
     await writePersistentArchive(date,existing,sport);
   }
   const saved=existing?.dailyBestPredictions;
-  const validSaved=Array.isArray(saved)&&((saved.length===10&&Number(existing.dailyCombinedOdds)>=5&&saved.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(saved.length===0&&existing.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&Boolean(existing.dailyMessage)));
+  const validSaved=Array.isArray(saved)&&((saved.length===10&&Number(existing.dailyCombinedOdds)>=5&&saved.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(saved.length===0&&existing.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&Number(existing.dailyFixtureCount)>0&&Boolean(existing.dailyMessage)));
   // Freeze a valid saved set for the whole Lagos calendar date, even after later code releases.
   if(existing?.sport===sport&&validSaved)
     return r.json({ok:true,date,sport,predictions:saved.slice(0,10),combinedOdds:Number(existing.dailyCombinedOdds)||0,shortfall:Number(existing.dailyShortfall)||0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
-  const built=await buildDailyBest(date,sport),predictions=built.predictions||[];
+  let built=await buildDailyBest(date,sport);
+  // Retry a transient empty fixture response automatically; users should not need to press Update Scan.
+  if(Number(built.fixtureCount)===0){await sleep(800);built=await buildDailyBest(date,sport)}
+  const predictions=built.predictions||[];
+  if(Number(built.fixtureCount)===0){
+    return r.json({ok:true,date,sport,predictions:[],combinedOdds:0,shortfall:10,message:"Fixtures are temporarily unavailable. Please wait a moment and the Daily Best list will retry automatically.",fixtureCount:0,archived:false,retryable:true});
+  }
   const archive=existing||{date,sport,predictions:[],results:[]};
   archive.dailyBestPredictions=predictions;archive.sport=sport;archive.dailyBestSelectionVersion=DAILY_SELECTION_VERSION;
-  archive.dailyCombinedOdds=Number(built.combinedOdds)||0;archive.dailyShortfall=Number(built.shortfall)||0;archive.dailyMessage=built.message||"";
+  archive.dailyCombinedOdds=Number(built.combinedOdds)||0;archive.dailyShortfall=Number(built.shortfall)||0;archive.dailyFixtureCount=Number(built.fixtureCount)||0;archive.dailyMessage=built.message||"";
   archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
   await writePersistentArchive(date,archive,sport);
-  r.json({ok:true,date,sport,predictions,combinedOdds:archive.dailyCombinedOdds,shortfall:archive.dailyShortfall,message:archive.dailyMessage,qualifiedCount:built.qualifiedCount||0,archived:true});
+  r.json({ok:true,date,sport,predictions,combinedOdds:archive.dailyCombinedOdds,shortfall:archive.dailyShortfall,fixtureCount:archive.dailyFixtureCount,message:archive.dailyMessage,qualifiedCount:built.qualifiedCount||0,archived:true});
 }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
