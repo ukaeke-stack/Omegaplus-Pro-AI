@@ -1,6 +1,6 @@
 import express from "express";
 import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
-import {get,put} from "@vercel/blob";
+import {put,get} from "@vercel/blob";
 import pg from "pg";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
@@ -11,6 +11,7 @@ import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMes
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
 import path from "node:path";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 
 async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
@@ -23,7 +24,7 @@ const APP_VERSION_CODE=5;
 const ANDROID_TARGET_SDK=36;
 const MIN_SUPPORTED_WEB_VERSION="1.6.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="mixed-top10-v1";
+const DAILY_SELECTION_VERSION="rollback-quality-top10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
 const COUNTRY=(SPORTYBET_REGION||"ng").toUpperCase();
@@ -66,11 +67,11 @@ app.use((req,res,next)=>{
 });
 app.use(express.static(path.join(__dirname,"public")));
 
-const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","900300","900301","219","223","225","227","228"];
+const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136","138","900304","900305","900312","162","165","166","172","186","187","188","189","219","223","225","227","228","251","256","258","274","275","276","406","410","412","414","415","900300","900301"];
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
-let liveFetchPromise=null;
+const liveFetchPromises=new Map();
 const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
@@ -166,25 +167,94 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"1";
+  // Request the broad supported market set for every sport. A hard-coded marketId=1 can return no fixtures for table tennis and other non-football sports, even when events are available. SportyBet requires marketId, so do not omit it (that yields HTTP 422).
+  const marketKey=MARKET_IDS.join(",");
   const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
-  if(liveFetchPromise) return liveFetchPromise;
-  liveFetchPromise=(async()=>{
+  if(liveFetchPromises.has(cacheKey)) return liveFetchPromises.get(cacheKey);
+  const fetchPromise=(async()=>{
   const all=[],pageSize=100;
   for(let page=1;page<=(todayOnly?4:12);page++){
     const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
     let body;
     try{
       body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-      if(sportDef.id!=="football" && !(body.data?.tournaments||[]).some(t=>(t.events||[]).length)){
+      if(sportDef.id==="table_tennis"){
+        // Some SportyBet sport feeds return fixture rows for a broad market list
+        // but omit their odds. Probe common market IDs individually and merge
+        // only provider-returned markets for matching events; never synthesize odds.
+        const probeIds=["1","18","10","29","11"];
+        const eventMap=new Map();
+        const rememberEvents=(payload)=>{
+          for(const tournament of payload?.data?.tournaments||[]){
+            for(const event of tournament.events||[]){
+              const id=String(event.eventId||"");
+              if(!id) continue;
+              const current=eventMap.get(id);
+              if(!current){
+                eventMap.set(id,{tournament,event:{...event,markets:[...(event.markets||[])]}});
+              }else{
+                const known=new Set(current.event.markets.map(m=>JSON.stringify([String(m.id||""),String(m.specifier||""),(m.outcomes||[]).map(o=>String(o.id||""))])));
+                for(const market of event.markets||[]){
+                  const key=JSON.stringify([String(market.id||""),String(market.specifier||""),(market.outcomes||[]).map(o=>String(o.id||""))]);
+                  if(!known.has(key)){current.event.markets.push(market);known.add(key);}
+                }
+              }
+            }
+          }
+        };
+        rememberEvents(body);
+        const probeResults=[];
+        for(const probeId of probeIds){
+          try{
+            const probeParams=new URLSearchParams(params);
+            probeParams.set("marketId",probeId);
+            const probeBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+probeParams);
+            const probeTournaments=probeBody.data?.tournaments||[];
+            const probeEvents=probeTournaments.flatMap(t=>t.events||[]);
+            const probeMarkets=probeEvents.reduce((n,e)=>n+(e.markets||[]).length,0);
+            probeResults.push({marketId:probeId,tournaments:probeTournaments.length,events:probeEvents.length,markets:probeMarkets});
+            rememberEvents(probeBody);
+          }catch(probeError){
+            probeResults.push({marketId:probeId,error:probeError.message});
+          }
+        }
+        const mergedTournaments=new Map();
+        for(const {tournament,event} of eventMap.values()){
+          const key=String(tournament.id||tournament.name||"unknown");
+          if(!mergedTournaments.has(key)) mergedTournaments.set(key,{...tournament,events:[]});
+          mergedTournaments.get(key).events.push(event);
+        }
+        body={...body,data:{...(body.data||{}),tournaments:[...mergedTournaments.values()]}};
+        console.log("SportyBet table-tennis market probes",JSON.stringify({probeResults,mergedEvents:eventMap.size,mergedMarkets:[...eventMap.values()].reduce((n,x)=>n+(x.event.markets||[]).length,0)}));
+      }
+      if(sportDef.id!=="football"){
         const unfiltered=new URLSearchParams(params);
         unfiltered.delete("marketId");
-        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+        const filteredBody=body;
+        const filteredTournaments=filteredBody.data?.tournaments||[];
+        const filteredMarketCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+        const filteredEventCount=filteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+        // SportyBet can reject requests without marketId (HTTP 422). Keep the
+        // valid filtered response and only prefer unfiltered data if that call succeeds.
+        try{
+          const unfilteredBody=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+          const unfilteredTournaments=unfilteredBody.data?.tournaments||[];
+          const unfilteredMarketCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).reduce((n,event)=>n+(event.markets||[]).length,0),0);
+          const unfilteredEventCount=unfilteredTournaments.reduce((sum,t)=>sum+(t.events||[]).length,0);
+          if(unfilteredMarketCount>filteredMarketCount || (unfilteredEventCount>filteredEventCount&&unfilteredMarketCount>=filteredMarketCount)){
+            body=unfilteredBody;
+          }
+        }catch(unfilteredError){
+          console.warn("SportyBet unfiltered fixture fallback unavailable:",unfilteredError.message);
+        }
       }
     }catch(e){if(all.length) break;throw e}
     const tournaments=body.data?.tournaments||[];
     let pageCount=0;
+    const responseEventCount=tournaments.reduce((n,t)=>n+(t.events||[]).length,0);
+    const responseMarketCount=tournaments.reduce((n,t)=>n+(t.events||[]).reduce((m,e)=>m+(e.markets||[]).length,0),0);
+    if(page===1) console.log("SportyBet fixture diagnostic",JSON.stringify({sport:sportDef.id,sportId:sportDef.sportId,marketKey,todayOnly,page,tournamentCount:tournaments.length,eventCount:responseEventCount,marketCount:responseMarketCount,sample:tournaments.slice(0,3).map(t=>({league:t.name,category:t.categoryName,events:(t.events||[]).slice(0,2).map(e=>({home:e.homeTeamName,away:e.awayTeamName,startTimeMs:e.estimateStartTime,markets:(e.markets||[]).slice(0,5).map(m=>({id:m.id,name:m.desc||m.name,outcomes:(m.outcomes||[]).length}))}))}))}));
     for(const tournament of tournaments){
       for(const event of tournament.events||[]){
         pageCount++;
@@ -218,7 +288,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   liveCache={at:Date.now(),key:cacheKey,fixtures:all};
   return all;
   })();
-  try{return await liveFetchPromise}finally{liveFetchPromise=null}
+  liveFetchPromises.set(cacheKey,fetchPromise);try{return await fetchPromise}finally{if(liveFetchPromises.get(cacheKey)===fetchPromise)liveFetchPromises.delete(cacheKey)}
 }
 
 function localDayKey(ms){
@@ -241,10 +311,10 @@ function marketMatches(market,type){
   if(type==="basketball_first_half_total") return has("first half","1st half","half total")&&has("over under","total");
   if(type==="basketball_first_half_moneyline") return has("first half","1st half")&&has("winner","moneyline","match result");
   if(type==="basketball_quarter_total") return has("quarter","q1","q2","q3","q4")&&has("over under","total");
-  if(type==="table_tennis_moneyline") return has("winner","match winner","moneyline","to win");
+  if(type==="table_tennis_moneyline") return id==="1"||has("winner","match winner","moneyline","to win","match result","1x2");
   if(type==="table_tennis_total_points") return has("total points","points total","over under points","total games")||((has("over","under","total"))&&!has("goals","runs","sets","period"));
   if(type==="table_tennis_handicap") return has("points handicap","handicap","spread");
-  if(type==="table_tennis_set_betting") return has("correct score","set betting","sets","exact score");
+  if(type==="table_tennis_set_betting") return has("correct score","correct set score","set betting","sets","exact score");
   if(type==="tennis_moneyline") return has("winner","match winner","moneyline","to win");
   if(type==="tennis_total_games") return has("total games","games total","over under games")||((has("over","under","total"))&&!has("points","goals","runs","sets","period"));
   if(type==="tennis_handicap") return has("games handicap","handicap","game spread");
@@ -344,10 +414,7 @@ function pickLabel(type,outcome){
     const x=raw.toLowerCase();
     return x.includes("home")?"HT Home":x.includes("draw")?"HT Draw":x.includes("away")?"HT Away":raw;
   }
-  if(type==="handicap"){
-    return raw||"Handicap (line not supplied)";
-  }
-  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":"Over/Under");
+  return raw||(type==="1x2"?"1X2":type==="btts"?"BTTS":type==="corners"?"Corners":type==="cards"?"Bookings":type==="handicap"?"Handicap":"Over/Under");
 }
 function selectionRequested(outcome,requested,market,type=""){
   const req=String(requested||"");
@@ -426,17 +493,21 @@ function selectionRequested(outcome,requested,market,type=""){
     const want=normalizeText(label);
     return raw===want||raw.includes(want);
   }
-  if(type==="table_tennis_total_points"){
-    const range=String(requestedKey||label).match(/^(over|under)_range_(\d+)_([0-9]+)_(\d+)_([0-9]+)$/);
-    if(range){const low=Number(range[2]+"."+range[3]),high=Number(range[4]+"."+range[5]),actual=Number(actualLine);return Number.isFinite(actual)&&actual>=low&&actual<=high&&raw.includes(range[1]);}
+  if(["table_tennis_total_points","tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
+    if(type==="table_tennis_total_points"&&requestedKey){
+      const range=requestedKey.match(/^(over|under)_range_(\d+)_(\d+)_to_(\d+)_(\d+)$/);
+      if(range){const low=Number(range[2]+"."+range[3]),high=Number(range[4]+"."+range[5]);const outcomeLine=Number(actualLine||((raw.match(/[0-9]+(?:\.[0-9]+)?/)||[])[0]||0));return range[1]===direction&&Boolean(direction)&&Number.isFinite(outcomeLine)&&outcomeLine>=low&&outcomeLine<=high&&raw.includes(direction)}
+    }
     if(line&&actualLine!==line)return false;
     return Boolean(direction&&raw.includes(direction));
   }
-  if(["tennis_total_games","hockey_total_goals","baseball_total_runs"].includes(type)){
-    if(line&&actualLine!==line)return false;
-    return Boolean(direction&&raw.includes(direction));
+  if(type==="table_tennis_moneyline"){
+    const want=normalizeText(label),idx=(Array.isArray(market?.outcomes)?market.outcomes:[]).indexOf(outcome);
+    if(["home","player 1","1"].includes(want)) return ["home","player 1","1"].includes(raw)||idx===0;
+    if(["away","player 2","2"].includes(want)) return ["away","player 2","2"].includes(raw)||idx===1;
+    return directWinningSelectionRequested(outcome,label);
   }
-  if(["table_tennis_moneyline","tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
+  if(["tennis_moneyline","hockey_moneyline","baseball_moneyline"].includes(type)){
     return directWinningSelectionRequested(outcome,label);
   }
   if(["table_tennis_handicap","table_tennis_set_betting","tennis_handicap","hockey_puck_line","baseball_run_line","tennis_set_betting","hockey_period","baseball_innings"].includes(type)){
@@ -545,8 +616,8 @@ app.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{
 });
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
-app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/public/features",async(_,r)=>{try{const settings=await getAdminSettings();r.json({ok:true,features:{correctScoreEnabled:settings.correctScoreEnabled}})}catch(e){r.status(503).json({ok:false,error:"Feature settings are temporarily unavailable."})}});
+app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
@@ -687,13 +758,13 @@ app.get("/api/history",async(req,r)=>{
   }catch(e){console.error("History read/settlement failed:",e.message);r.status(503).json({ok:false,error:"Shared online history is temporarily unavailable. Please retry shortly.",archive:null})}
 });
 app.post("/api/history",async(_req,r)=>r.status(405).json({ok:false,error:"History is server-managed and read-only from the public app."}));
-app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:Boolean(x.sources.fotmob||x.sources.goalApi||x.sources.sofascore),providers:x.sources,verification:x.providerDiagnostics?.verificationPolicy||"Two independent providers must agree on a finished score; conflicts block settlement.",providerDiagnostics:x.providerDiagnostics||null,cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message,providerDiagnostics:{error:e.message}})}});
+app.get("/api/results/status",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedResults(localDayKey(Date.now()),false,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"Sportmonks + Sofascore agreement required for settlement",cacheSeconds:15});}catch(e){r.json({ok:true,configured:Boolean(process.env.SPORTMONKS_API_TOKEN),providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},verification:"Multi-source verification unavailable: "+e.message})}});
 app.get("/api/results/leagues",async(_,r)=>{try{const x=await getMyLeagues();if(!x.configured)return r.status(503).json({ok:false,configured:false,error:x.error,leagues:[]});r.json({ok:true,configured:true,provider:"Sportmonks",count:x.data.length,leagues:x.data.map(l=>({id:l.id,name:l.name,countryId:l.country_id,active:l.active}))})}catch(e){r.status(502).json({ok:false,configured:true,provider:"Sportmonks",error:e.message,leagues:[]})}});
 app.get("/api/results",async(req,r)=>{
-  try{const date=String(req.query.date||localDayKey(Date.now()));const sport=String(req.query.sport||"football");const force=String(req.query.refresh||"") === "1";const x=await getVerifiedResults(date,force,sport);r.json({ok:true,configured:Boolean(x.sources.fotmob||x.sources.goalApi||x.sources.sofascore),providers:x.sources,verification:x.providerDiagnostics?.verificationPolicy||"Two independent providers must agree on a finished score; conflicts block settlement.",providerDiagnostics:x.providerDiagnostics||null,date,results:x.results,updatedAt:x.updatedAt});}
+  try{const date=String(req.query.date||localDayKey(Date.now()));const sport=String(req.query.sport||"football");const force=String(req.query.refresh||"") === "1";const x=await getVerifiedResults(date,force,sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,verification:"confirmed only when Sportmonks and Sofascore agree",date,results:x.results,updatedAt:x.updatedAt});}
   catch(e){r.status(502).json({ok:false,configured:false,providers:{sportmonks:Boolean(process.env.SPORTMONKS_API_TOKEN),sofascore:true},error:e.message,results:[]})}
 });
-app.get("/api/results/live",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedLiveResults(sport);r.json({ok:true,configured:Boolean(x.sources.fotmob||x.sources.goalApi||x.sources.sofascore),providers:x.sources,providerDiagnostics:x.providerDiagnostics||null,results:x.results,updatedAt:x.updatedAt});}catch(e){r.status(502).json({ok:false,configured:false,error:e.message,results:[]})}});
+app.get("/api/results/live",async(req,r)=>{try{const sport=String(req.query.sport||"football");const x=await getVerifiedLiveResults(sport);r.json({ok:true,configured:x.sources.sportmonks,providers:x.sources,results:x.results,updatedAt:x.updatedAt});}catch(e){r.status(502).json({ok:false,configured:false,error:e.message,results:[]})}});
 
 function leagueCountry(name,category=""){
   const c=String(category||"").trim();
@@ -966,6 +1037,9 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
       const best=model.scores?.[0];
+      const hasRealInputs=(model.sources||[]).some(source=>!String(source).startsWith("Fallback goal model"));
+      const egHome=Number(model.expectedGoals?.home),egAway=Number(model.expectedGoals?.away);
+      if(!hasRealInputs||!Number.isFinite(egHome)||!Number.isFinite(egAway)||egHome<0.3||egAway<0.3||egHome+egAway>5.8)continue;
       if(!best||!Number.isFinite(Number(best.probability))||Number(best.probability)<3.5)continue;
       results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,startTimeMs:f.startTimeMs,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number(Number(best.probability).toFixed(1)),independentConfidence:p.independentConfidence??null});
     }
@@ -980,7 +1054,25 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,refreshed:forceRefresh,scannedFixtures:candidates.length,eligiblePredictions:results.length,method:"Upcoming fixtures ranked by exact-score probability and independent-data coverage"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
-app.get("/api/daily-best",async(req,r)=>{try{const sport=String(req.query.sport||"football");const date=String(req.query.date||localDayKey(Date.now()));const existing=await readPersistentArchive(date,sport);if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))return r.json({ok:true,date,predictions:existing.predictions.slice(0,10),archived:true});const predictions=await buildDailyBest(date,sport);const archive=await readPersistentArchive(date,sport)||{date,sport,predictions:[],results:[]};archive.predictions=predictions;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;await writePersistentArchive(date,archive,sport);r.json({ok:true,date,sport,predictions,archived:true})}catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
+app.get("/api/daily-best",async(req,r)=>{try{
+  const sport=String(req.query.sport||"football"),date=String(req.query.date||localDayKey(Date.now()));
+  const existing=await readPersistentArchive(date,sport);
+  if(existing?.sport===sport&&existing?.dailySelectionVersion===DAILY_SELECTION_VERSION&&existing?.predictions?.length===10&&existing.predictions.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:existing.predictions.slice(0,10),archived:true});
+  let fixtureResult=await getDayFixtures(date,false,sport);
+  if(!fixtureResult.fixtures?.length){await sleep(800);fixtureResult=await getDayFixtures(date,true,sport);}
+  if(!fixtureResult.fixtures?.length)
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:[],archived:false,fixtureCount:0,retryable:true,message:"Fixtures are temporarily unavailable. Retrying automatically."});
+  const predictions=(await buildDailyBest(date,sport)).slice(0,10);
+  const qualityFiltered=predictions.filter(p=>!["D","F"].includes(String(p.qualityGrade||"").toUpperCase()));
+  if(qualityFiltered.length<10)
+    return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:[],archived:false,fixtureCount:fixtureResult.fixtures.length,qualifiedCount:qualityFiltered.length,message:"Fewer than 10 distinct picks met the quality filter. Weak picks were not added to fill the list."});
+  const archive=existing||{date,sport,predictions:[],results:[]};
+  archive.predictions=qualityFiltered;archive.sport=sport;archive.dailySelectionVersion=DAILY_SELECTION_VERSION;
+  archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
+  await writePersistentArchive(date,archive,sport);
+  return r.set("Cache-Control","no-store").json({ok:true,date,sport,predictions:qualityFiltered,fixtureCount:fixtureResult.fixtures.length,combinedOdds:qualityFiltered.reduce((v,p)=>v*Number(p.odds||1),1),archived:true});
+}catch(e){r.status(502).set("Cache-Control","no-store").json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
   try{
     const body=req.body||{}, admin=await getAdminSettings();
@@ -992,7 +1084,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const selections=Array.isArray(body.selections)?body.selections.filter(Boolean):[];
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
-    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
+    const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[]; const scannedFixtures=fixtures.length,fixturesWithMarkets=fixtures.filter(f=>Array.isArray(f.markets)&&f.markets.length>0).length,availableMarkets=fixtures.reduce((n,f)=>n+(Array.isArray(f.markets)?f.markets.length:0),0);
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
@@ -1048,7 +1140,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
     await writePersistentArchive(requestedDate,existing,requestedSport);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},scannedFixtures,fixturesWithMarkets,availableMarkets,qualifyingFixtures:qualified.length,total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
@@ -1095,60 +1187,37 @@ function matchArchiveResult(p,results,date){
   return best.reversed?{...best.result,homeScore:best.result.awayScore,awayScore:best.result.homeScore}:best.result;
 }
 function serverSettlePrediction(p,result){
-  if(!result)return "Pending";
+  if(!result||!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore))) return "Pending";
   const status=String(result.status||"").toLowerCase();
-  if(/postpon/.test(status))return "Postponed";
-  if(/cancel|void|abandon/.test(status))return "Void";
-  if(!/finished|full time|ended|complete|\bft\b|final|after extra|penalt/.test(status))return "Pending";
-  if(!["confirmed","single-source"].includes(String(result.verificationStatus||"")))return "Pending";
-  if(!Number.isFinite(Number(result.homeScore))||!Number.isFinite(Number(result.awayScore)))return "Pending";
-  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as;
-  const pick=String(p.pick||p.selection||p.bestScore?.score||p.bestScore?.label||p.bestScore?.result||"").toLowerCase();
-  if(String(p.market||"").toLowerCase()==="correct score"||p.bestScore){
-    const cs=pick.match(/(\d+)\s*[-:–]\s*(\d+)/);
-    if(cs)return hs===Number(cs[1])&&as===Number(cs[2])?"Won":"Lost";
-    return "Pending";
-  }
+  if(/postpon|cancel|void|abandon/.test(status)) return /postpon|cancel|void/.test(status)?"Postponed":"Pending";
+  if(!/finished|full time|ended|complete|ft|final/.test(status)) return "Pending";
+  const hs=Number(result.homeScore),as=Number(result.awayScore),total=hs+as,pick=String(p.pick||"").toLowerCase();
   const over=pick.match(/over\s*(\d+(?:\.\d+)?)/),under=pick.match(/under\s*(\d+(?:\.\d+)?)/);
-  if(over){const line=Number(over[1]);return total===line?"Void":total>line?"Won":"Lost";}
-  if(under){const line=Number(under[1]);return total===line?"Void":total<line?"Won":"Lost";}
-  if(p.marketType==="btts"||/btts|both teams to score/.test(pick)){
-    const yes=!/\bno\b|not|ng/.test(pick),actual=hs>0&&as>0;
+  if(over) return total>Number(over[1])?"Won":"Lost";
+  if(under) return total<Number(under[1])?"Won":"Lost";
+  if(result.verificationStatus!=="confirmed") return "Pending";
+  if(p.marketType==="btts"||/btts/.test(pick)){
+    const yes=/yes|gg|both.*score/.test(pick),actual=hs>0&&as>0;
     return actual===yes?"Won":"Lost";
   }
-  if(p.marketType==="basketball_moneyline"){if(/home|\b1\b/.test(pick))return hs>as?"Won":"Lost";if(/away|\b2\b/.test(pick))return as>hs?"Won":"Lost";}
+  if(p.marketType==="basketball_moneyline"){ if(/home|1/.test(pick)) return hs>as?"Won":"Lost"; if(/away|2/.test(pick)) return as>hs?"Won":"Lost"; }
   if(p.marketType==="double_chance"){
-    if(/home or draw|\b1x\b/.test(pick))return hs>=as?"Won":"Lost";
-    if(/home or away|\b12\b/.test(pick))return hs!==as?"Won":"Lost";
-    if(/draw or away|\bx2\b/.test(pick))return as>=hs?"Won":"Lost";
+    if(/home or draw|1x/.test(pick)) return hs>=as?"Won":"Lost";
+    if(/home or away|12/.test(pick)) return hs!==as?"Won":"Lost";
+    if(/draw or away|x2/.test(pick)) return as>=hs?"Won":"Lost";
   }
   if(p.marketType==="team_total"){
     const hm=pick.match(/home\s*over\s*(\d+(?:\.\d+)?)/),am=pick.match(/away\s*over\s*(\d+(?:\.\d+)?)/);
-    if(hm)return hs>Number(hm[1])?"Won":"Lost";
-    if(am)return as>Number(am[1])?"Won":"Lost";
-  }
-  // Handicap picks must be settled against the handicap line, not the raw score.
-  const europeanHcp=pick.match(/\((\d+)\s*:\s*(\d+)\)/)||String(p.specifier||"").match(/hcp=(\d+)\s*:\s*(\d+)/i);
-  if(europeanHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||""))||/hcp=/i.test(String(p.specifier||"")))){
-    const ah=hs+Number(europeanHcp[1]),aa=as+Number(europeanHcp[2]);
-    if(/\bhome\b/.test(pick))return ah>aa?"Won":"Lost";
-    if(/\bdraw\b/.test(pick))return ah===aa?"Won":"Lost";
-    if(/\baway\b/.test(pick))return aa>ah?"Won":"Lost";
-    return "Pending";
-  }
-  const asianHcp=pick.match(/\b(home|away)\s*\(([+-]\d+(?:\.\d+)?)\)/)||pick.match(/\b(home|away)\s*([+-]\d+(?:\.\d+)?)/);
-  if(asianHcp&&(p.marketType==="handicap"||/handicap/i.test(String(p.market||"")))){
-    const side=asianHcp[1],line=Number(asianHcp[2]),adjusted=(side==="home"?hs:as)+line,opponent=side==="home"?as:hs;
-    return adjusted===opponent?"Void":adjusted>opponent?"Won":"Lost";
+    if(hm)return hs>Number(hm[1])?"Won":"Lost"; if(am)return as>Number(am[1])?"Won":"Lost";
   }
   if(p.marketType==="1x2"){
-    if(/home|1x2.*1|^1$/.test(pick))return hs>as?"Won":"Lost";
-    if(/away|1x2.*2|^2$/.test(pick))return as>hs?"Won":"Lost";
-    if(/draw|tie|^x$/.test(pick))return hs===as?"Won":"Lost";
+    if(/home|1x2.*1|\b1\b/.test(pick)) return hs>as?"Won":"Lost";
+    if(/away|1x2.*2|\b2\b/.test(pick)) return as>hs?"Won":"Lost";
+    if(/draw|tie|x/.test(pick)) return hs===as?"Won":"Lost";
   }
-  if(/home/.test(pick))return hs>as?"Won":"Lost";
-  if(/away/.test(pick))return as>hs?"Won":"Lost";
-  if(/draw/.test(pick))return hs===as?"Won":"Lost";
+  if(/home/.test(pick)&&!/handicap/.test(pick)) return hs>as?"Won":"Lost";
+  if(/away/.test(pick)&&!/handicap/.test(pick)) return as>hs?"Won":"Lost";
+  if(/draw/.test(pick)) return hs===as?"Won":"Lost";
   return "Pending";
 }
 function dateListInclusive(from,to){
