@@ -944,7 +944,7 @@ async function buildDailyBest(date,sport="football"){
   });
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
-  const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
+  const ranked=enriched.filter(x=>!["D","F"].includes(String(x.qualityGrade||"").toUpperCase())).sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
   // First guarantee market diversity: take the strongest available pick from each market type.
   for(const type of types){
