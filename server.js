@@ -224,10 +224,17 @@ async function fetchUpcomingSportPage(sportDef,params){
           const copy={...event,markets:[...(event.markets||[])]};
           target.events.push(copy);eventMap.set(id,copy);continue;
         }
-        const known=new Set((current.markets||[]).map(m=>String(m.id||"")+"|"+String(m.specifier||"")));
         for(const market of event.markets||[]){
           const key=String(market.id||"")+"|"+String(market.specifier||"");
-          if(!known.has(key)){current.markets.push(market);known.add(key);}
+          const existing=(current.markets||[]).find(m=>String(m.id||"")+"|"+String(m.specifier||"")===key);
+          if(!existing){current.markets.push({...market,outcomes:[...(market.outcomes||[])]});continue;}
+          if(!Array.isArray(existing.outcomes))existing.outcomes=[];
+          const outcomeIndex=new Map(existing.outcomes.map(outcome=>[String(outcome.id||""),outcome]));
+          for(const outcome of market.outcomes||[]){
+            const outcomeId=String(outcome.id||"");
+            if(!outcomeIndex.has(outcomeId)){existing.outcomes.push(outcome);outcomeIndex.set(outcomeId,outcome);}
+            else Object.assign(outcomeIndex.get(outcomeId),outcome);
+          }
         }
       }
     }
