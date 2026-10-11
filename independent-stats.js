@@ -1,3 +1,6 @@
+import { getGoalApiTeamForm, checkGoalApiStatsHealth } from "./goal-api-stats.js";
+import { getMyLeagues } from "./sportmonks-results.js";
+
 const SOFASCORE_BASE="https://api.sofascore.com/api/v1";
 const UNDERSTAT_BASE="https://understat.com/";
 const FETCH_TIMEOUT=7000;
@@ -110,7 +113,8 @@ async function sofaTeamRecent(teamId){
   }catch{return[]}
 }
 function summarizeRecent(events,teamId){
-  const finished=events.filter(e=>e.status?.type==="finished"||e.status?.code===100).slice(-10);
+  const finished=events.filter(e=>e.status?.type==="finished"||e.status?.code===100)
+    .sort((a,b)=>Number(b.startTimestamp||0)-Number(a.startTimestamp||0)).slice(0,10);
   let gf=0,ga=0,w=0,d=0,l=0,over15=0,over25=0,btts=0;
   for(const e of finished){
     const home=e.homeTeam?.id===teamId;
@@ -160,7 +164,7 @@ async function independentStatsForFixture(fixture,sport="football"){
   }
   const season=seasonStart(date),ud=await understatLeagueData(fixture.league,season);
   const uh=understatTeamSummary(ud,fixture.home),ua=understatTeamSummary(ud,fixture.away);
-  const form=homeRecent&&awayRecent?{
+  let form=homeRecent&&awayRecent?{
     homeMatches:homeRecent.matches,awayMatches:awayRecent.matches,
     homeWinRate:homeRecent.winRate,awayWinRate:awayRecent.winRate,
     homeOver15:homeRecent.over15Rate,awayOver15:awayRecent.over15Rate,
@@ -178,9 +182,29 @@ async function independentStatsForFixture(fixture,sport="football"){
     homeXg:sofaStats.expectedGoals?.home??null,awayXg:sofaStats.expectedGoals?.away??null,
     homePPDA:sofaStats.ppda?.home??null,awayPPDA:sofaStats.ppda?.away??null
   }:null;
-  const available=[sofa.found?"sofascore":null,ud?"understat":null].filter(Boolean);
+  let goalApi={available:false,home:null,away:null,form:null,error:null};
+  // GOAL API form is a cached fallback when Sofascore has no usable recent sample.
+  // Avoid extra lookups when Sofascore already supplies five or more recent games per side.
+  if(!form||Number(form.homeMatches)<5||Number(form.awayMatches)<5){
+    const result=await getGoalApiTeamForm(fixture.home,fixture.away,date);
+    goalApi={...result,form:result.available?{
+      homeMatches:result.home.matches,awayMatches:result.away.matches,
+      homeWinRate:result.home.winRate,awayWinRate:result.away.winRate,
+      homeOver15:result.home.over15Rate,awayOver15:result.away.over15Rate,
+      homeOver25:result.home.over25Rate,awayOver25:result.away.over25Rate,
+      homeBtts:result.home.bttsRate,awayBtts:result.away.bttsRate,
+      homeGoalsFor:result.home.goalsFor,awayGoalsFor:result.away.goalsFor,
+      homeGoalsAgainst:result.home.goalsAgainst,awayGoalsAgainst:result.away.goalsAgainst
+    }:null};
+    if(!form&&goalApi.form)form=goalApi.form;
+  }
+  const available=[
+    (homeRecent&&awayRecent)||shots||lineups||injuries.home||injuries.away?"sofascore":null,
+    ud?"understat":null,
+    goalApi.available?"goalapi":null
+  ].filter(Boolean);
   const derived=buildIndependentModels({form,uh,ua,shots});
-  return{available,date,sofascore:{eventId:sofa.eventId||null,form,stats:shots,lineups,injuries},understat:{home:uh,away:ua},models:derived};
+  return{available,date,sofascore:{eventId:sofa.eventId||null,form:homeRecent&&awayRecent?form:null,stats:shots,lineups,injuries},goalApi:{available:goalApi.available,form:goalApi.form,home:goalApi.home,away:goalApi.away,error:goalApi.error||null},understat:{home:uh,away:ua},models:derived};
 }
 function poissonPmf(lambda,k){if(!Number.isFinite(lambda)||lambda<0)return 0;let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p}
 function poissonOver(lambda,line){let s=0;const max=Math.max(12,Math.ceil(lambda+10));for(let k=0;k<=max;k++)if(k<=line)s+=poissonPmf(lambda,k);return clamp(1-s,0,1)}
@@ -209,7 +233,7 @@ function buildIndependentModels({form,uh,ua,shots}){
 }
 function clamp(n,min=0,max=100){return Math.max(min,Math.min(max,n))}
 function independentConfidence(stats,type){
-  const f=stats?.sofascore?.form,u=stats?.understat;
+  const f=stats?.sofascore?.form||stats?.goalApi?.form,u=stats?.understat;
   const vals=[];
   if(f){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
@@ -247,12 +271,28 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
 }
 export async function independentHealth(){
   const date=new Date().toISOString().slice(0,10);
-  const out={sofascore:false,understat:false,checkedAt:new Date().toISOString(),details:{}};
-  const sofa=await cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+date);
+  const out={sofascore:false,understat:false,goalApi:false,sportmonks:false,checkedAt:new Date().toISOString(),details:{}};
+  const [sofa,under,goalApi]=await Promise.all([
+    cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+date),
+    cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(date),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE}),
+    checkGoalApiStatsHealth()
+  ]);
   out.sofascore=Array.isArray(sofa.data?.events);
-  out.details.sofascore={available:out.sofascore,cached:Boolean(sofa.cached),stale:Boolean(sofa.stale),error:sofa.error||null};
-  const under=await cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(date),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE});
+  out.details.sofascore={available:out.sofascore,cached:Boolean(sofa.cached),stale:Boolean(sofa.stale),error:sofa.error||null,count:Array.isArray(sofa.data?.events)?sofa.data.events.length:0};
   out.understat=Boolean(under.data?.teams&&Object.keys(under.data.teams).length);
-  out.details.understat={available:out.understat,cached:Boolean(under.cached),stale:Boolean(under.stale),error:under.error||null};
+  out.details.understat={available:out.understat,cached:Boolean(under.cached),stale:Boolean(under.stale),error:under.error||null,teamCount:under.data?.teams?Object.keys(under.data.teams).length:0};
+  out.goalApi=Boolean(goalApi.available);
+  out.details.goalApi={...goalApi,role:"fallback recent team form; cached by team"};
+  if(process.env.SPORTMONKS_API_TOKEN){
+    try{
+      const leagues=await getMyLeagues();
+      out.sportmonks=Boolean(leagues.configured&&Array.isArray(leagues.data));
+      out.details.sportmonks={available:out.sportmonks,configured:true,count:Array.isArray(leagues.data)?leagues.data.length:0,error:leagues.error||null,role:"fixtures/results provider; not double-counted as prediction probability"};
+    }catch(error){
+      out.details.sportmonks={available:false,configured:true,count:0,error:error?.message||"Sportmonks health check failed"};
+    }
+  }else{
+    out.details.sportmonks={available:false,configured:false,count:0,error:"SPORTMONKS_API_TOKEN is not configured"};
+  }
   return out;
 }
