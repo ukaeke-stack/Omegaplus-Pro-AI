@@ -4,6 +4,8 @@ const FETCH_TIMEOUT=7000;
 const CACHE_TTL=6*60*60*1000;
 const MAX_CONCURRENCY=4;
 const cache=new Map();
+// Deduplicate concurrent cold-cache requests (especially the same day's Sofascore schedule).
+const pending=new Map();
 
 function key(v){return String(v||"").toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim()}
 function seasonStart(date){const d=new Date(date+"T12:00:00Z");const y=d.getUTCFullYear();return d.getUTCMonth()>=6?y:y-1}
@@ -27,15 +29,23 @@ async function fetchJson(url,headers={}){
 async function cachedJson(cacheKey,url,headers={}){
   const hit=cache.get(cacheKey);
   if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true};
-  try{
-    const data=await fetchJson(url,headers);
-    cache.set(cacheKey,{at:Date.now(),data});
-    return{data,cached:false};
-  }catch(e){
-    if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
-    cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
-    return{data:null,cached:true,error:e.message};
-  }
+  const inFlight=pending.get(cacheKey);
+  if(inFlight)return inFlight;
+  const request=(async()=>{
+    try{
+      const data=await fetchJson(url,headers);
+      cache.set(cacheKey,{at:Date.now(),data});
+      return{data,cached:false};
+    }catch(e){
+      if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
+      cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
+      return{data:null,cached:true,error:e.message};
+    }finally{
+      pending.delete(cacheKey);
+    }
+  })();
+  pending.set(cacheKey,request);
+  return request;
 }
 async function mapLimit(items,limit,fn){
   const out=new Array(items.length),queue=items.map((_,i)=>i);
@@ -199,7 +209,8 @@ function independentConfidence(stats,type){
   if(f){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
     if(type==="over2.5")vals.push((f.homeOver25+f.awayOver25)/2*100);
-    if(type==="btts")vals.push((f.homeBtts+f.awayBtts)/2*100);
+    if(type==="btts"&&Number.isFinite(f.homeBtts)&&Number.isFinite(f.awayBtts))vals.push((f.homeBtts+f.awayBtts)/2*100);
+    if(type==="btts_no"&&Number.isFinite(f.homeBtts)&&Number.isFinite(f.awayBtts))vals.push(100-((f.homeBtts+f.awayBtts)/2*100));
     if(type==="home")vals.push(f.homeWinRate*100);
     if(type==="away")vals.push(f.awayWinRate*100);
   }
@@ -211,6 +222,7 @@ function independentConfidence(stats,type){
     if(type==="over1.5")vals.push(clamp(poissonOver(1)*100));
     if(type==="over2.5")vals.push(clamp(poissonOver(2)*100));
     if(type==="btts")vals.push(clamp((1-Math.exp(-eh))*(1-Math.exp(-ea))*100));
+    if(type==="btts_no")vals.push(100-clamp((1-Math.exp(-eh))*(1-Math.exp(-ea))*100));
   }
   return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
 }
@@ -219,11 +231,11 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
     const stats=await independentStatsForFixture(p);
     const type=p.marketType==="ou"&&/^over\s*1\.5$/i.test(p.pick)?"over1.5":
       p.marketType==="ou"&&/^over\s*2\.5$/i.test(p.pick)?"over2.5":
-      p.marketType==="btts"?"btts":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
+      p.marketType==="btts"?(/\bno\b/i.test(p.pick||"")?"btts_no":"btts"):/\bdraw\b/i.test(p.pick||"")?"draw":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
     const independent=independentConfidence(stats,type);
     const market=Number(p.confidence)||0;
     const modelHome=stats.models?.probabilities?.home;
-    const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
+    const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="draw"?stats.models?.probabilities?.draw:type==="btts_no"?(stats.models?.probabilities?.btts==null?null:100-stats.models.probabilities.btts):type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
     const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
     const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
     return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};

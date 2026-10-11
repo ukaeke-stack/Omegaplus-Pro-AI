@@ -105,7 +105,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
   if(!box)return;
   const h=(Array.isArray(rows)?rows:[])
     .filter(x=>(x.sport||"football")===state.sport&&String(x.date||date)===date)
-    .sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||String(a.time||"").localeCompare(String(b.time||"")))
+    .sort((a,b)=>(Number(Boolean(b.isDailyBest))-Number(Boolean(a.isDailyBest)))||(a.isDailyBest&&b.isDailyBest?Number(a.dailyRank||99)-Number(b.dailyRank||99):Number(b.confidence||0)-Number(a.confidence||0))||String(a.time||"").localeCompare(String(b.time||"")))
     .slice(0,50);
   const safe=v=>esc(v==null||v===""?"—":v);
   const sourceText=x=>Array.isArray(x.sources)?x.sources.join(" + "):Array.isArray(x.independentSources)?x.independentSources.join(" + "):typeof x.sources==="string"?x.sources:"Result verification pending";
@@ -128,7 +128,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
       ? " · "+safe(x.homeScore)+"-"+safe(x.awayScore):"";
     return '<article class="history-item" style="display:flex!important;visibility:visible!important;opacity:1!important;color:var(--text,#eef5f0);align-items:center;gap:12px;padding:14px;margin:8px 0;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(255,255,255,.04)">'+
       '<div style="display:grid!important;visibility:visible;gap:5px;min-width:0;flex:1">'+
-      '<small style="display:block;color:#aab8b0">'+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
+      '<small style="display:block;color:#aab8b0">'+(x.isDailyBest?'DAILY BEST #'+safe(x.dailyRank)+' · ':'')+safe(x.category||x.league)+' · '+safe(x.time||"Time unavailable")+' · '+safe(date)+'</small>'+
       '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
       '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
       '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":x.verificationStatus==="single-source"?" · SINGLE-SOURCE":" · UNVERIFIED")+score+'</small>'+
@@ -144,9 +144,15 @@ async function refreshHistory(date=historySelectedDate()){
     let archive=response.archive||null;
     if(!archive&&date===dateKey(new Date())){
       const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-      archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
+      archive={date,sport:state.sport,predictions:[],dailyBestPredictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    const dailySource=Array.isArray(archive?.dailyBestPredictions)?archive.dailyBestPredictions:
+      (["football-core-markets-10picks-combo5-v3","football-core-markets-combo10-v2"].includes(archive?.dailySelectionVersion)&&Array.isArray(archive?.predictions)&&archive.predictions.length===10?archive.predictions:[]);
+    const dailyIds=new Set(dailySource.map(x=>x.id).filter(Boolean));
+    let day=[
+      ...dailySource.slice(0,10).map((x,i)=>({...x,date,sport:state.sport,isDailyBest:true,dailyRank:x.dailyRank||i+1})),
+      ...(archive?.predictions||[]).filter(x=>!dailyIds.has(x.id)).slice(0,10).map(x=>({...x,date,sport:state.sport}))
+    ];
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
     // Use the result snapshot returned with the archive. A separate forced refresh here
@@ -349,18 +355,52 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(attempt=0){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading archived Daily Best picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
-    let rows=(d.predictions||[]).slice(0,10);
-    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date),{cache:"no-store"});
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    if(d.retryable&&attempt<2){
+      if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="No fixture response yet — retrying automatically ("+(attempt+1)+"/2)…";
+      await new Promise(resolve=>setTimeout(resolve,1400));
+      if(date!==state.date)return;
+      return loadDailyBest(attempt+1);
+    }
+    const rows=(d.predictions||[]).slice(0,10).map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const odds=rows.reduce((v,x)=>v*Number(x.odds||1),1);
+    if($("#bestPicksStatus"))$("#bestPicksStatus").textContent=d.message||"Core markets only · combined odds "+Number(d.combinedOdds||odds).toFixed(2);
     updateOutcomeSummary(rows,"daily");
-    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
+    if(!rows.length){
+      box.innerHTML='<div class="empty">'+esc(d.message||("No quality-qualified Daily 10 set is available for "+prettyDate(date)+"."))+'</div>';
+      return;
+    }
+    const actionBar='<div class="daily-actions"><button class="primary" id="dailySelectAll">Select All 10</button><button class="secondary" id="dailyClearAll">Clear Daily Selections</button><span class="daily-combo">Combined odds: <b>'+esc(Number(d.combinedOdds||odds).toFixed(2))+'</b></span></div>';
+    box.innerHTML=rows.map(x=>'<article class="match compact"><div><div class="meta">#'+esc(x.dailyRank||"—")+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS":x.pick)+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join("")+actionBar;
+    box.querySelector(".daily-actions").insertAdjacentHTML("beforeend",'<small id="dailySelectedCombo" class="daily-selected-combo">0 selected</small>');
+    const renderDailyActions=()=>{
+      const selectedRows=rows.filter(x=>state.selected.has(x.id));
+      const combined=selectedRows.reduce((v,x)=>v*Number(x.odds||1),selectedRows.length?1:0);
+      const badge=$("#dailySelectedCombo");
+      if(badge)badge.textContent=selectedRows.length+" selected"+(selectedRows.length?" · odds "+combined.toFixed(2):"");
+      const all=$("#dailySelectAll");if(all)all.textContent=rows.every(x=>state.selected.has(x.id))?"All 10 Selected":"Select All 10";
+      document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>{const on=state.selected.has(b.dataset.topId);b.classList.toggle("selected",on);b.textContent=on?"Remove":"Select"});
+      renderSlip();
+    };
+    $("#dailySelectAll").onclick=()=>{
+      const allSelected=rows.every(x=>state.selected.has(x.id));
+      if(allSelected)rows.forEach(x=>state.selected.delete(x.id));
+      else rows.forEach(x=>state.selected.set(x.id,x));
+      renderDailyActions();
+    };
+    $("#dailyClearAll").onclick=()=>{rows.forEach(x=>state.selected.delete(x.id));renderDailyActions()};
+    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{
+      const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;
+      if(state.selected.has(row.id))state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);
+      renderDailyActions();
+    });
+    renderDailyActions();
     refreshHistory(date).catch(()=>{});
-    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date,forceRefresh=false){
