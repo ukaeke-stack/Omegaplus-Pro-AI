@@ -299,6 +299,19 @@ function qualityGrade(p){
   if(c>=66)return "C";
   return "D";
 }
+function hasUsableIndependentStats(p){
+  const stats=p?.independentStats||{},form=stats.sofascore?.form||{},under=stats.understat||{};
+  const valid=(value,min=0.1,max=6.5)=>value!==null&&value!==undefined&&value!==""&&Number.isFinite(Number(value))&&Number(value)>=min&&Number(value)<=max;
+  const sofaForm=[form.homeGoalsFor,form.awayGoalsFor,form.homeGoalsAgainst,form.awayGoalsAgainst].every(v=>valid(v));
+  const xgPair=[under.home?.xg,under.home?.xga,under.away?.xg,under.away?.xga].every(v=>valid(v,0.1,5));
+  return sofaForm||xgPair;
+}
+function hasPlausibleDerivedGoals(p){
+  const goals=p?.derivedModel?.expectedGoals;
+  if(!goals)return false;
+  const valid=v=>Number.isFinite(Number(v))&&Number(v)>=0.25&&Number(v)<=5.5;
+  return valid(goals.home)&&valid(goals.away)&&valid(goals.total)&&Number(goals.total)>=0.8&&Number(goals.total)<=9;
+}
 function predictionReasons(p){
   const reasons=[];
   const market=Number(p?.marketConfidence), independent=Number(p?.independentConfidence);
@@ -905,7 +918,10 @@ async function buildDailyBest(date,sport="football"){
   const byEvent=new Map();
   for(const candidate of unique.sort((a,b)=>b.marketConfidence-a.marketConfidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs))if(!byEvent.has(candidate.eventId))byEvent.set(candidate.eventId,candidate);
   const shortlist=[...byEvent.values()].slice(0,60);
-  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:8}));
+  const enrichedAll=decoratePredictions(await enrichAndModel(shortlist,{concurrency:8}));
+  // Fail closed: Daily Best must have usable independent form/xG inputs, plausible derived goal rates, and no Grade D picks.
+  const enriched=enrichedAll.filter(x=>x.qualityGrade!=="D"&&hasUsableIndependentStats(x)&&hasPlausibleDerivedGoals(x));
+  const rejectedQualityCount=enrichedAll.length-enriched.length;
   const ranked=enriched.map(x=>{
     const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
     const market=Number(x.marketConfidence??x.confidence);
@@ -918,7 +934,7 @@ async function buildDailyBest(date,sport="football"){
     selected.push(p);usedEvents.add(p.eventId);
     if(selected.length===10)break;
   }
-  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,fixtureCount:fixtures.length,message:"Only "+selected.length+" distinct fixtures met the core-market quality filter. No Daily 10 set was published rather than filling it with weak picks."};
+  if(selected.length<10)return {predictions:[],combinedOdds:0,shortfall:10-selected.length,qualifiedCount:selected.length,fixtureCount:fixtures.length,rejectedQualityCount,message:"Only "+selected.length+" distinct fixtures passed the quality gate (Grade C or better, usable independent statistics, and plausible expected goals). No Daily 10 set was published rather than filling it with weak picks."};
   const product=rows=>rows.reduce((v,p)=>v*Number(p.odds||1),1);
   let combinedOdds=product(selected),usedIds=new Set(selected.map(x=>x.id));
   // If the top ten do not reach 5.00, swap in the strongest eligible alternatives with higher odds.
@@ -945,7 +961,7 @@ async function buildDailyBest(date,sport="football"){
   if(combinedOdds<5)return {predictions:[],combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"Ten quality-qualified picks were found, but their combined odds are below the 5.00 minimum. No set was published rather than weakening the quality filter."};
   selected.sort((a,b)=>a.startTimeMs-b.startTimeMs);
   const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall:0,qualifiedCount:10,fixtureCount:fixtures.length,message:"10 quality-qualified picks · core markets only · minimum combined odds 5.00 · actual combined odds "+combinedOdds.toFixed(2)};
-  console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,enriched:shortlist.length,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
+  console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,enriched:shortlist.length,qualityRejected:rejectedQualityCount,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
   return result;
 }
 async function buildBestPicks(date,limit=25,requestedType="all",sport="football"){
@@ -1024,7 +1040,10 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
       if(!f)continue;
       const model=await analyzeCorrectScores(f,p.independentStats||{});
       const best=model.scores?.[0];
-      if(!best||!Number.isFinite(Number(best.probability))||Number(best.probability)<3.5)continue;
+      const hasRealInputs=(model.sources||[]).some(source=>source!=="Fallback goal model (usable odds unavailable)");
+      const eg=model.expectedGoals||{};
+      const plausibleGoals=[eg.home,eg.away].every(v=>Number.isFinite(Number(v))&&Number(v)>=0.25&&Number(v)<=5.5);
+      if(!hasRealInputs||!plausibleGoals||!best||!Number.isFinite(Number(best.probability))||Number(best.probability)<3.5)continue;
       results.push({id:p.eventId,eventId:p.eventId,league:f.league,time:p.time,home:f.home,away:f.away,startTimeMs:f.startTimeMs,expectedGoals:model.expectedGoals,topScores:model.scores,sources:model.sources,confidence:Number(Number(best.probability).toFixed(1)),independentConfidence:p.independentConfidence??null});
     }
     results.sort((a,b)=>b.confidence-a.confidence||Number(b.independentConfidence||0)-Number(a.independentConfidence||0)||a.startTimeMs-b.startTimeMs);
