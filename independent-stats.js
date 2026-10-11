@@ -164,7 +164,7 @@ async function independentStatsForFixture(fixture,sport="football"){
   }
   const season=seasonStart(date),ud=await understatLeagueData(fixture.league,season);
   const uh=understatTeamSummary(ud,fixture.home),ua=understatTeamSummary(ud,fixture.away);
-  let form=homeRecent&&awayRecent?{
+  const sofaForm=homeRecent&&awayRecent?{
     homeMatches:homeRecent.matches,awayMatches:awayRecent.matches,
     homeWinRate:homeRecent.winRate,awayWinRate:awayRecent.winRate,
     homeOver15:homeRecent.over15Rate,awayOver15:awayRecent.over15Rate,
@@ -173,6 +173,7 @@ async function independentStatsForFixture(fixture,sport="football"){
     homeGoalsFor:homeRecent.goalsFor,awayGoalsFor:awayRecent.goalsFor,
     homeGoalsAgainst:homeRecent.goalsAgainst,awayGoalsAgainst:awayRecent.goalsAgainst
   }:null;
+  let form=sofaForm;
   const shots=(sofaStats.totalShots||sofaStats.shotsOnTarget||sofaStats.bigChances||sofaStats.expectedGoals)?{
     homeShots:sofaStats.totalShots?.home??null,awayShots:sofaStats.totalShots?.away??null,
     homeOnTarget:sofaStats.shotsOnTarget?.home??null,awayOnTarget:sofaStats.shotsOnTarget?.away??null,
@@ -196,15 +197,15 @@ async function independentStatsForFixture(fixture,sport="football"){
       homeGoalsFor:result.home.goalsFor,awayGoalsFor:result.away.goalsFor,
       homeGoalsAgainst:result.home.goalsAgainst,awayGoalsAgainst:result.away.goalsAgainst
     }:null};
-    if(!form&&goalApi.form)form=goalApi.form;
+    if(goalApi.form&&(!form||Number(form.homeMatches)<5||Number(form.awayMatches)<5))form=goalApi.form;
   }
   const available=[
-    (homeRecent&&awayRecent)||shots||lineups||injuries.home||injuries.away?"sofascore":null,
+    (sofaForm&&(Number(sofaForm.homeMatches)>0||Number(sofaForm.awayMatches)>0))||shots||lineups||injuries.home||injuries.away?"sofascore":null,
     ud?"understat":null,
     goalApi.available?"goalapi":null
   ].filter(Boolean);
   const derived=buildIndependentModels({form,uh,ua,shots});
-  return{available,date,sofascore:{eventId:sofa.eventId||null,form:homeRecent&&awayRecent?form:null,stats:shots,lineups,injuries},goalApi:{available:goalApi.available,form:goalApi.form,home:goalApi.home,away:goalApi.away,error:goalApi.error||null},understat:{home:uh,away:ua},models:derived};
+  return{available,date,sofascore:{eventId:sofa.eventId||null,form:sofaForm,stats:shots,lineups,injuries},goalApi:{available:goalApi.available,form:goalApi.form,home:goalApi.home,away:goalApi.away,error:goalApi.error||null},understat:{home:uh,away:ua},models:derived};
 }
 function poissonPmf(lambda,k){if(!Number.isFinite(lambda)||lambda<0)return 0;let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p}
 function poissonOver(lambda,line){let s=0;const max=Math.max(12,Math.ceil(lambda+10));for(let k=0;k<=max;k++)if(k<=line)s+=poissonPmf(lambda,k);return clamp(1-s,0,1)}
@@ -233,7 +234,10 @@ function buildIndependentModels({form,uh,ua,shots}){
 }
 function clamp(n,min=0,max=100){return Math.max(min,Math.min(max,n))}
 function independentConfidence(stats,type){
-  const f=stats?.sofascore?.form||stats?.goalApi?.form,u=stats?.understat;
+  const sf=stats?.sofascore?.form,gf=stats?.goalApi?.form;
+  const sfSample=Math.min(Number(sf?.homeMatches)||0,Number(sf?.awayMatches)||0);
+  const gfSample=Math.min(Number(gf?.homeMatches)||0,Number(gf?.awayMatches)||0);
+  const f=gfSample>sfSample?gf:sf,u=stats?.understat;
   const vals=[];
   if(f){
     if(type==="over1.5")vals.push((f.homeOver15+f.awayOver15)/2*100);
@@ -263,8 +267,13 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
     const market=Number(p.confidence)||0;
     const modelHome=stats.models?.probabilities?.home;
     const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
-    const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
-    const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
+    // independentConfidence and modelSignal often derive from the same form/xG inputs.
+    // Use one model signal plus market prior; never count the same evidence twice.
+    const confidence=modelSignal!==null&&modelSignal!==undefined&&Number.isFinite(modelSignal)
+      ? (Number.isFinite(market)?Math.round(market*0.65+modelSignal*0.35):Math.round(modelSignal))
+      : independent!==null&&independent!==undefined&&Number.isFinite(independent)
+        ? (Number.isFinite(market)?Math.round(market*0.75+independent*0.25):Math.round(independent))
+        : market;
     return{...p,confidence:clamp(confidence,confidenceFloor,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
   });
   return enriched;
