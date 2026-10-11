@@ -333,7 +333,7 @@ async function analyze(){
       if(!d.ok)throw new Error(d.error||("Analysis failed for "+prettyDate(date)));
       const dated=(d.predictions||[]).slice(0,remaining).map(x=>({...x,date}));
       all.push(...dated);
-      summaries.push({date,scannedFixtures:Number(d.scannedFixtures||0),available:Number(d.available||0),returned:dated.length});
+      summaries.push({date,scannedFixtures:Number(d.scannedFixtures||0),available:Number(d.available||0),returned:dated.length,diagnostics:d.diagnostics||null});
       archiveDay(date,{predictions:dated});
       if(!dated.length && d.scannedFixtures!=null) console.warn("Analyzer returned no matches",{date,scannedFixtures:d.scannedFixtures,available:d.available,criteria:d.criteria});
     }
@@ -341,7 +341,7 @@ async function analyze(){
     state.selected.clear();renderRows();renderSlip();
     renderHistory(dates.length===1?dates[0]:historySelectedDate());
     if(!state.rows.length){
-      const parts=summaries.map(x=>prettyDate(x.date)+": scanned "+x.scannedFixtures+", available "+x.available);
+      const parts=summaries.map(x=>prettyDate(x.date)+": scanned "+x.scannedFixtures+", available "+x.available+(x.diagnostics?.message?" — "+x.diagnostics.message:""));
       setStatus("0 games matched. "+parts.join(" · ")+" — check the selected league/market/option.");
     }else setStatus(state.rows.length+" unique game(s) returned across "+summaries.length+" selected date(s).");
   }catch(e){state.rows=[];renderRows();renderSlip();setStatus(e.message||"Analysis failed")}finally{$("#analyze").disabled=false}
