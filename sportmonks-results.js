@@ -6,7 +6,7 @@ const ttl=Number(process.env.SPORTMONKS_CACHE_MS||15000);
 
 function keyFor(date){return "date:"+date}
 function norm(v){return String(v||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim()}
-function dayOf(ms){return new Date(ms).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"})}
+function dayOf(ms){const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Lagos",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date(ms));const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`}
 function participantsOf(f){
   const p=Array.isArray(f.participants)?f.participants:[];
   const home=p.find(x=>x.meta?.location==="home")||p[0];
@@ -19,7 +19,8 @@ function scoreOf(f){
   const homeId=p.find(x=>x.meta?.location==="home")?.id;
   const awayId=p.find(x=>x.meta?.location==="away")?.id;
   for(const s of Array.isArray(f.scores)?f.scores:[]){
-    const g=Number(s.score?.goals ?? s.goals);
+    const raw=s.score?.goals ?? s.goals;
+    const g=raw===null||raw===undefined||raw===""?NaN:Number(raw);
     if(!Number.isFinite(g)) continue;
     if(String(s.participant_id)===String(homeId)||String(s.description||"").toUpperCase().includes("HOME")) home=g;
     if(String(s.participant_id)===String(awayId)||String(s.description||"").toUpperCase().includes("AWAY")) away=g;
