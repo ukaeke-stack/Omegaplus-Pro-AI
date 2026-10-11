@@ -54,7 +54,7 @@ async function mapLimit(items,limit,fn){
 }
 function teamNamesMatch(a,b){
   const x=key(a),y=key(b);
-  return x===y||x.includes(y)||y.includes(x);
+  return Boolean(x&&y)&&(x===y||x.includes(y)||y.includes(x));
 }
 function eventTeamsMatch(e,home,away){
   const eh=e.homeTeam?.name||e.homeTeam?.shortName||"";
@@ -119,7 +119,10 @@ function summarizeRecent(events,teamId){
   let gf=0,ga=0,w=0,d=0,l=0,over15=0,over25=0,btts=0;
   for(const e of finished){
     const home=e.homeTeam?.id===teamId;
-    const hs=Number(e.homeScore?.normaltime??e.homeScore?.current??0),as=Number(e.awayScore?.normaltime??e.awayScore?.current??0);
+    const rawHome=e.homeScore?.normaltime??e.homeScore?.current,rawAway=e.awayScore?.normaltime??e.awayScore?.current;
+    if(rawHome===null||rawHome===undefined||rawAway===null||rawAway===undefined||rawHome===""||rawAway==="")continue;
+    const hs=Number(rawHome),as=Number(rawAway);
+    if(!Number.isFinite(hs)||!Number.isFinite(as)||hs<0||as<0)continue;
     const f=home?hs:as,a=home?as:hs;
     gf+=f;ga+=a;if(f>a)w++;else if(f===a)d++;else l++;
     if(hs+as>1.5)over15++;if(hs+as>2.5)over25++;if(hs>0&&as>0)btts++;
@@ -140,7 +143,7 @@ function understatTeamSummary(data,teamName){
   const team=Object.values(data.teams).find(t=>teamNamesMatch(t.title,teamName));
   if(!team?.history?.length)return null;
   const h=team.history.slice(-10);
-  const avg=(field)=>{const vals=h.map(x=>Number(x[field])).filter(Number.isFinite);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null};
+  const avg=(field)=>{const vals=h.map(x=>x[field]).filter(v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))).map(Number);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null};
   return{xg:avg("xG"),xga:avg("xGA"),npxg:avg("npxG"),npxga:avg("npxGA"),shots:avg("shots"),deep:avg("deep"),wins:h.filter(x=>Number(x.wins)>0).length};
 }
 async function independentStatsForFixture(fixture,sport="football"){
@@ -205,9 +208,13 @@ function buildIndependentModels({form,uh,ua,shots}){
   const hasForm=Number(form?.homeMatches)>=5&&Number(form?.awayMatches)>=5&&Number.isFinite(Number(form?.homeGoalsFor))&&Number.isFinite(Number(form?.awayGoalsFor));
   const hasXg=[uh?.xg,ua?.xg,uh?.xga,ua?.xga].every(v=>v!==null&&v!==undefined&&Number.isFinite(Number(v)));
   if(!hasForm&&!hasXg)return{expectedGoals:null,probabilities:null,strengthSignals:{recentForm:null,xgEdge:null},modelAgreement:null,methodology:"No valid independent inputs; model probabilities withheld rather than synthesized."};
-  const hx=Number(uh?.xg),ax=Number(ua?.xg),hxa=Number(uh?.xga),axa=Number(ua?.xga);
-  const homeGoals=(Number.isFinite(hx)&&Number.isFinite(axa))?(hx+axa)/2:(Number.isFinite(form?.homeGoalsFor)?form.homeGoalsFor:null);
-  const awayGoals=(Number.isFinite(ax)&&Number.isFinite(hxa))?(ax+hxa)/2:(Number.isFinite(form?.awayGoalsFor)?form.awayGoalsFor:null);
+  const hasHomeXg=uh?.xg!==null&&uh?.xg!==undefined&&Number.isFinite(Number(uh.xg));
+  const hasAwayXg=ua?.xg!==null&&ua?.xg!==undefined&&Number.isFinite(Number(ua.xg));
+  const hasHomeXga=uh?.xga!==null&&uh?.xga!==undefined&&Number.isFinite(Number(uh.xga));
+  const hasAwayXga=ua?.xga!==null&&ua?.xga!==undefined&&Number.isFinite(Number(ua.xga));
+  const hx=hasHomeXg?Number(uh.xg):null,ax=hasAwayXg?Number(ua.xg):null,hxa=hasHomeXga?Number(uh.xga):null,axa=hasAwayXga?Number(ua.xga):null;
+  const homeGoals=(hasHomeXg&&hasAwayXga)?(hx+axa)/2:(form?.homeGoalsFor!==null&&form?.homeGoalsFor!==undefined?Number(form.homeGoalsFor):null);
+  const awayGoals=(hasAwayXg&&hasHomeXga)?(ax+hxa)/2:(form?.awayGoalsFor!==null&&form?.awayGoalsFor!==undefined?Number(form.awayGoalsFor):null);
   const h=Math.max(0.05,Number(homeGoals)||0.05),a=Math.max(0.05,Number(awayGoals)||0.05),total=h+a;
   const over15=poissonOver(total,1),over25=poissonOver(total,2),btts=(1-Math.exp(-h))*(1-Math.exp(-a));
   const homeWin=(()=>{let p=0;for(let i=0;i<=10;i++)for(let j=0;j<i;j++)p+=poissonPmf(h,i)*poissonPmf(a,j);return p})();
@@ -215,7 +222,7 @@ function buildIndependentModels({form,uh,ua,shots}){
   const draw=Math.max(0,1-homeWin-awayWin);
   const formEdge=form?.homeWinRate!=null&&form?.awayWinRate!=null?form.homeWinRate-form.awayWinRate:null;
   const formStrength=formEdge==null?null:clamp(50+formEdge*50);
-  const xgStrength=Number.isFinite(hx)&&Number.isFinite(ax)?clamp(50+(hx-ax)*18):null;
+  const xgStrength=hasHomeXg&&hasAwayXg?clamp(50+(hx-ax)*18):null;
   const signals=[formStrength,xgStrength,homeWin*100].filter(Number.isFinite);
   return{expectedGoals:{home:Number(h.toFixed(2)),away:Number(a.toFixed(2)),total:Number(total.toFixed(2))},
     probabilities:{home:Number((homeWin*100).toFixed(1)),draw:Number((draw*100).toFixed(1)),away:Number((awayWin*100).toFixed(1)),over15:Number((over15*100).toFixed(1)),over25:Number((over25*100).toFixed(1)),btts:Number((btts*100).toFixed(1))},
