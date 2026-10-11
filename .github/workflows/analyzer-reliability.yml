@@ -1,0 +1,34 @@
+name: Analyzer reliability checks
+
+on:
+  pull_request:
+    paths:
+      - "server.js"
+      - "independent-stats.js"
+      - "analyzer-reliability.js"
+      - "test/analyzer-reliability.test.js"
+      - "package.json"
+      - ".github/workflows/analyzer-reliability.yml"
+  push:
+    branches:
+      - feature/general-analyzer-reliability-v1
+    paths:
+      - "server.js"
+      - "independent-stats.js"
+      - "analyzer-reliability.js"
+      - "test/analyzer-reliability.test.js"
+      - "package.json"
+      - ".github/workflows/analyzer-reliability.yml"
+
+jobs:
+  analyzer-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node --check independent-stats.js
+      - run: node --check analyzer-reliability.js
+      - run: npm test

@@ -6,6 +6,7 @@ import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from ".
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {applyDerivedModel} from "./model-ensemble.js";
+import {rankByReliability} from "./analyzer-reliability.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
@@ -353,11 +354,11 @@ function directWinningSelectionRequested(outcome,requested){
   if(req==="away"||req==="2"||req==="player 2") return raw==="away"||raw==="2"||raw.includes("away team");
   return raw===req;
 }
-function confidenceForOutcome(market,outcome){
+function confidenceForOutcome(market,outcome,floor=50){
   const active=market.outcomes.filter(o=>o.isActive!==false&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1);
   if(!active.length||!Number.isFinite(outcome.odds)||outcome.odds<=1) return 0;
   const inv=1/outcome.odds,total=active.reduce((s,o)=>s+1/o.odds,0),normalized=total?inv/total:inv;
-  return Math.round(Math.max(50,Math.min(99,normalized*100)));
+  return Math.round(Math.max(floor,Math.min(99,normalized*100)));
 }
 
 function qualityGrade(p){
@@ -390,7 +391,7 @@ function predictionReasons(p){
   return reasons;
 }
 function decoratePredictions(rows){
-  return (Array.isArray(rows)?rows:[]).map(p=>({...p,modelProbability:p.independentConfidence!=null&&Number.isFinite(Number(p.independentConfidence))?Number(p.independentConfidence):Number(p.marketConfidence??p.confidence??0),qualityGrade:qualityGrade(p),reasons:predictionReasons(p)}));
+  return (Array.isArray(rows)?rows:[]).map(p=>({...p,modelProbability:p.modelProbability!==null&&p.modelProbability!==undefined&&Number.isFinite(Number(p.modelProbability))?Number(p.modelProbability):(p.independentConfidence!=null&&Number.isFinite(Number(p.independentConfidence))?Number(p.independentConfidence):Number(p.marketConfidence??p.confidence??0)),qualityGrade:qualityGrade(p),reasons:predictionReasons(p)}));
 }
 function marketLine(value){
   const s=String(value||"").toLowerCase();
@@ -1265,7 +1266,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
           for(const outcome of market.outcomes){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market,type))) continue;
-            const confidence=confidenceForOutcome(market,outcome);
+            const confidence=confidenceForOutcome(market,outcome,0);
             if(confidence<minConfidence) continue;
             results.push({
               id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
@@ -1287,9 +1288,16 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const candidates=qualified.slice(0,Math.min(60,qualified.length));
-    const enriched=await enrichAndModel(candidates,{concurrency:3});
+    const enriched=await enrichAndModel(candidates,{concurrency:3,sport:requestedSport,confidenceFloor:0});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
-    const predictions=decoratePredictions(enriched).slice(0,maxGames);
+    const predictions=rankByReliability(decoratePredictions(enriched)).slice(0,maxGames);
+    const reliabilitySummary={
+      strong:predictions.filter(p=>p.reliability?.evidenceLevel==="Strong").length,
+      moderate:predictions.filter(p=>p.reliability?.evidenceLevel==="Moderate").length,
+      limited:predictions.filter(p=>p.reliability?.evidenceLevel==="Limited").length,
+      conflicting:predictions.filter(p=>p.reliability?.evidenceLevel==="Conflicting").length,
+      averageScore:predictions.length?Math.round(predictions.reduce((sum,p)=>sum+(Number(p.reliabilityScore)||0),0)/predictions.length):null
+    };
     const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
     existing.predictions=predictions.slice(0,10);
     const newOddsSnapshot=extractOddsSnapshot(predictions);
@@ -1300,7 +1308,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
     await writePersistentArchive(requestedDate,existing,requestedSport);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},scannedFixtures,fixturesWithMarkets,availableMarkets,qualifyingFixtures:qualified.length,total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",reliabilityVersion:"evidence-ensemble-v1",reliabilitySummary,generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},scannedFixtures,fixturesWithMarkets,availableMarkets,qualifyingFixtures:qualified.length,total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
@@ -1328,7 +1336,10 @@ app.get("/api/performance",async(req,r)=>{
     }
     const settled=rows.filter(x=>x.outcome==="Won"||x.outcome==="Lost"),won=settled.filter(x=>x.outcome==="Won").length,lost=settled.filter(x=>x.outcome==="Lost").length;
     const byMarket={}; for(const x of settled){const k=x.marketType||"other";byMarket[k]??={total:0,won:0,lost:0};byMarket[k].total++;if(x.outcome==="Won")byMarket[k].won++;else byMarket[k].lost++}
-    r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket});
+    const byEvidenceLevel={}; for(const x of settled){const k=x.reliability?.evidenceLevel||"Unrated";byEvidenceLevel[k]??={total:0,won:0,lost:0};byEvidenceLevel[k].total++;if(x.outcome==="Won")byEvidenceLevel[k].won++;else byEvidenceLevel[k].lost++}
+    const byConfidenceBand={}; for(const x of settled){const c=Number(x.confidence)||0,k=c<60?"<60":c<70?"60-69":c<80?"70-79":c<90?"80-89":"90+";byConfidenceBand[k]??={total:0,won:0,lost:0};byConfidenceBand[k].total++;if(x.outcome==="Won")byConfidenceBand[k].won++;else byConfidenceBand[k].lost++}
+    for(const group of [byMarket,byEvidenceLevel,byConfidenceBand])for(const value of Object.values(group))value.accuracy=value.total?Math.round(value.won/value.total*100):null;
+    r.json({ok:true,from,to,days:dates.length,totalPredictions:rows.length,settled:settled.length,won,lost,accuracy:settled.length?Math.round(won/settled.length*100):null,byMarket,byEvidenceLevel,byConfidenceBand});
   }catch(e){r.status(200).json({ok:false,error:e.message,totalPredictions:0,settled:0,won:0,lost:0,accuracy:null,byMarket:{}})}
 });
 app.post("/api/booking-code",requirePaid,async(req,r)=>{if(!(await getAdminSettings()).bookingCodeEnabled)return r.status(503).json({ok:false,error:"Booking-code generation is temporarily disabled by the administrator."});try{const selections=Array.isArray(req.body?.selections)?req.body.selections:[],sport=String(req.body?.sport||"football"),target=String(req.body?.bookmaker||"sportybet");if(!selections.length)return r.status(400).json({ok:false,error:"Select at least one analyzed match first."});r.json({ok:true,...await generateTargetBooking(target,selections,sport)})}catch(e){r.status(e.code==="NO_AVAILABLE_SELECTIONS"?409:502).json({ok:false,error:e.message,unavailableSelections:e.unavailable||[]})}});

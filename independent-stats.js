@@ -26,7 +26,7 @@ async function fetchJson(url,headers={}){
 }
 async function cachedJson(cacheKey,url,headers={}){
   const hit=cache.get(cacheKey);
-  if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true};
+  if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true,stale:Boolean(hit.failed),error:hit.error||null};
   try{
     const data=await fetchJson(url,headers);
     cache.set(cacheKey,{at:Date.now(),data});
@@ -138,8 +138,17 @@ function understatTeamSummary(data,teamName){
   const avg=(field)=>{const vals=h.map(x=>Number(x[field])).filter(Number.isFinite);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null};
   return{xg:avg("xG"),xga:avg("xGA"),npxg:avg("npxG"),npxga:avg("npxGA"),shots:avg("shots"),deep:avg("deep"),wins:h.filter(x=>Number(x.wins)>0).length};
 }
-async function independentStatsForFixture(fixture){
+async function independentStatsForFixture(fixture,sport="football"){
   const date=new Date(fixture.startTimeMs).toLocaleDateString("en-CA",{timeZone:"Africa/Lagos"});
+  if(sport!=="football"){
+    return {
+      available:[],
+      date,
+      sofascore:{eventId:null,form:null,stats:null,lineups:null,injuries:{home:null,away:null}},
+      understat:{home:null,away:null},
+      models:{expectedGoals:null,probabilities:null,strengthSignals:{recentForm:null,xgEdge:null},modelAgreement:null,methodology:"Football-only xG and goal models are not applied to non-football sports."}
+    };
+  }
   const sofa=await findSofaEvent(fixture);
   let homeRecent=null,awayRecent=null,sofaStats={},lineups=null,injuries={home:null,away:null};
   if(sofa.found){
@@ -152,6 +161,7 @@ async function independentStatsForFixture(fixture){
   const season=seasonStart(date),ud=await understatLeagueData(fixture.league,season);
   const uh=understatTeamSummary(ud,fixture.home),ua=understatTeamSummary(ud,fixture.away);
   const form=homeRecent&&awayRecent?{
+    homeMatches:homeRecent.matches,awayMatches:awayRecent.matches,
     homeWinRate:homeRecent.winRate,awayWinRate:awayRecent.winRate,
     homeOver15:homeRecent.over15Rate,awayOver15:awayRecent.over15Rate,
     homeOver25:homeRecent.over25Rate,awayOver25:awayRecent.over25Rate,
@@ -175,6 +185,11 @@ async function independentStatsForFixture(fixture){
 function poissonPmf(lambda,k){if(!Number.isFinite(lambda)||lambda<0)return 0;let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p}
 function poissonOver(lambda,line){let s=0;const max=Math.max(12,Math.ceil(lambda+10));for(let k=0;k<=max;k++)if(k<=line)s+=poissonPmf(lambda,k);return clamp(1-s,0,1)}
 function buildIndependentModels({form,uh,ua,shots}){
+  const hasForm=Number(form?.homeMatches)>=5&&Number(form?.awayMatches)>=5&&Number.isFinite(Number(form?.homeGoalsFor))&&Number.isFinite(Number(form?.awayGoalsFor));
+  const hasXg=[uh?.xg,ua?.xg,uh?.xga,ua?.xga].every(v=>v!==null&&v!==undefined&&Number.isFinite(Number(v)));
+  if(!hasForm&&!hasXg){
+    return {expectedGoals:null,probabilities:null,strengthSignals:{recentForm:null,xgEdge:null},modelAgreement:null,methodology:"No valid independent inputs; model probabilities withheld rather than synthesized."};
+  }
   const hx=Number(uh?.xg),ax=Number(ua?.xg),hxa=Number(uh?.xga),axa=Number(ua?.xga);
   const homeGoals=(Number.isFinite(hx)&&Number.isFinite(axa))?(hx+axa)/2:(Number.isFinite(form?.homeGoalsFor)?form.homeGoalsFor:null);
   const awayGoals=(Number.isFinite(ax)&&Number.isFinite(hxa))?(ax+hxa)/2:(Number.isFinite(form?.awayGoalsFor)?form.awayGoalsFor:null);
@@ -214,9 +229,9 @@ function independentConfidence(stats,type){
   }
   return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
 }
-export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY}={}){
+export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY,sport="football",confidenceFloor=50}={}){
   const enriched=await mapLimit(predictions,concurrency,async p=>{
-    const stats=await independentStatsForFixture(p);
+    const stats=await independentStatsForFixture(p,sport);
     const type=p.marketType==="ou"&&/^over\s*1\.5$/i.test(p.pick)?"over1.5":
       p.marketType==="ou"&&/^over\s*2\.5$/i.test(p.pick)?"over2.5":
       p.marketType==="btts"?"btts":/home/i.test(p.pick)?"home":/away/i.test(p.pick)?"away":null;
@@ -226,13 +241,18 @@ export async function enrichPredictions(predictions,{concurrency=MAX_CONCURRENCY
     const modelSignal=type==="home"?modelHome:type==="away"?stats.models?.probabilities?.away:type==="btts"?stats.models?.probabilities?.btts:type==="over1.5"?stats.models?.probabilities?.over15:type==="over2.5"?stats.models?.probabilities?.over25:null;
     const ensembleInputs=[market,independent,modelSignal].filter(Number.isFinite);
     const confidence=ensembleInputs.length===1?ensembleInputs[0]:Math.round(ensembleInputs.reduce((a,b)=>a+b,0)/ensembleInputs.length);
-    return{...p,confidence:clamp(confidence,50,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
+    return{...p,confidence:clamp(confidence,confidenceFloor,99),marketConfidence:market,independentConfidence:independent,modelProbability:modelSignal??null,modelAgreement:stats.models?.modelAgreement??null,independentSources:stats.available,independentStats:stats};
   });
   return enriched;
 }
 export async function independentHealth(){
-  const out={sofascore:false,understat:false};
-  try{await cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+new Date().toISOString().slice(0,10));out.sofascore=true}catch{}
-  try{await cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(new Date().toISOString().slice(0,10)),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE});out.understat=true}catch{}
+  const date=new Date().toISOString().slice(0,10);
+  const out={sofascore:false,understat:false,checkedAt:new Date().toISOString(),details:{}};
+  const sofa=await cachedJson("health:sofa",SOFASCORE_BASE+"/sport/football/scheduled-events/"+date);
+  out.sofascore=Array.isArray(sofa.data?.events);
+  out.details.sofascore={available:out.sofascore,cached:Boolean(sofa.cached),stale:Boolean(sofa.stale),error:sofa.error||null};
+  const under=await cachedJson("health:understat","https://understat.com/getLeagueData/EPL/"+seasonStart(date),{"X-Requested-With":"XMLHttpRequest","Referer":UNDERSTAT_BASE});
+  out.understat=Boolean(under.data?.teams&&Object.keys(under.data.teams).length);
+  out.details.understat={available:out.understat,cached:Boolean(under.cached),stale:Boolean(under.stale),error:under.error||null};
   return out;
 }
