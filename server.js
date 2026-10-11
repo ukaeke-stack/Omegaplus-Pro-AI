@@ -23,7 +23,7 @@ const APP_VERSION_CODE=5;
 const ANDROID_TARGET_SDK=36;
 const MIN_SUPPORTED_WEB_VERSION="1.6.0";
 const DAILY_PREDICTION_MIN_ODDS=1.10;
-const DAILY_SELECTION_VERSION="football-core-markets-10picks-combo5-v3";
+const DAILY_SELECTION_VERSION="football-core-markets-quality-flex-v4";
 const LEGACY_DAILY_SELECTION_VERSION="football-core-markets-combo10-v2";
 const SPORTYBET_BASE=process.env.SPORTYBET_API_BASE_URL||"https://www.sportybet.com";
 const SPORTYBET_REGION=process.env.SPORTYBET_REGION||"ng";
@@ -1084,7 +1084,7 @@ app.get("/api/daily-best",async(req,r)=>{try{
     await writePersistentArchive(date,existing,sport);
   }
   const saved=existing?.dailyBestPredictions;
-  const validSaved=Array.isArray(saved)&&((saved.length===10&&Number(existing.dailyCombinedOdds)>=5&&saved.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS))||(saved.length===0&&existing.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&Number(existing.dailyFixtureCount)>0&&Boolean(existing.dailyMessage)));
+  const validSaved=Array.isArray(saved)&&existing.dailyBestSelectionVersion===DAILY_SELECTION_VERSION&&saved.length<=10&&Number(existing.dailyFixtureCount)>0&&Boolean(existing.dailyMessage)&&saved.every(p=>Number(p?.odds)>=DAILY_PREDICTION_MIN_ODDS);
   // Freeze a valid saved set for the whole Lagos calendar date, even after later code releases.
   if(existing?.sport===sport&&validSaved)
     return r.json({ok:true,date,sport,predictions:saved.slice(0,10),combinedOdds:Number(existing.dailyCombinedOdds)||0,shortfall:Number(existing.dailyShortfall)||0,message:existing.dailyMessage||"Daily Best 10 verified",archived:true});
