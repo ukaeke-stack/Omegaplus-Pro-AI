@@ -2,7 +2,11 @@ function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
 function pmf(l,k){if(!Number.isFinite(l)||l<0)return 0;let p=Math.exp(-l);for(let i=1;i<=k;i++)p*=l/i;return p}
 function over(l,line){let s=0;for(let k=0;k<=14;k++)if(k<=line)s+=pmf(l,k);return Math.max(0,Math.min(1,1-s))}
 export function deriveModel(p={}){
-  const s=p.independentStats||{},u=s.understat||{},f=s.sofascore?.form||{};
+  const s=p.independentStats||{},u=s.understat||{};
+  const sofaForm=s.sofascore?.form,goalForm=s.goalApi?.form;
+  const sofaN=Math.min(Number(sofaForm?.homeMatches)||0,Number(sofaForm?.awayMatches)||0);
+  const goalN=Math.min(Number(goalForm?.homeMatches)||0,Number(goalForm?.awayMatches)||0);
+  const f=goalN>sofaN?goalForm:(sofaForm||goalForm||{});
   const hasForm=Number(f.homeMatches)>=5&&Number(f.awayMatches)>=5&&num(f.homeGoalsFor)!==null&&num(f.awayGoalsFor)!==null;
   const hasXg=[u.home?.xg,u.away?.xg,u.home?.xga,u.away?.xga].every(v=>v!==null&&v!==undefined&&num(v)!==null);
   const market=num(p.marketConfidence),ind=num(p.independentConfidence);
