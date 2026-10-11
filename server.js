@@ -919,19 +919,20 @@ async function buildDailyBest(date,sport="football"){
   }
   const shortlist=[...byEvent.values()].slice(0,180);
   const eligibleByEvent=new Map();
+  let checkedCount=0,rejectedQualityCount=0;
   const batchSize=30;
   // Enrich in batches. Stop once ten genuinely qualified matches are found; if not,
   // continue through the expanded pool rather than immediately publishing a short list.
   for(let offset=0;offset<shortlist.length;offset+=batchSize){
     const batch=shortlist.slice(offset,offset+batchSize);
     const enrichedBatch=decoratePredictions(await enrichAndModel(batch,{concurrency:8}));
+    checkedCount+=enrichedBatch.length;
     for(const x of enrichedBatch){
-      if(x.qualityGrade==="D"||!hasUsableIndependentStats(x)||!hasPlausibleDerivedGoals(x))continue;
+      if(x.qualityGrade==="D"||!hasUsableIndependentStats(x)||!hasPlausibleDerivedGoals(x)){rejectedQualityCount++;continue;}
       eligibleByEvent.set(x.eventId,x);
     }
     if(eligibleByEvent.size>=10)break;
   }
-  const rejectedQualityCount=Math.min(shortlist.length,eligibleByEvent.size)===shortlist.length?0:Math.max(0,Math.min(shortlist.length,unique.length)-eligibleByEvent.size);
   const ranked=[...eligibleByEvent.values()].map(x=>{
     const model=Number(x.derivedModel?.modelProbability??x.modelProbability);
     const market=Number(x.marketConfidence??x.confidence);
@@ -974,8 +975,8 @@ async function buildDailyBest(date,sport="football"){
   const shortfall=Math.max(0,10-selected.length);
   const message=shortfall
     ? (selected.length+" qualified pick"+(selected.length===1?"":"s")+" found after checking "+Math.min(shortlist.length,180)+" candidate fixtures. Only matches with Grade C or better, usable independent statistics, and plausible expected goals are included; more fixtures or refreshed statistics may increase the count.")
-    : ("10 quality-qualified picks · core markets only · actual combined odds "+combinedOdds.toFixed(2)+(combinedOdds<5+"":""));
-  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall,qualifiedCount:selected.length,fixtureCount:fixtures.length,candidateFixtures:shortlist.length,rejectedQualityCount,message};
+    : ("10 quality-qualified picks · core markets only · actual combined odds "+combinedOdds.toFixed(2)+ (combinedOdds<5 ? " (below 5.00, but retained because all picks passed the quality gate)." : "."));
+  const result={predictions:selected.map((p,i)=>({...p,dailyRank:i+1})),combinedOdds:+combinedOdds.toFixed(2),shortfall,qualifiedCount:selected.length,fixtureCount:fixtures.length,candidateFixtures:shortlist.length,checkedCount,rejectedQualityCount,message};
   console.info("[daily-best] build complete",JSON.stringify({date,fixtures:fixtures.length,candidates:unique.length,checked:shortlist.length,qualified:ranked.length,qualityRejected:rejectedQualityCount,picks:result.predictions.length,combinedOdds:result.combinedOdds,durationMs:Date.now()-buildStartedAt}));
   return result;
 }
