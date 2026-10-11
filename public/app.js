@@ -45,7 +45,23 @@ function historyKey(){return "omegaplus_history_v3"}
 function archiveKey(){return "omegaplus_day_archive_v1"}
 function readArchive(){try{return JSON.parse(localStorage.getItem(archiveKey())||"{}")}catch{return{}}}
 function writeArchive(a){try{localStorage.setItem(archiveKey(),JSON.stringify(a));return true}catch{return false}}
+function archiveDay(date,payload={}
+function historyKey(){return "omegaplus_history_v3"}
+function archiveKey(){return "omegaplus_day_archive_v1"}
+function readArchive(){try{return JSON.parse(localStorage.getItem(archiveKey())||"{}")}catch{return{}}}
+function writeArchive(a){try{localStorage.setItem(archiveKey(),JSON.stringify(a));return true}catch{return false}}
 function archiveDay(date,payload={}){const a=readArchive();a[date]={...(a[date]||{}),...payload,savedAt:new Date().toISOString()};writeArchive(a)}
+function readHistory(){try{return JSON.parse(localStorage.getItem(historyKey())||"[]")}catch{return[]}}
+function writeHistory(rows){try{localStorage.setItem(historyKey(),JSON.stringify(rows.slice(-2000)));return true}catch{return false}}
+function saveHistoryRows(rows,replaceDate=null){
+  const history=readHistory();
+  const targetDate=replaceDate||state.date;
+  const kept=history.filter(x=>x.date!==targetDate||((x.sport||"football")!==(state.sport||"football")));
+  const now=new Date().toISOString();
+  const fresh=rows.slice(0,10).map(x=>({id:x.id,sport:x.sport||state.sport,date:x.date||targetDate,eventId:x.eventId,league:x.league,time:x.time,home:x.home,away:x.away,pick:x.pick,market:x.market,odds:x.odds,confidence:x.confidence,status:x.matchStatus||"Not start",homeScore:x.homeScore??null,awayScore:x.awayScore??null,outcome:x.outcome||"Pending",resultProviderId:x.resultProviderId||null,sources:x.sources||[],verificationStatus:x.verificationStatus||"unverified",verificationCount:x.verificationCount||1,recordedAt:now}));
+  return writeHistory([...kept,...fresh].filter((x,i,a)=>a.findIndex(y=>y.date===x.date&&y.eventId===x.eventId&&y.id===x.id)===i));
+}
+){const a=readArchive();a[date]={...(a[date]||{}),...payload,savedAt:new Date().toISOString()};writeArchive(a)}
 
 function settleOutcome(x){
   const status=String(x.status||x.matchStatus||"").toLowerCase();
