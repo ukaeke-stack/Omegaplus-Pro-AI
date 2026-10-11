@@ -355,12 +355,18 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(attempt=0){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Analyzing the strongest 1X2, BTTS, Over 1.5 and Over 2.5 picks for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading archived Daily Best picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date));
+    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date),{cache:"no-store"});
     if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    if(d.retryable&&attempt<2){
+      if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="No fixture response yet — retrying automatically ("+(attempt+1)+"/2)…";
+      await new Promise(resolve=>setTimeout(resolve,1400));
+      if(date!==state.date)return;
+      return loadDailyBest(attempt+1);
+    }
     const rows=(d.predictions||[]).slice(0,10).map(x=>({...x,outcome:x.outcome||"Pending"}));
     const odds=rows.reduce((v,x)=>v*Number(x.odds||1),1);
     if($("#bestPicksStatus"))$("#bestPicksStatus").textContent=d.message||"Core markets only · combined odds "+Number(d.combinedOdds||odds).toFixed(2);
