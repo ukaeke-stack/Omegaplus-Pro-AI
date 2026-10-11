@@ -16,10 +16,10 @@ function sourceList(prediction) {
 }
 
 function sampleCount(prediction) {
-  const form = prediction?.independentStats?.sofascore?.form;
-  const home = finite(form?.homeMatches);
-  const away = finite(form?.awayMatches);
-  return Math.max(home || 0, away || 0);
+  const sofa = prediction?.independentStats?.sofascore?.form;
+  const goal = prediction?.independentStats?.goalApi?.form;
+  const samples = [sofa, goal].map(form => Math.min(finite(form?.homeMatches) || 0, finite(form?.awayMatches) || 0));
+  return Math.max(...samples, 0);
 }
 
 function marketModelApplies(prediction) {
