@@ -1,7 +1,10 @@
 const SOFASCORE_BASE="https://api.sofascore.com/api/v1";
 const UNDERSTAT_BASE="https://understat.com/";
 const FETCH_TIMEOUT=7000;
+// Keep successful provider data for six hours, but never suppress retries for six hours
+// after a provider outage or a 403. Failed requests use a short negative-cache window.
 const CACHE_TTL=6*60*60*1000;
+const ERROR_CACHE_TTL=60*1000;
 const MAX_CONCURRENCY=4;
 const cache=new Map();
 
@@ -26,15 +29,18 @@ async function fetchJson(url,headers={}){
 }
 async function cachedJson(cacheKey,url,headers={}){
   const hit=cache.get(cacheKey);
-  if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true,stale:Boolean(hit.failed),error:hit.error||null};
+  const ttl=hit?.failed?ERROR_CACHE_TTL:CACHE_TTL;
+  if(hit&&Date.now()-hit.at<ttl)return{data:hit.data,cached:true,stale:Boolean(hit.failed),error:hit.error||null};
   try{
     const data=await fetchJson(url,headers);
     cache.set(cacheKey,{at:Date.now(),data});
     return{data,cached:false};
   }catch(e){
-    if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
+    // Preserve previously successful data as stale fallback; only throttle retries
+    // briefly when there is no usable cached response.
+    if(hit&&hit.data)return{data:hit.data,cached:true,stale:true,error:e.message};
     cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
-    return{data:null,cached:true,error:e.message};
+    return{data:null,cached:true,stale:false,error:e.message};
   }
 }
 async function mapLimit(items,limit,fn){
