@@ -71,7 +71,7 @@ const MARKET_IDS=["1","10","11","14","16","18","26","29","36","60100","139","136
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let lastSportyRequest=0;
 let liveCache={at:0,key:"",fixtures:[]};
-let liveFetchPromise=null;
+const liveFetchPromises=new Map();
 const dayCache=new Map();
 const DAY_CACHE_MS=30*60*1000;
 const resultCache=new Map();
@@ -167,60 +167,75 @@ async function sportyFetch(pathname,options={}){
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"1";
-  const cacheKey=sportDef.id+"|"+marketKey+"|"+(todayOnly?"today":"future");
+  // SportyBet's marketId=1 filter is football-centric and can return events without
+  // the requested non-football markets. Fetch the unfiltered schedule for other sports.
+  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"";
+  const queryWindow=sportDef.id==="football"?(todayOnly?"today":"future"):"schedule";
+  const cacheKey=sportDef.id+"|"+marketKey+"|"+queryWindow;
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
-  if(liveFetchPromise) return liveFetchPromise;
-  liveFetchPromise=(async()=>{
-  const all=[],pageSize=100;
-  for(let page=1;page<=(todayOnly?4:12);page++){
-    const params=new URLSearchParams({sportId:sportDef.sportId,marketId:marketKey,pageSize:String(pageSize),pageNum:String(page),todayGames:String(todayOnly),timeline:todayOnly?"48":"720",_t:String(Date.now())});
-    let body;
-    try{
-      body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-      if(sportDef.id!=="football" && !(body.data?.tournaments||[]).some(t=>(t.events||[]).length)){
-        const unfiltered=new URLSearchParams(params);
-        unfiltered.delete("marketId");
-        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+unfiltered);
+  const running=liveFetchPromises.get(cacheKey);
+  if(running)return running;
+  const request=(async()=>{
+    const all=[],pageSize=100;
+    for(let page=1;page<=(todayOnly&&sportDef.id==="football"?4:12);page++){
+      const params=new URLSearchParams({
+        sportId:sportDef.sportId,
+        pageSize:String(pageSize),
+        pageNum:String(page),
+        // The todayGames shortcut has incomplete coverage for some non-football feeds.
+        // Load a broad upcoming window and filter by Africa/Lagos date downstream.
+        todayGames:String(sportDef.id==="football"?todayOnly:false),
+        timeline:sportDef.id==="football"?(todayOnly?"48":"720"):"720",
+        _t:String(Date.now())
+      });
+      if(marketKey)params.set("marketId",marketKey);
+      let body;
+      try{
+        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+      }catch(e){
+        if(all.length)break;
+        throw e;
       }
-    }catch(e){if(all.length) break;throw e}
-    const tournaments=body.data?.tournaments||[];
-    let pageCount=0;
-    for(const tournament of tournaments){
-      for(const event of tournament.events||[]){
-        pageCount++;
-        all.push({
-          eventId:String(event.eventId||""),
-          league:String(tournament.name||""),
-          category:String(tournament.categoryName||""),
-          home:String(event.homeTeamName||""),
-          away:String(event.awayTeamName||""),
-          startTimeMs:Number(event.estimateStartTime||0),
-          matchStatus:String(event.matchStatus||"Not start"),
-          homeScore:event.homeScore?.current??event.homeScore?.display??event.homeScore??event.homeTeamScore??null,
-          awayScore:event.awayScore?.current??event.awayScore?.display??event.awayScore??event.awayTeamScore??null,
-          markets:(event.markets||[]).map(m=>({
-            marketId:String(m.id||""),
-            marketName:String(m.desc||m.name||m.title||m.id||""),
-            specifier:m.specifier??null,
-            status:m.status,
-            outcomes:(m.outcomes||[]).map(o=>({
-              outcomeId:String(o.id||""),
-              outcomeName:String(o.desc||""),
-              odds:Number(o.odds),
-              isActive:o.isActive===undefined?true:(typeof o.isActive==="boolean"?o.isActive:["1","true","active","open"].includes(String(o.isActive).toLowerCase()))
+      const tournaments=body.data?.tournaments||[];
+      let pageCount=0;
+      for(const tournament of tournaments){
+        for(const event of tournament.events||[]){
+          pageCount++;
+          all.push({
+            eventId:String(event.eventId||""),
+            league:String(tournament.name||""),
+            category:String(tournament.categoryName||""),
+            home:String(event.homeTeamName||""),
+            away:String(event.awayTeamName||""),
+            startTimeMs:Number(event.estimateStartTime||0),
+            matchStatus:String(event.matchStatus||"Not start"),
+            homeScore:event.homeScore?.current??event.homeScore?.display??event.homeScore??event.homeTeamScore??null,
+            awayScore:event.awayScore?.current??event.awayScore?.display??event.awayScore??event.awayTeamScore??null,
+            markets:(event.markets||[]).map(m=>({
+              marketId:String(m.id||""),
+              marketName:String(m.desc||m.name||m.title||m.id||""),
+              specifier:m.specifier??null,
+              status:m.status,
+              outcomes:(m.outcomes||[]).map(o=>({
+                outcomeId:String(o.id||""),
+                outcomeName:String(o.desc||""),
+                odds:Number(o.odds),
+                isActive:o.isActive===undefined?true:(typeof o.isActive==="boolean"?o.isActive:["1","true","active","open"].includes(String(o.isActive).toLowerCase()))
+              }))
             }))
-          }))
-        });
+          });
+        }
       }
+      if(pageCount<pageSize)break;
     }
-    if(pageCount<pageSize) break;
-  }
-  // Do not cache a transient empty provider response; the next request should retry.
-  if(all.length)liveCache={at:Date.now(),key:cacheKey,fixtures:all};
-  return all;
+    // Do not cache a transient empty provider response; the next request should retry.
+    if(all.length)liveCache={at:Date.now(),key:cacheKey,fixtures:all};
+    return all;
   })();
-  try{return await liveFetchPromise}finally{liveFetchPromise=null}
+  liveFetchPromises.set(cacheKey,request);
+  try{return await request}finally{
+    if(liveFetchPromises.get(cacheKey)===request)liveFetchPromises.delete(cacheKey);
+  }
 }
 
 function localDayKey(ms){
@@ -740,17 +755,18 @@ async function getLeagueCountFixtures(date,sport="football"){
   const promise=(async()=>{
     const all=[];
     const pageSize=100;
-    const marketId="1";
     for(let page=1;page<=12;page++){
       const params=new URLSearchParams({
         sportId:sportDef.sportId,
-        marketId,
         pageSize:String(pageSize),
         pageNum:String(page),
         todayGames:"false",
         timeline:"720",
         _t:String(Date.now())
       });
+      // Only football league counts use the football market filter. Other sports
+      // must query the schedule without marketId or leagues incorrectly show zero.
+      if(sportDef.id==="football")params.set("marketId","1");
       let body;
       try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){
         if(all.length)break;
@@ -1114,6 +1130,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const maxGames=Math.max(1,Math.min(admin.maxAnalyzerGames,Number(body.maxGames)||20));
     const minConfidence=Math.max(admin.minAnalyzerConfidence,Math.min(99,Number(body.minConfidence)||0));
     const fixtures=(await getDayFixtures(requestedDate,false,requestedSport)).fixtures||[],results=[];
+    let fixturesAfterLeagueFilter=0,fixturesWithMarkets=0,marketsScanned=0,matchingMarkets=0,activeOutcomes=0,selectionMatches=0,confidenceMatches=0;
     for(const fixture of fixtures){
       if(localDayKey(fixture.startTimeMs)!==requestedDate) continue;
       if(leagueFilters.length&&!leagueFilters.some(l=>{
@@ -1127,15 +1144,22 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
         if(requestedSport!=="football") return true;
         return normalizeText(l.country)===normalizeText(leagueCountry(fixture.league,fixture.category));
       })) continue;
-      for(const market of fixture.markets){
+      fixturesAfterLeagueFilter++;
+      if((fixture.markets||[]).length)fixturesWithMarkets++;
+      for(const market of fixture.markets||[]){
+        marketsScanned++;
         const types=marketTypes.length?marketTypes:["ou"];
         for(const type of types){
           if(!marketMatches(market,type)) continue;
-          for(const outcome of market.outcomes){
+          matchingMarkets++;
+          for(const outcome of market.outcomes||[]){
             if(outcome.isActive===false||!Number.isFinite(Number(outcome.odds))||Number(outcome.odds)<=1) continue;
+            activeOutcomes++;
             if(selections.length&&!selections.some(s=>selectionRequested(outcome,s,market,type))) continue;
+            selectionMatches++;
             const confidence=confidenceForOutcome(market,outcome);
             if(confidence<minConfidence) continue;
+            confidenceMatches++;
             results.push({
               id:fixture.eventId+"_"+market.marketId+"_"+(market.specifier||"")+"_"+outcome.outcomeId,
               eventId:fixture.eventId,league:fixture.league,category:fixture.category,
@@ -1169,7 +1193,17 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     existing.savedAt=existing.savedAt||existing.updatedAt;
     existing.criteria={sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence};
     await writePersistentArchive(requestedDate,existing,requestedSport);
-    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
+    let zeroReason=null,zeroMessage="";
+    if(!fixtures.length){zeroReason="no_fixtures";zeroMessage="No fixtures were returned by the provider for this sport and date. Try another date or check SportyBet coverage."}
+    else if(!fixturesAfterLeagueFilter){zeroReason="league_filter_no_match";zeroMessage="Fixtures were returned, but none matched the selected league/tournament filters. Clear the league filter and retry."}
+    else if(!fixturesWithMarkets){zeroReason="no_market_data";zeroMessage="Fixtures were found, but the provider returned no markets for them. This is a market-feed issue, not a confidence-filter issue."}
+    else if(!matchingMarkets){zeroReason="no_requested_markets";zeroMessage="Fixtures and markets were found, but none matched the selected market types. Select the sport's default market or review the market mapping."}
+    else if(!activeOutcomes){zeroReason="no_active_odds";zeroMessage="Matching markets were found, but they contained no active outcomes with valid decimal odds."}
+    else if(!selectionMatches){zeroReason="no_matching_selection";zeroMessage="Markets have active odds, but none matched the selected options. Clear the option filter and retry."}
+    else if(!confidenceMatches){zeroReason="below_confidence";zeroMessage="Matching selections were found, but all were below the configured minimum confidence."}
+    else if(!qualified.length){zeroReason="no_qualified_fixtures";zeroMessage="Selections were found, but no distinct fixtures remained after filtering."}
+    const diagnostics={scannedFixtures:fixtures.length,fixturesAfterLeagueFilter,fixturesWithMarkets,marketsScanned,matchingMarkets,activeOutcomes,selectionMatches,confidenceMatches,zeroReason,message:zeroMessage};
+    r.json({ok:true,sport:requestedSport,source:"SportyBet markets + independent statistics",generatedAt:new Date().toISOString(),criteria:{sport:requestedSport,date:requestedDate,leagues:leagueFilters,marketTypes,selections,maxGames,minConfidence},total:predictions.length,available:qualified.length,scannedFixtures:fixtures.length,fixturesWithMarkets,diagnostics,independentStatsApplied:predictions.some(x=>x.independentConfidence!=null),predictions});
   }catch(e){r.status(502).json({ok:false,error:e.message,total:0,available:0,predictions:[]})}
 });
 
