@@ -50,6 +50,11 @@ window.OMEGA_MARKET_OPTIONS.baseball_total_runs={name:"Baseball Total Runs",opti
 window.OMEGA_MARKET_OPTIONS.baseball_run_line={name:"Baseball Run Line",options:[{label:"Home",key:"home"},{label:"Away",key:"away"}]};
 window.OMEGA_MARKET_OPTIONS.baseball_innings={name:"Baseball Innings Markets",options:[{label:"1st Inning Over 0.5",key:"over_0_5"},{label:"1st Inning Under 0.5",key:"under_0_5"}]};
 
+window.OMEGA_MARKET_OPTIONS.table_tennis_moneyline={name:"Table Tennis Match Winner",options:[{label:"Player 1",key:"home"},{label:"Player 2",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.table_tennis_total_points={name:"Table Tennis Total Points",options:[{label:"Over 70.5–75.5",key:"over_range_70_5_75_5"},{label:"Over 76.5–80.5",key:"over_range_76_5_80_5"},{label:"Over 81.5–85.5",key:"over_range_81_5_85_5"},{label:"Under 70.5–75.5",key:"under_range_70_5_75_5"},{label:"Under 76.5–80.5",key:"under_range_76_5_80_5"},{label:"Under 81.5–85.5",key:"under_range_81_5_85_5"}]};
+window.OMEGA_MARKET_OPTIONS.table_tennis_handicap={name:"Table Tennis Points Handicap",options:[{label:"Player 1",key:"home"},{label:"Player 2",key:"away"}]};
+window.OMEGA_MARKET_OPTIONS.table_tennis_set_betting={name:"Table Tennis Correct Set Score",options:[{label:"3-0",key:"3_0"},{label:"3-1",key:"3_1"},{label:"3-2",key:"3_2"},{label:"0-3",key:"0_3"},{label:"1-3",key:"1_3"},{label:"2-3",key:"2_3"}]};
+window.OMEGA_SPORT_MARKETS.table_tennis=["table_tennis_moneyline","table_tennis_total_points","table_tennis_handicap","table_tennis_set_betting"];
 window.OMEGA_SPORT_MARKETS.tennis=["tennis_moneyline","tennis_total_games","tennis_handicap","tennis_set_betting"];
 window.OMEGA_SPORT_MARKETS.ice_hockey=["hockey_moneyline","hockey_total_goals","hockey_puck_line","hockey_period"];
 window.OMEGA_SPORT_MARKETS.baseball=["baseball_moneyline","baseball_total_runs","baseball_run_line","baseball_innings"];
