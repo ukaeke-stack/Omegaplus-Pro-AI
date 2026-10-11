@@ -844,7 +844,7 @@ async function getLeagueCountFixtures(date,sport="football"){
       });
       // SportyBet requires marketId on this endpoint for non-football requests too.
       // A broad market list prevents league counts from failing with HTTP 422.
-      params.set("marketId",MARKET_IDS.join(","));
+      params.set("marketId",sportDef.id==="football"?"1":MARKET_IDS.join(","));
       let body;
       try{body=await fetchUpcomingSportPage(sportDef,params)}catch(e){
         if(all.length)break;
