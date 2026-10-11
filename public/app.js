@@ -147,7 +147,7 @@ async function refreshHistory(date=historySelectedDate()){
       archive={date,sport:state.sport,predictions:[],dailyBestPredictions:generated.predictions||[],correctScores:[],results:[]};
     }
     const dailySource=Array.isArray(archive?.dailyBestPredictions)?archive.dailyBestPredictions:
-      (archive?.dailySelectionVersion==="football-core-markets-combo10-v2"&&Array.isArray(archive?.predictions)&&archive.predictions.length===10?archive.predictions:[]);
+      (["football-core-markets-10picks-combo5-v3","football-core-markets-combo10-v2"].includes(archive?.dailySelectionVersion)&&Array.isArray(archive?.predictions)&&archive.predictions.length===10?archive.predictions:[]);
     const dailyIds=new Set(dailySource.map(x=>x.id).filter(Boolean));
     let day=[
       ...dailySource.slice(0,10).map((x,i)=>({...x,date,sport:state.sport,isDailyBest:true,dailyRank:x.dailyRank||i+1})),
