@@ -165,29 +165,45 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
-// Non-football SportyBet feeds may reject the football-oriented timeline/todayGames
-// query shape with HTTP 422. Retry once with only the documented core pagination
-// parameters instead of treating every league count as unknown.
+// SportyBet's upcoming-events endpoint requires marketId, including for
+// non-football sports. Never retry by omitting it: that produces HTTP 422
+// "Invalid". If the broad market list is rejected, retry the minimal query shape
+// while retaining marketId, then probe known common IDs one by one.
 async function fetchUpcomingSportPage(sportDef,params){
   try{
     return await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
-  }catch(error){
-    if(sportDef.id==="football"||!String(error?.message||"").includes("HTTP 422"))throw error;
-    const fallback=new URLSearchParams({
-      sportId:sportDef.sportId,
-      pageSize:params.get("pageSize")||"100",
-      pageNum:params.get("pageNum")||"1",
-      _t:String(Date.now())
-    });
-    return sportyFetch("/factsCenter/pcUpcomingEvents?"+fallback);
+  }catch(firstError){
+    if(sportDef.id==="football"||!String(firstError?.message||"").includes("HTTP 422"))throw firstError;
+    const pageSize=params.get("pageSize")||"100";
+    const pageNum=params.get("pageNum")||"1";
+    const candidates=[params.get("marketId"),"1","18","10","29","11"].filter(Boolean);
+    const seen=new Set();
+    const errors=[];
+    for(const marketId of candidates){
+      if(seen.has(marketId))continue;
+      seen.add(marketId);
+      const fallback=new URLSearchParams({
+        sportId:sportDef.sportId,
+        marketId,
+        pageSize,
+        pageNum,
+        _t:String(Date.now())
+      });
+      try{
+        return await sportyFetch("/factsCenter/pcUpcomingEvents?"+fallback);
+      }catch(error){
+        errors.push("marketId="+marketId+": "+String(error?.message||error));
+      }
+    }
+    throw new Error("SportyBet rejected non-football fixture queries. "+errors.join(" | ").slice(0,500));
   }
 }
 
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
-  // SportyBet's marketId=1 filter is football-centric and can return events without
-  // the requested non-football markets. Fetch the unfiltered schedule for other sports.
-  const marketKey=sportDef.id==="football"?MARKET_IDS.join(","):"";
+  // The SportyBet endpoint validates marketId for all sports. Use the broad
+  // market set for every sport; non-football fallbacks probe valid IDs if needed.
+  const marketKey=MARKET_IDS.join(",");
   const queryWindow=sportDef.id==="football"?(todayOnly?"today":"future"):"schedule";
   const cacheKey=sportDef.id+"|"+marketKey+"|"+queryWindow;
   if(!force&&Date.now()-liveCache.at<30*60*1000&&liveCache.key===cacheKey) return liveCache.fixtures;
@@ -782,9 +798,9 @@ async function getLeagueCountFixtures(date,sport="football"){
         timeline:"720",
         _t:String(Date.now())
       });
-      // Only football league counts use the football market filter. Other sports
-      // must query the schedule without marketId or leagues incorrectly show zero.
-      if(sportDef.id==="football")params.set("marketId","1");
+      // SportyBet requires marketId on this endpoint for non-football requests too.
+      // A broad market list prevents league counts from failing with HTTP 422.
+      params.set("marketId",MARKET_IDS.join(","));
       let body;
       try{body=await fetchUpcomingSportPage(sportDef,params)}catch(e){
         if(all.length)break;
