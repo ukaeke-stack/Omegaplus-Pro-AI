@@ -22,7 +22,7 @@ function finished(row) {
 }
 function cacheGet(key, ttl) {
   const item = cache.get(key);
-  return item && Date.now() - item.at < ttl ? item.value : null;
+  return item && Date.now() - item.at < ttl ? item.value : undefined;
 }
 async function fetchJson(url) {
   const apiKey = process.env.GOAL_API_KEY || "";
@@ -46,7 +46,7 @@ async function fetchJson(url) {
 }
 async function cachedFetch(key, ttl, url) {
   const hit = cacheGet(key, ttl);
-  if (hit !== null) return { value: hit, cached: true };
+  if (hit !== undefined) return { value: hit, cached: true };
   if (pending.has(key)) return { value: await pending.get(key), cached: true };
   const task = fetchJson(url).then(body => {
     const value = body?.data ?? null;
@@ -61,7 +61,7 @@ async function findTeamId(teamName) {
   if (!normalized) return null;
   const key = "goal-team:" + normalized;
   const hit = cacheGet(key, TEAM_TTL);
-  if (hit !== null) return hit;
+  if (hit !== undefined) return hit;
   const result = await cachedFetch(key, TEAM_TTL,
     BASE + "/teams?search=" + encodeURIComponent(teamName) + "&limit=10&offset=0");
   const teams = Array.isArray(result.value) ? result.value : [];
