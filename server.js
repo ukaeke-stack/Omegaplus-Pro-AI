@@ -165,6 +165,24 @@ async function sportyFetch(pathname,options={}){
   }finally{clearTimeout(timer)}
 }
 
+// Non-football SportyBet feeds may reject the football-oriented timeline/todayGames
+// query shape with HTTP 422. Retry once with only the documented core pagination
+// parameters instead of treating every league count as unknown.
+async function fetchUpcomingSportPage(sportDef,params){
+  try{
+    return await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+  }catch(error){
+    if(sportDef.id==="football"||!String(error?.message||"").includes("HTTP 422"))throw error;
+    const fallback=new URLSearchParams({
+      sportId:sportDef.sportId,
+      pageSize:params.get("pageSize")||"100",
+      pageNum:params.get("pageNum")||"1",
+      _t:String(Date.now())
+    });
+    return sportyFetch("/factsCenter/pcUpcomingEvents?"+fallback);
+  }
+}
+
 async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
   const sportDef=SPORTS.find(x=>x.id===sport)||SPORTS[0];
   // SportyBet's marketId=1 filter is football-centric and can return events without
@@ -191,7 +209,7 @@ async function getSportyFixtures(todayOnly=false,force=false,sport="football"){
       if(marketKey)params.set("marketId",marketKey);
       let body;
       try{
-        body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params);
+        body=await fetchUpcomingSportPage(sportDef,params);
       }catch(e){
         if(all.length)break;
         throw e;
@@ -768,7 +786,7 @@ async function getLeagueCountFixtures(date,sport="football"){
       // must query the schedule without marketId or leagues incorrectly show zero.
       if(sportDef.id==="football")params.set("marketId","1");
       let body;
-      try{body=await sportyFetch("/factsCenter/pcUpcomingEvents?"+params)}catch(e){
+      try{body=await fetchUpcomingSportPage(sportDef,params)}catch(e){
         if(all.length)break;
         throw e;
       }
@@ -837,7 +855,7 @@ app.get("/api/leagues",async(req,r)=>{
         if(!f.league)continue;
         const actualCountry=leagueCountry(f.league,f.category);
         const topIndex=topLeagueIndex(f.league);
-        if(topIndex>=0){
+        if(sport==="football"&&topIndex>=0){
           const [name,country]=TOP_LEAGUE_CATALOG[topIndex];
           if(normalizeText(actualCountry)===normalizeText(country)){
             const key=name+"|||"+country;
@@ -845,6 +863,35 @@ app.get("/api/leagues",async(req,r)=>{
             if(item)item.count++;
             continue;
           }
+        }
+        const aliases={
+          basketball:{
+            "bbl germany":["bbl","basketball bundesliga","easycredit bbl","easycredit basketball bundesliga"],
+            "bbl":["british basketball league","super league basketball"],
+            "nba g league":["g league","nba g-league"],
+            "lnb pro a":["betclic elite","pro a","championnat de france"]
+          },
+          baseball:{
+            "kbo":["kbo league","korean baseball organization","korea baseball"],
+            "npb":["nippon professional baseball","japan npb"],
+            "mlb":["major league baseball"],
+            "cpbl":["chinese professional baseball league"]
+          },
+          tennis:{"atp":["atp tour"],"wta":["wta tour"],"atp challenger":["challenger tour"],"itf men":["itf men's"],"itf women":["itf women's"]},
+          ice_hockey:{"nhl":["national hockey league"],"ahl":["american hockey league"],"del":["deutsche eishockey liga"],"khl":["kontinental hockey league"]},
+          table_tennis:{"wtt":["world table tennis"],"ittf world championships":["world championships"]}
+        };
+        const actualName=normalizeText(f.league);
+        const actualCountryNorm=normalizeText(actualCountry);
+        const catalogMatch=catalog.find(([name,country])=>{
+          const expected=normalizeText(name),countryNorm=normalizeText(country);
+          const names=[expected,...((aliases[sport]||{})[expected]||[]).map(normalizeText)];
+          return names.includes(actualName)&&(!countryNorm||countryNorm===actualCountryNorm||countryNorm==="international");
+        });
+        if(catalogMatch){
+          const key=catalogMatch[0]+"|||"+catalogMatch[1];
+          const item=map.get(key);
+          if(item){item.count++;continue;}
         }
         const key=f.league+"|||"+actualCountry;
         if(!map.has(key))map.set(key,{name:f.league,country:actualCountry,group:"Other Leagues",key,count:1});
