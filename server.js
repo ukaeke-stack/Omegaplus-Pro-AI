@@ -158,7 +158,7 @@ async function sportyFetch(pathname,options={}){
     const text=await res.text();
     let body=null;
     try{body=text?JSON.parse(text):null}catch{}
-    if(!res.ok) throw new Error("SportyBet HTTP "+res.status);
+    if(!res.ok){const detail=body?.message||body?.msg||body?.error||body?.bizMsg||text.slice(0,180);throw new Error("SportyBet HTTP "+res.status+(detail?": "+String(detail).replace(/\\s+/g," ").slice(0,180):""));}
     if(!body) throw new Error("SportyBet returned an invalid response");
     if(Number(body.bizCode||10000)!==10000) throw new Error(body.message||"SportyBet rejected the request");
     return body;
