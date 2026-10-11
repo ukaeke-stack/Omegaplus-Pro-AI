@@ -6,6 +6,7 @@ function key(v){return String(v||"").toLowerCase().replace(/[^a-z0-9]+/g," ").tr
 function poisson(k,lambda){return Math.exp(-lambda)*Math.pow(lambda,k)/factorial(k)}
 function factorial(n){let x=1;for(let i=2;i<=n;i++)x*=i;return x}
 function clamp(n,a=0,b=1){return Math.max(a,Math.min(b,n))}
+function validGoalValue(value,min=0.1,max=6.5){if(value===null||value===undefined||value==="")return null;const n=Number(value);return Number.isFinite(n)&&n>=min&&n<=max?n:null}
 async function fetchJson(url){
   const hit=cache.get(url);
   if(hit&&Date.now()-hit.at<3*60*60*1000)return hit.data;
@@ -88,14 +89,14 @@ function scoreMatrix(lh,la){
 }
 export async function analyzeCorrectScores(fixture,independentStats={}){
   const form=independentStats?.sofascore?.form;
-  const uh=Number(independentStats?.understat?.home?.xg),ua=Number(independentStats?.understat?.away?.xg);
-  const uha=Number(independentStats?.understat?.home?.xga),uaa=Number(independentStats?.understat?.away?.xga);
+  const uh=validGoalValue(independentStats?.understat?.home?.xg,0.1,5),ua=validGoalValue(independentStats?.understat?.away?.xg,0.1,5);
+  const uha=validGoalValue(independentStats?.understat?.home?.xga,0.1,5),uaa=validGoalValue(independentStats?.understat?.away?.xga,0.1,5);
   const market=marketExpectedGoals(fixture);
   let homeGoals=market?.home||1.25,awayGoals=market?.away||1.05;
-  const formH=Number(form?.homeGoalsFor),formA=Number(form?.awayGoalsFor),conH=Number(form?.homeGoalsAgainst),conA=Number(form?.awayGoalsAgainst);
-  if(Number.isFinite(formH)&&Number.isFinite(formA)&&Number.isFinite(conH)&&Number.isFinite(conA)){homeGoals=(homeGoals+.35*formH+.25*conA)/1.6;awayGoals=(awayGoals+.35*formA+.25*conH)/1.6}
-  if(Number.isFinite(uh)&&Number.isFinite(uaa))homeGoals=(homeGoals+.65*((uh+uaa)/2))/1.65;
-  if(Number.isFinite(ua)&&Number.isFinite(uha))awayGoals=(awayGoals+.65*((ua+uha)/2))/1.65;
+  const formH=validGoalValue(form?.homeGoalsFor),formA=validGoalValue(form?.awayGoalsFor),conH=validGoalValue(form?.homeGoalsAgainst),conA=validGoalValue(form?.awayGoalsAgainst);
+  if(formH!==null&&formA!==null&&conH!==null&&conA!==null){homeGoals=(homeGoals+.35*formH+.25*conA)/1.6;awayGoals=(awayGoals+.35*formA+.25*conH)/1.6}
+  if(uh!==null&&uaa!==null)homeGoals=(homeGoals+.65*((uh+uaa)/2))/1.65;
+  if(ua!==null&&uha!==null)awayGoals=(awayGoals+.65*((ua+uha)/2))/1.65;
   const slug=leagueSlug(fixture.league);
   const espn=slug?await espnTeam(fixture,slug):null;
   if(espn?.home?.stats?.gf!=null&&espn?.away?.stats?.ga!=null)homeGoals=(homeGoals+.5*((espn.home.stats.gf+espn.away.stats.ga)/2))/1.5;
