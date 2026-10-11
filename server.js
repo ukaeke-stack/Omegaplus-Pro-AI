@@ -624,7 +624,7 @@ app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.jso
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
-app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,providers:{Sofascore:{configured:x.sofascore,role:"fixtures, form, match statistics, standings-compatible data"},Understat:{configured:x.understat,role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),role:"supplementary results/statistics where subscription covers the league"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
+app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,checkedAt:x.checkedAt,providers:{Sofascore:{configured:x.sofascore,...(x.details?.sofascore||{}),role:"recent form, match statistics, lineups and injuries where accessible"},Understat:{configured:x.understat,...(x.details?.understat||{}),role:"xG/xGA evidence",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"]},GoalAPI:{configured:Boolean(x.details?.goalApi?.configured),...(x.details?.goalApi||{}),role:"cached recent-form fallback when Sofascore samples are unavailable"},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),...(x.details?.sportmonks||{}),role:"fixtures/results provider; not counted as a separate model probability"}}})}catch(e){r.status(200).json({ok:false,error:e.message})}});
 app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
 
 app.get("/api/markets",(_,r)=>r.json({markets:[
@@ -909,7 +909,7 @@ async function buildBestPicks(date,limit=25,requestedType="all",sport="football"
   }
   const seen=new Set(),unique=candidates.filter(x=>{const k=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;if(seen.has(k))return false;seen.add(k);return true});
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,20);
-  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
+  const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4,sport,confidenceFloor:0}));
   return enriched.sort((a,b)=>b.confidence-a.confidence||b.modelProbability-a.modelProbability||a.startTimeMs-b.startTimeMs).slice(0,Math.max(1,Math.min(25,limit)));
 }
 app.get("/api/best-picks",async(req,r)=>{
@@ -1035,7 +1035,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     }
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const candidates=qualified.slice(0,Math.min(60,qualified.length));
-    const enriched=await enrichAndModel(candidates,{concurrency:3});
+    const enriched=await enrichAndModel(candidates,{concurrency:3,sport:requestedSport,confidenceFloor:0});
     enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
     const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
@@ -1254,7 +1254,7 @@ app.get("/api/odds-movement",async(req,res)=>{
 app.get("/api/intelligence-status",async(req,res)=>{
  try{
    const health=await independentHealth();
-   res.json({ok:true,providers:{sofascore:!!health.sofascore,understat:!!health.understat,oddsHistory:true,lineups:"Sofascore event lineups when published",injuries:"Sofascore team injury feed when available"},note:"Lineups and injuries are availability-dependent and are never invented."});
+   res.json({ok:true,providers:{sofascore:!!health.sofascore,understat:!!health.understat,goalApi:!!health.goalApi,sportmonks:!!health.sportmonks,oddsHistory:true,lineups:"Sofascore event lineups when published",injuries:"Sofascore team injury feed when available"},details:health.details||{},note:"Provider health reflects returned data; missing data is not fabricated. Football models are not applied to other sports."});
  }catch(e){res.status(200).json({ok:false,providers:{sofascore:false,understat:false,oddsHistory:true},error:e.message})}
 });
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
