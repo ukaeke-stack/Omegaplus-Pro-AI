@@ -16,7 +16,10 @@ export function deriveModel(p={}){
   const total=home+away,draw=Math.max(0,1-hw-aw);
   const probs={home:hw*100,draw:draw*100,away:aw*100,over15:over(total,1)*100,over25:over(total,2)*100,btts:(1-Math.exp(-home))*(1-Math.exp(-away))*100};
   const pick=/over\s*1\.5/i.test(p.pick||"")?probs.over15:/over\s*2\.5/i.test(p.pick||"")?probs.over25:/btts/i.test(p.pick||"")?probs.btts:/home/i.test(p.pick||"")?probs.home:/away/i.test(p.pick||"")?probs.away:null;
-  const inputs=[market,ind,pick].filter(Number.isFinite);
-  return {expectedGoals:{home:+home.toFixed(2),away:+away.toFixed(2),total:+total.toFixed(2)},probabilities:Object.fromEntries(Object.entries(probs).map(([k,v])=>[k,+v.toFixed(1)])),modelProbability:pick==null?null:+pick.toFixed(1),ensembleConfidence:inputs.length?Math.round(inputs.reduce((a,b)=>a+b,0)/inputs.length):null};
+  // pick is derived from the same form/xG evidence as independentConfidence.
+  // Blend the market prior with the model once instead of triple-counting correlated signals.
+  const ensembleConfidence=pick!=null&&market!=null?Math.round(market*0.65+pick*0.35):
+    pick!=null?Math.round(pick):ind!=null&&market!=null?Math.round(market*0.75+ind*0.25):market??ind??null;
+  return {expectedGoals:{home:+home.toFixed(2),away:+away.toFixed(2),total:+total.toFixed(2)},probabilities:Object.fromEntries(Object.entries(probs).map(([k,v])=>[k,+v.toFixed(1)])),modelProbability:pick==null?null:+pick.toFixed(1),ensembleConfidence};
 }
 export function applyDerivedModel(rows=[]){return rows.map(p=>{const m=deriveModel(p);return {...p,derivedModel:m,modelProbability:m.modelProbability??p.modelProbability,modelConfidence:m.ensembleConfidence??p.modelConfidence}})}
