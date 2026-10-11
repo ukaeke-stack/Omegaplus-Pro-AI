@@ -1,5 +1,5 @@
 import express from "express";
-import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
+import {initAuthDb,authDbConfigured,dbReady,currentUser,requireAuth,requirePaid,requireRole,registerUser,createAdminUser,loginUser,createPasswordResetRequest,resetPasswordWithToken,logoutUser,setSessionCookie,clearSessionCookie,adminUsers,setUserAccess,adminStats,listPlans,createOrUpdatePlan,activateSubscription,revokeSubscription,audit,getAccessSettings,updateAccessSettings,grantFreeTrial,paymentHistory,createPaymentRecord,activateProviderSubscription,getAdminSettings,updateAdminSettings} from "./auth.js";
 import {put,get} from "@vercel/blob";
 import pg from "pg";
 import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from "./sportmonks-results.js";
@@ -622,6 +622,21 @@ app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json(
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
+app.post("/api/auth/forgot-password",async(req,r)=>{
+  const email=String(req.body?.email||"").trim().toLowerCase();
+  try{
+    const apiKey=process.env.RESEND_API_KEY||"",from=process.env.PASSWORD_RESET_FROM||"",base=String(process.env.APP_BASE_URL||"").replace(/\/$/,"");
+    if(!apiKey||!from||!base){console.warn("Password reset email is not configured; set RESEND_API_KEY, PASSWORD_RESET_FROM, and APP_BASE_URL.");return r.status(503).json({ok:false,error:"Password recovery email is not configured yet. Please contact support."})}
+    const request=await createPasswordResetRequest(email);
+    if(request){
+      const link=base+"/?resetPassword="+encodeURIComponent(request.token);
+      const mail=await fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:"Bearer "+apiKey,"Content-Type":"application/json"},body:JSON.stringify({from,to:[request.email],subject:"Reset your Omegaplus password",text:"Use this secure link to reset your Omegaplus password. It expires in one hour: "+link+"\n\nIf you did not request this, ignore this email.",html:'<p>You requested a password reset for Omegaplus Pro AI.</p><p><a href="'+link+'">Reset your password</a></p><p>This link expires in one hour. If you did not request this, ignore this email.</p>'})});
+      if(!mail.ok){const detail=await mail.text().catch(()=> "");console.error("Password reset email delivery failed:",mail.status,detail.slice(0,300))}
+    }
+    return r.json({ok:true,message:"If an account exists for that email, a password reset link will be sent shortly."});
+  }catch(e){console.error("Password reset request failed:",e.message);return r.json({ok:true,message:"If an account exists for that email, a password reset link will be sent shortly."})}
+});
+app.post("/api/auth/reset-password",async(req,r)=>{try{await resetPasswordWithToken(req.body?.token,req.body?.password);r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/logout",async(req,r)=>{try{await logoutUser(req);clearSessionCookie(r);r.json({ok:true})}catch{clearSessionCookie(r);r.json({ok:true})}});
 app.get("/api/plans",async(_,r)=>{try{r.json({ok:true,plans:await listPlans()})}catch(e){r.status(503).json({ok:false,error:e.message,plans:[]})}});
 

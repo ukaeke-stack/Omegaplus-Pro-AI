@@ -57,6 +57,15 @@ export async function initAuthDb(){
         updated_at timestamptz not null default now(),
         last_login_at timestamptz
       );
+      create table if not exists password_reset_tokens(
+        id uuid primary key default gen_random_uuid(),
+        user_id uuid not null references users(id) on delete cascade,
+        token_hash text not null unique,
+        expires_at timestamptz not null,
+        used_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+      create index if not exists password_reset_tokens_expiry_idx on password_reset_tokens(expires_at);
       create table if not exists sessions(
         id uuid primary key default gen_random_uuid(),
         user_id uuid not null references users(id) on delete cascade,
@@ -243,6 +252,28 @@ export async function loginUser({email,password},req){
   const user=safeUser(r.rows[0]),session=await createSession(user,req);
   await audit({user},"account.login");
   return {user,session};
+}
+export async function createPasswordResetRequest(email){
+  email=cleanEmail(email);
+  if(!email||!/^\S+@\S+\.\S+$/.test(email))return null;
+  const found=await q("select id,email from users where email=$1 and is_active=true",[email]);
+  if(!found.rowCount)return null;
+  const raw=token(),hashed=sessionHash(raw);
+  await q("update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and used_at is null",[found.rows[0].id]);
+  await q("insert into password_reset_tokens(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 hour')",[found.rows[0].id,hashed]);
+  return {email:found.rows[0].email,token:raw};
+}
+export async function resetPasswordWithToken(rawToken,password){
+  const passwordText=String(password||"");
+  if(passwordText.length<8)throw new Error("Password must be at least 8 characters.");
+  if(!/^[a-f0-9]{64}$/i.test(String(rawToken||"")))throw new Error("This reset link is invalid or has expired. Request a new one.");
+  const claimed=await q("update password_reset_tokens set used_at=now() where token_hash=$1 and used_at is null and expires_at>now() returning user_id",[sessionHash(rawToken)]);
+  if(!claimed.rowCount)throw new Error("This reset link is invalid or has expired. Request a new one.");
+  const {hash,salt}=hashPassword(passwordText);
+  await q("update users set password_hash=$1,password_salt=$2,updated_at=now() where id=$3 and is_active=true",[hash,salt,claimed.rows[0].user_id]);
+  await q("delete from sessions where user_id=$1",[claimed.rows[0].user_id]);
+  await q("update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1",[claimed.rows[0].user_id]);
+  return true;
 }
 export async function logoutUser(req){
   const raw=readCookie(req,"omega_session")||String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");

@@ -124,6 +124,8 @@ function renderHistory(date=historySelectedDate(),rows=[]){
   }
   box.innerHTML=h.map(x=>{
     const teams=safe(x.home)+" vs "+safe(x.away);
+    const outcomeLabel=String(x.outcome||"Pending");
+    const outcomeKey=/^won$/i.test(outcomeLabel)?"won":/^lost$/i.test(outcomeLabel)?"lost":/^void(?:ed)?$/i.test(outcomeLabel)?"void":"pending";
     const rawPick=String(x.pick||x.selection||x.market||"");
     const pick=safe(rawPick);
     const odds=x.odds==null?"—":safe(x.odds);
@@ -136,7 +138,7 @@ function renderHistory(date=historySelectedDate(),rows=[]){
       '<b style="display:block;color:var(--text,#eef5f0);overflow-wrap:anywhere">'+teams+'</b>'+
       '<span style="display:block;color:#d5e0d9">'+pick+' · '+confidence+'% · @'+odds+'</span>'+
       '<small style="display:block;color:#aab8b0">'+safe(sourceText(x))+(x.verificationStatus==="confirmed"?" · VERIFIED":x.verificationStatus==="conflict"?" · CONFLICT":x.verificationStatus==="single-source"?" · SINGLE-SOURCE":" · UNVERIFIED")+score+'</small>'+
-      '</div><strong style="display:block;white-space:nowrap;color:var(--green,#18e76b)">'+safe(x.outcome||"Pending")+'</strong></article>';
+      '</div><strong class="outcome-indicator outcome-'+outcomeKey+'">'+safe(outcomeLabel)+'</strong></article>';
   }).join("");
 }
 let historyRequestSequence=0;
