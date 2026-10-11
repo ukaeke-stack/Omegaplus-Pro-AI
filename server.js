@@ -6,6 +6,7 @@ import {getDateResults,getLatestResults,getMyLeagues,norm as resultNorm} from ".
 import {getVerifiedResults,getVerifiedLiveResults} from "./result-sources.js";
 import {enrichPredictions,independentHealth} from "./independent-stats.js";
 import {applyDerivedModel} from "./model-ensemble.js";
+import {rankByReliability} from "./analyzer-reliability.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
@@ -13,7 +14,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {fileURLToPath} from "node:url";
 
-async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
+async function enrichAndModel(rows,opts){return rankByReliability(applyDerivedModel(await enrichPredictions(rows,opts)))}
 const app=express();
 const __dirname=path.dirname(fileURLToPath(import.meta.url));
 const PORT=process.env.PORT||3000;
@@ -873,7 +874,7 @@ async function buildDailyBest(date,sport="football"){
   });
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||b.odds-a.odds||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4}));
-  const ranked=enriched.sort((a,b)=>Number(b.modelProbability||b.confidence)-Number(a.modelProbability||a.confidence)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
+  const ranked=enriched.sort((a,b)=>Number(b.reliabilityScore||0)-Number(a.reliabilityScore||0)||Number(b.confidence||0)-Number(a.confidence||0)||Number(b.odds||0)-Number(a.odds||0));
   const selected=[],usedEvents=new Set(),usedMarkets=new Set();
   // First guarantee market diversity: take the strongest available pick from each market type.
   for(const type of types){
@@ -910,7 +911,7 @@ async function buildBestPicks(date,limit=25,requestedType="all",sport="football"
   const seen=new Set(),unique=candidates.filter(x=>{const k=x.eventId+"|"+x.marketId+"|"+x.specifier+"|"+x.outcomeId;if(seen.has(k))return false;seen.add(k);return true});
   const shortlist=unique.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs).slice(0,20);
   const enriched=decoratePredictions(await enrichAndModel(shortlist,{concurrency:4,sport,confidenceFloor:0}));
-  return enriched.sort((a,b)=>b.confidence-a.confidence||b.modelProbability-a.modelProbability||a.startTimeMs-b.startTimeMs).slice(0,Math.max(1,Math.min(25,limit)));
+  return enriched.sort((a,b)=>Number(b.reliabilityScore||0)-Number(a.reliabilityScore||0)||b.confidence-a.confidence||Number(b.modelProbability||0)-Number(a.modelProbability||0)||a.startTimeMs-b.startTimeMs).slice(0,Math.max(1,Math.min(25,limit)));
 }
 app.get("/api/best-picks",async(req,r)=>{
   try{
@@ -1036,7 +1037,7 @@ app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
     const qualified=[...dedupe.values()].sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const candidates=qualified.slice(0,Math.min(60,qualified.length));
     const enriched=await enrichAndModel(candidates,{concurrency:3,sport:requestedSport,confidenceFloor:0});
-    enriched.sort((a,b)=>b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
+    enriched.sort((a,b)=>Number(b.reliabilityScore||0)-Number(a.reliabilityScore||0)||b.confidence-a.confidence||a.startTimeMs-b.startTimeMs);
     const predictions=decoratePredictions(enriched).slice(0,maxGames);
     const existing=await readPersistentArchive(requestedDate,requestedSport)||{date:requestedDate,sport:requestedSport,predictions:[],results:[]};
     existing.predictions=predictions.slice(0,10);
