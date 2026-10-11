@@ -4,6 +4,8 @@ const FETCH_TIMEOUT=7000;
 const CACHE_TTL=6*60*60*1000;
 const MAX_CONCURRENCY=4;
 const cache=new Map();
+// Deduplicate concurrent cold-cache requests (especially the same day's Sofascore schedule).
+const pending=new Map();
 
 function key(v){return String(v||"").toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim()}
 function seasonStart(date){const d=new Date(date+"T12:00:00Z");const y=d.getUTCFullYear();return d.getUTCMonth()>=6?y:y-1}
@@ -27,15 +29,23 @@ async function fetchJson(url,headers={}){
 async function cachedJson(cacheKey,url,headers={}){
   const hit=cache.get(cacheKey);
   if(hit&&Date.now()-hit.at<CACHE_TTL)return{data:hit.data,cached:true};
-  try{
-    const data=await fetchJson(url,headers);
-    cache.set(cacheKey,{at:Date.now(),data});
-    return{data,cached:false};
-  }catch(e){
-    if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
-    cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
-    return{data:null,cached:true,error:e.message};
-  }
+  const inFlight=pending.get(cacheKey);
+  if(inFlight)return inFlight;
+  const request=(async()=>{
+    try{
+      const data=await fetchJson(url,headers);
+      cache.set(cacheKey,{at:Date.now(),data});
+      return{data,cached:false};
+    }catch(e){
+      if(hit)return{data:hit.data,cached:true,stale:true,error:e.message};
+      cache.set(cacheKey,{at:Date.now(),data:null,error:e.message,failed:true});
+      return{data:null,cached:true,error:e.message};
+    }finally{
+      pending.delete(cacheKey);
+    }
+  })();
+  pending.set(cacheKey,request);
+  return request;
 }
 async function mapLimit(items,limit,fn){
   const out=new Array(items.length),queue=items.map((_,i)=>i);
