@@ -1,6 +1,6 @@
 export function normalizeFixtureName(value) {
-  return String(value ?? "").normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "")
-    .toLowerCase().replace(/\\b(fc|cf|afc|sc|club)\\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/\b(fc|cf|afc|sc|club)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 }
 export function reconcileFixtures(input) {
   const fixtures = Array.isArray(input) ? input : [];
