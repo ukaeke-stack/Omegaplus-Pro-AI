@@ -34,8 +34,47 @@ const SPORTS=[{id:"football",name:"Football",sportId:"sr:sport:1"},{id:"basketba
 const BOOKMAKERS=[{id:"sportybet",name:"SportyBet",country:"ng",native:true},{id:"bet9ja",name:"Bet9ja",country:"ng"},{id:"msport",name:"MSport",country:"ng"},{id:"betking",name:"BetKing",country:"ng"},{id:"1xbet",name:"1xBet",country:"ng"},{id:"betano",name:"Betano",country:"ng"},{id:"22bet",name:"22Bet",country:"ng"}];
 const BETRELAY_BASE=process.env.BETRELAY_API_BASE_URL||"https://betrelay.com.ng/api/v1";
 const BETRELAY_API_KEY=process.env.BETRELAY_API_KEY||"";
-async function betRelayFetch(pathname,options={}){if(!BETRELAY_API_KEY)throw new Error("Multi-bookmaker code service is not configured yet. Add BETRELAY_API_KEY to Railway.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const res=await fetch(BETRELAY_BASE+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","X-API-Key":BETRELAY_API_KEY,...(options.headers||{})},signal:controller.signal});const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}if(!res.ok)throw new Error(body?.message||("BetRelay HTTP "+res.status));if(!body)throw new Error("BetRelay returned an invalid response");return body}finally{clearTimeout(timer)}}
+const BOOKMAKER_PROVIDER_IDS={sportybet:"sportybet",bet9ja:"bet9ja",msport:"msport",betking:"betking","1xbet":"1xbet",betano:"bettano","22bet":"22bet"};
+let bookmakerStatusCache={at:0,data:null};
+async function getBookmakerProviderStatus(force=false){
+  if(!force&&bookmakerStatusCache.data&&Date.now()-bookmakerStatusCache.at<300000)return bookmakerStatusCache.data;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
+  try{
+    const res=await fetch(BETRELAY_BASE+"/bookmakers",{headers:{Accept:"application/json"},signal:controller.signal});
+    if(!res.ok)throw new Error("provider status HTTP "+res.status);
+    const body=await res.json(),rows=Array.isArray(body?.data)?body.data:[];
+    if(!rows.length)throw new Error("provider status response was empty");
+    const data={};
+    for(const row of rows){const id=String(row?.name||"").toLowerCase();data[id]={outputEnabled:row.output_disabled===false&&Array.isArray(row.countries)&&row.countries.some(c=>String(c?.code||"").toLowerCase()==="ng"),inputEnabled:row.input_disabled===false};}
+    bookmakerStatusCache={at:Date.now(),data};
+    return data;
+  }catch(e){
+    if(bookmakerStatusCache.data&&Date.now()-bookmakerStatusCache.at<900000)return bookmakerStatusCache.data;
+    return null;
+  }finally{clearTimeout(timer)}
+}
+async function betRelayFetch(pathname,options={}){
+  if(!BETRELAY_API_KEY)throw new Error("Multi-bookmaker code service is not configured yet. Add BETRELAY_API_KEY to Railway.");
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+  try{
+    let res;
+    try{res=await fetch(BETRELAY_BASE+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","X-API-Key":BETRELAY_API_KEY,...(options.headers||{})},signal:controller.signal})}
+    catch(e){if(e?.name==="AbortError")throw new Error("BetRelay conversion timed out after 12 seconds. Please try again; no booking code was confirmed.");throw new Error("Could not reach BetRelay booking service. Please try again.");}
+    const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}
+    if(!res.ok)throw new Error(body?.message||("BetRelay HTTP "+res.status));
+    if(!body)throw new Error("BetRelay returned an invalid response");
+    return body;
+  }finally{clearTimeout(timer)}
+}
 function bookmakerById(id){return BOOKMAKERS.find(x=>x.id===String(id))}
+async function assertBookmakerOutputEnabled(target){
+  if(target==="sportybet")return;
+  if(!BETRELAY_API_KEY)throw new Error("Multi-bookmaker code service is not configured. Please contact the administrator.");
+  const statuses=await getBookmakerProviderStatus();
+  if(!statuses)throw new Error("Unable to verify bookmaker availability right now. Please try again shortly.");
+  const providerId=BOOKMAKER_PROVIDER_IDS[target],status=statuses[providerId];
+  if(!status||!status.outputEnabled)throw new Error((bookmakerById(target)?.name||target)+" is temporarily unavailable for booking-code generation according to the provider status.");
+}
 async function createSportyBooking(selections,sport="football"){
   const fixtures=await getSportyFixtures(false,false,sport);
   const available=[],unavailable=[];
@@ -58,7 +97,7 @@ async function createSportyBooking(selections,sport="football"){
   if(!data.shareCode)throw new Error("SportyBet did not return a booking code for the available selections.");
   return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,deadline:data.deadline||null,availableSelections:available,unavailableSelections:unavailable};
 }
-async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:target,country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[],availableSelections:sporty.availableSelections||[],unavailableSelections:sporty.unavailableSelections||[]}}
+async function generateTargetBooking(target,selections,sport="football"){const targetBookie=bookmakerById(target);if(!targetBookie)throw new Error("Unsupported bookmaker.");await assertBookmakerOutputEnabled(target);const sporty=await createSportyBooking(selections,sport);if(target==="sportybet")return{...sporty,source:"SportyBet",target:"SportyBet"};const body=await betRelayFetch("/convert",{method:"POST",body:JSON.stringify({code:sporty.bookingCode,from:"sportybet",to:BOOKMAKER_PROVIDER_IDS[target],country:"ng"})});const data=body.data||{};if(!data.shareCode)throw new Error(targetBookie.name+" did not return a booking code.");return{bookingCode:String(data.shareCode),shareURL:data.shareURL||null,source:"SportyBet → BetRelay",target:targetBookie.name,sourceCode:sporty.bookingCode,selections:data.selections||[],availableSelections:sporty.availableSelections||[],unavailableSelections:sporty.unavailableSelections||[]}}
 
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
@@ -712,7 +751,7 @@ app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{c
 app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,checkedAt:x.checkedAt||new Date().toISOString(),providers:{Sofascore:{configured:true,available:Boolean(x.sofascore),role:"fixtures, form, match statistics, standings-compatible data",...(x.details?.sofascore||{})},Understat:{configured:true,available:Boolean(x.understat),role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"],...(x.details?.understat||{})},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),available:null,role:"supplementary results/statistics where subscription covers the league",note:process.env.SPORTMONKS_API_TOKEN?"Credentials are present; live availability is not checked by this endpoint.":"SPORTMONKS_API_TOKEN is missing."},GOAL_API:{configured:Boolean(process.env.GOAL_API_KEY),available:null,role:"secondary football results provider; not used as an xG source",note:process.env.GOAL_API_KEY?"Credentials are present; live availability is not checked by this endpoint.":"GOAL_API_KEY is missing."}}})}catch(e){r.status(200).json({ok:false,checkedAt:new Date().toISOString(),error:e.message,providers:{Sofascore:{available:false},Understat:{available:false}}})}});
-app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
+app.get("/api/bookmakers",async(_,r)=>{const statuses=await getBookmakerProviderStatus();const bookmakers=BOOKMAKERS.map(x=>{const status=x.id==="sportybet"?{outputEnabled:true}:statuses?.[BOOKMAKER_PROVIDER_IDS[x.id]];const available=x.id==="sportybet"||(Boolean(BETRELAY_API_KEY)&&Boolean(status?.outputEnabled));return{id:x.id,name:x.name,codeGeneration:available,available,reason:available?null:!BETRELAY_API_KEY?"Service setup required":!statuses?"Provider status unavailable": "Temporarily unavailable for booking-code generation",method:x.id==="sportybet"?"native":"SportyBet→BetRelay"}});r.json({ok:true,bookmakers,configured:Boolean(BETRELAY_API_KEY),statusVerified:Boolean(statuses),availableCount:bookmakers.filter(x=>x.available).length})});
 
 app.get("/api/markets",(_,r)=>r.json({markets:[
   {id:"ou",name:"Goals Over/Under",type:"ou"},{id:"1x2",name:"1X2",type:"1x2"},
