@@ -1449,7 +1449,9 @@ app.get("/api/admin/reliability-status",requireRole("admin"),async(req,res)=>{
      accountDatabase:{value:databaseReady,detail:databaseError||(!authDbConfigured()?"Database connection is not configured.":"Account database connectivity check.")},
      sofaScore:{value:providers.find(x=>/sofa/i.test(x.name))?.available??Boolean(health.sofascore),detail:"Independent statistics provider availability"},
      understat:{value:providers.find(x=>/understat/i.test(x.name))?.available??Boolean(health.understat),detail:"Independent xG/statistics provider availability"},
-     resultVerification:{value:true,detail:"Result verification module is loaded; individual match verification remains per fixture."},
+     sportmonks:{value:Boolean(process.env.SPORTMONKS_API_TOKEN),detail:process.env.SPORTMONKS_API_TOKEN?"SportMonks credentials are configured.":"SportMonks token is not configured."},
+     goalApi:{value:Boolean(process.env.GOAL_API_KEY),detail:process.env.GOAL_API_KEY?"Goal API credentials are configured.":"Goal API token is not configured."},
+     resultVerification:{value:true,detail:"FotMob/Goal API result-verification module is loaded; individual match verification remains per fixture."},
      bookmakerRelay:{value:Boolean(process.env.BETRELAY_API_KEY),detail:process.env.BETRELAY_API_KEY?"Bookmaker conversion credentials are configured.":"Optional bookmaker conversion is not configured."},
      oddsHistory:{value:true,detail:"Odds history route is available; historical coverage depends on snapshots collected."}
    };
