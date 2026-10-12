@@ -1,4 +1,4 @@
-name: Analyzer reliability checks
+name: Omegaplus reliability and analyzer checks
 
 on:
   pull_request:
@@ -6,22 +6,32 @@ on:
       - "server.js"
       - "independent-stats.js"
       - "analyzer-reliability.js"
-      - "test/analyzer-reliability.test.js"
+      - "reliability-tools.js"
+      - "public/reliability-center.js"
+      - "public/index.html"
+      - "test/**"
       - "package.json"
       - ".github/workflows/analyzer-reliability.yml"
   push:
     branches:
       - feature/general-analyzer-reliability-v1
+      - feature/safe-reliability-upgrades
     paths:
       - "server.js"
       - "independent-stats.js"
       - "analyzer-reliability.js"
-      - "test/analyzer-reliability.test.js"
+      - "reliability-tools.js"
+      - "public/reliability-center.js"
+      - "public/index.html"
+      - "test/**"
       - "package.json"
       - ".github/workflows/analyzer-reliability.yml"
 
+permissions:
+  contents: read
+
 jobs:
-  analyzer-checks:
+  reliability-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +41,6 @@ jobs:
       - run: node --check server.js
       - run: node --check independent-stats.js
       - run: node --check analyzer-reliability.js
+      - run: node --check reliability-tools.js
+      - run: node --check public/reliability-center.js
       - run: npm test
