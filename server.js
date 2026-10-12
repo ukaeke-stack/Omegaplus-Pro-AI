@@ -61,7 +61,7 @@ async function betRelayFetch(pathname,options={}){
     try{res=await fetch(BETRELAY_BASE+pathname,{...options,headers:{Accept:"application/json","Content-Type":"application/json","X-API-Key":BETRELAY_API_KEY,...(options.headers||{})},signal:controller.signal})}
     catch(e){if(e?.name==="AbortError")throw new Error("BetRelay conversion timed out after 12 seconds. Please try again; no booking code was confirmed.");throw new Error("Could not reach BetRelay booking service. Please try again.");}
     const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{}
-    if(!res.ok)throw new Error(body?.message||("BetRelay HTTP "+res.status));
+    if(!res.ok)throw new Error(body?.error||body?.message||("BetRelay HTTP "+res.status));
     if(!body)throw new Error("BetRelay returned an invalid response");
     return body;
   }finally{clearTimeout(timer)}
