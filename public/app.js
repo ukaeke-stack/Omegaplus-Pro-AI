@@ -308,12 +308,31 @@ async function loadBase(){
     setStatus("Daily archive ready for "+prettyDate(state.date)+".");
   }catch(e){state.rows=[];$("#predictionTotal").textContent="—";setStatus("Live SportyBet data is temporarily unavailable.")}
 }
-function predictionReasonsHtml(x){const r=Array.isArray(x.reasons)?x.reasons.map(v=>"<li>"+esc(v)+"</li>").join(""):"<li>Market model ranking.</li>";return '<details class="reason-box"><summary>Why this pick?</summary><ul>'+r+'</ul></details>'}
+function predictionReasonsHtml(x){
+  const reasons=Array.isArray(x.reasons)?x.reasons.filter(Boolean):[];
+  if(!reasons.length){
+    const fallback=[];
+    if(Number.isFinite(Number(x.marketConfidence)))fallback.push("SportyBet market-implied probability: "+Math.round(Number(x.marketConfidence))+"%.");
+    if(x.independentConfidence!==null&&x.independentConfidence!==undefined&&Number.isFinite(Number(x.independentConfidence)))fallback.push("Independent-statistics signal: "+Math.round(Number(x.independentConfidence))+"%.");
+    if(Array.isArray(x.independentSources)&&x.independentSources.length)fallback.push("Independent sources: "+x.independentSources.join(", ")+".");
+    if(Number.isFinite(Number(x.odds)))fallback.push("Displayed SportyBet odds: "+Number(x.odds).toFixed(2)+".");
+    if(!fallback.length)fallback.push("This pick is based on the available SportyBet market data. Independent statistical evidence was not returned for this fixture.");
+    return '<details class="reason-box"><summary>Why this pick?</summary><ul>'+fallback.map(v=>"<li>"+esc(v)+"</li>").join("")+'</ul></details>';
+  }
+  return '<details class="reason-box"><summary>Why this pick?</summary><ul>'+reasons.map(v=>"<li>"+esc(v)+"</li>").join("")+'</ul></details>';
+}
 function renderRows(){
   if(!state.rows.length){$("#matches").innerHTML='<div class="empty">No games matched this date and filter.</div>';return}
   $("#matches").innerHTML=state.rows.map(x=>{
     const selected=state.analyzerSelected.has(x.id);
-    return '<article class="match"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.specifier||"")+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Odds '+esc(x.odds)+'</span><b>'+esc(x.confidenceLabel)+' · Grade '+esc(x.qualityGrade||"—")+'</b></div>'+predictionReasonsHtml(x)+'<button class="select '+(selected?"selected":"")+'" data-id="'+esc(x.id)+'">'+(selected?"Selected for slip":"Select for slip")+'</button></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><div class="bar"><i style="width:'+esc(x.confidence)+'%"></i></div><small>Confidence</small></div></article>';
+    const confidence=Number.isFinite(Number(x.confidence))?Math.max(0,Math.min(100,Number(x.confidence))):null;
+    const confidenceLabel=x.confidenceLabel||(confidence===null?"Unavailable":confidence>=85?"Very High":confidence>=75?"High":confidence>=65?"Good":"Moderate");
+    const grade=x.qualityGrade||(confidence===null?"—":confidence>=92&&x.independentConfidence!=null?"A+":confidence>=86?"A":confidence>=76?"B":confidence>=66?"C":"D");
+    const odds=Number.isFinite(Number(x.odds))?Number(x.odds).toFixed(2):"—";
+    const marketName=String(x.market||"Market unavailable")+(x.specifier?" · "+String(x.specifier):"");
+    const statsSources=Array.isArray(x.independentSources)&&x.independentSources.length?x.independentSources.join(", "):"not available for this fixture";
+    const confidenceMarkup=confidence===null?'<strong>—</strong><small>Confidence unavailable</small>':'<strong>'+esc(confidence.toFixed(0))+'%</strong><div class="bar"><i style="width:'+esc(confidence)+'%"></i></div><small>Model confidence</small>';
+    return '<article class="match"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="market-source">SPORTYBET MARKET · '+esc(statsSources)+'</div><div class="pick"><span>SportyBet market · '+esc(marketName)+'</span><b>'+esc(x.pick||"Selection unavailable")+'</b></div><div class="pick"><span>Current listed odds</span><b>'+esc(odds)+'</b></div><div class="pick"><span>Confidence level</span><b>'+esc(confidenceLabel)+'</b></div><div class="pick"><span>Grade</span><b>'+esc(grade)+'</b></div>'+predictionReasonsHtml(x)+'<button class="select '+(selected?"selected":"")+'" data-id="'+esc(x.id)+'">'+(selected?"Selected for slip":"Select for slip")+'</button></div><div class="prob">'+confidenceMarkup+'</div></article>';
   }).join("");
   $$(".select[data-id]").forEach(b=>b.onclick=()=>{const row=state.rows.find(x=>x.id===b.dataset.id);if(!row)return;if(state.analyzerSelected.has(row.id))state.analyzerSelected.delete(row.id);else state.analyzerSelected.set(row.id,{...row,sport:state.sport});renderRows()});
 }
