@@ -1,4 +1,4 @@
-const state={sport:"football",rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
+const state={sport:"football",rows:[],selected:new Map(),analyzerSelected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
 function readSavedSettings(){try{return {...state.settings,...JSON.parse(localStorage.getItem("omegaplus_settings_v2")||"{}")}}catch{return {...state.settings}}}
 function applySettings(s){
   state.settings={...state.settings,...s};
@@ -36,7 +36,7 @@ async function jsonFetch(url,options={}){
   if(!res.ok){const err=new Error(data?.error||data?.message||("Request failed ("+res.status+")"));err.code=data?.code||"";if((err.code==="AUTH_REQUIRED"||err.code==="PAID_REQUIRED")&&window.omegaAuth)window.omegaAuth.open();throw err}
   return data;
 }
-function setDate(v){state.date=v;state.dates=new Set([v]);$("#fixtureDate").value=v;$("#calendarDate").value=v;$("#selectedDateMetric").textContent=v.slice(5).replace("-","/");renderDateChips();}
+function setDate(v){state.date=v;state.dates=new Set([v]);state.rows=[];state.analyzerSelected.clear();$("#fixtureDate").value=v;$("#calendarDate").value=v;$("#selectedDateMetric").textContent=v.slice(5).replace("-","/");renderDateChips();if($("#matches"))renderRows();}
 function shiftDate(days){const d=new Date(state.date+"T00:00:00");d.setDate(d.getDate()+days);return dateKey(d)}
 function selectedLeagues(){return $("#league")?[...$("#league").selectedOptions].map(o=>o.value):[]}
 function renderDateChips(){
@@ -242,8 +242,8 @@ function renderSelectionOptions(){
   $("#selectionCount").textContent=state.selections.size+" selected";
 }
 function bindMarketDropdowns(){
-  $("#marketOptions").onchange=()=>{state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add(state.sport==="basketball"?"basketball_total":"ou");renderMarketOptions();renderSelectionOptions()};
-  $("#selectionOptions").onchange=()=>{state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const marketId=[...state.markets][0],first=(marketCatalog[marketId]?.options||[])[0];if(first)state.selections.add(selectionValue(marketId,first))}renderSelectionOptions()};
+  $("#marketOptions").onchange=()=>{state.analyzerSelected.clear();state.rows=[];state.markets=new Set([...$("#marketOptions").selectedOptions].map(o=>o.value));if(!state.markets.size)state.markets.add(state.sport==="basketball"?"basketball_total":"ou");renderMarketOptions();renderSelectionOptions();renderRows()};
+  $("#selectionOptions").onchange=()=>{state.analyzerSelected.clear();state.rows=[];state.selections=new Set([...$("#selectionOptions").selectedOptions].map(o=>o.value));if(!state.selections.size){const marketId=[...state.markets][0],first=(marketCatalog[marketId]?.options||[])[0];if(first)state.selections.add(selectionValue(marketId,first))}renderSelectionOptions();renderRows()};
 }
 const leagueUiCache=new Map();
 const LEAGUE_UI_CACHE_MS=30*60*1000;
@@ -312,19 +312,19 @@ function predictionReasonsHtml(x){const r=Array.isArray(x.reasons)?x.reasons.map
 function renderRows(){
   if(!state.rows.length){$("#matches").innerHTML='<div class="empty">No games matched this date and filter.</div>';return}
   $("#matches").innerHTML=state.rows.map(x=>{
-    const selected=state.selected.has(x.id);
-    return '<article class="match"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.specifier||"")+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Odds '+esc(x.odds)+'</span><b>'+esc(x.confidenceLabel)+' · Grade '+esc(x.qualityGrade||"—")+'</b></div>'+predictionReasonsHtml(x)+'<button class="select '+(selected?"selected":"")+'" data-id="'+esc(x.id)+'">'+(selected?"Remove from slip":"Add to slip")+'</button></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><div class="bar"><i style="width:'+esc(x.confidence)+'%"></i></div><small>Confidence</small></div></article>';
+    const selected=state.analyzerSelected.has(x.id);
+    return '<article class="match"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.specifier||"")+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Odds '+esc(x.odds)+'</span><b>'+esc(x.confidenceLabel)+' · Grade '+esc(x.qualityGrade||"—")+'</b></div>'+predictionReasonsHtml(x)+'<button class="select '+(selected?"selected":"")+'" data-id="'+esc(x.id)+'">'+(selected?"Selected for slip":"Select for slip")+'</button></div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><div class="bar"><i style="width:'+esc(x.confidence)+'%"></i></div><small>Confidence</small></div></article>';
   }).join("");
-  $$(".select").forEach(b=>b.onclick=()=>{const row=state.rows.find(x=>x.id===b.dataset.id);if(!row)return;if(state.selected.has(row.id)){state.selected.delete(row.id);b.classList.remove("selected");b.textContent="Add to slip"}else{if(state.selected.size>=50){alert("Maximum 50 selections.");return}state.selected.set(row.id,{...row,sport:state.sport});b.classList.add("selected");b.textContent="Remove from slip"}renderSlip()});
+  $$(".select[data-id]").forEach(b=>b.onclick=()=>{const row=state.rows.find(x=>x.id===b.dataset.id);if(!row)return;if(state.analyzerSelected.has(row.id))state.analyzerSelected.delete(row.id);else state.analyzerSelected.set(row.id,{...row,sport:state.sport});renderRows()});
 }
 function renderSlip(){
   const rows=[...state.selected.values()];$("#slipCount").textContent=rows.length;$("#selectedHome").textContent=rows.length;
-  $("#slip").innerHTML=rows.length?rows.map(x=>'<div class="slipitem"><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><small>'+esc(x.date?prettyDate(x.date):"Date unavailable")+' · '+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</small><button class="slip-remove" data-remove-slip="'+esc(x.id)+'" type="button" aria-label="Remove '+esc(x.home)+' versus '+esc(x.away)+'">Remove</button></div>').join(""):"<p>Select analyzed matches to build your slip. Your slip stays saved when you change dates.</p>";
-  saveSlip();
+  $("#slip").innerHTML=rows.length?rows.map(x=>'<div class="slipitem"><b>'+esc(x.home)+' vs '+esc(x.away)+'</b><small>'+esc(x.date?prettyDate(x.date):"Date unavailable")+' · '+esc(x.pick)+' · '+esc(x.confidence)+'% · @'+esc(x.odds)+'</small><button class="slip-remove" data-remove-slip="'+esc(x.id)+'" type="button" aria-label="Remove '+esc(x.home)+' versus '+esc(x.away)+'">Remove</button></div>').join(""):"<p>Select analyzed matches, then press Hold Slip to save them on this device.</p>";
   $$("#slip [data-remove-slip]").forEach(b=>b.onclick=()=>{state.selected.delete(b.dataset.removeSlip);renderRows();renderSlip()});
-  if($("#slipStatus"))$("#slipStatus").textContent=rows.length?"Saved on this device · "+rows.length+" selection(s)":"Your slip is empty.";
+  if($("#slipStatus"))$("#slipStatus").textContent=rows.length?"Press Hold Slip to save · "+rows.length+" selection(s)":"Your slip is empty.";
 }
 async function analyze(){
+  state.analyzerSelected.clear();state.rows=[];renderRows();
   const leagues=selectedLeagues(),marketTypes=[...state.markets],selections=[...state.selections],maxGames=Math.max(1,Math.min(50,Number($("#gameLimit").value)||20)),minConfidence=Math.max(0,Math.min(100,Number(state.settings.minConfidence)||0)),dates=[...state.dates].sort();
   $("#analyze").disabled=true;setStatus("Analyzing "+dates.length+" selected date(s)...");
   try{
@@ -425,7 +425,7 @@ async function loadCorrectScores(date=$("#csDate")?.value||state.date){
 }
 async function loadBookmakers(){try{const d=await (await fetch("/api/bookmakers")).json();$("#bookmaker").innerHTML=(d.bookmakers||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+(x.codeGeneration?"":" — setup required")+'</option>').join("");$("#bookmakerStatus").textContent=d.configured?"Multi-bookmaker code generation ready.":"SportyBet is live now. Other bookmaker codes require BETRELAY_API_KEY."}catch{$("#bookmakerStatus").textContent="Unable to load bookmaker services."}}
 async function booking(){const rows=[...state.selected.values()];if(!rows.length)return alert("Select at least one analyzed match first.");const bookmaker=$("#bookmaker").value||"sportybet";$("#booking").disabled=true;$("#booking").textContent="Generating…";try{const d=await (await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:state.sport,bookmaker,selections:rows.map(x=>({eventId:x.eventId,home:x.home,away:x.away,pick:x.pick,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId}))})})).json();if(!d.ok)throw new Error(d.error||"Booking code unavailable.");$("#bookingCode").textContent=d.bookingCode;$("#bookingTarget").textContent=(d.target||bookmaker)+" code";$("#bookingSource").textContent=d.source||"";$("#bookingUnavailable").innerHTML="";$("#bookingResult").hidden=false;$("#copyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(d.bookingCode);$("#copyBooking").textContent="Copied";setTimeout(()=>$("#copyBooking").textContent="Copy code",1500)}catch{alert("Booking code: "+d.bookingCode)}}}catch(e){alert(e.message||"Booking code unavailable.")}finally{$("#booking").disabled=false;$("#booking").textContent="Generate booking code"}}
-function resetFilters(){const defaults=state.sport==="basketball"?["basketball_total"]:state.sport==="tennis"?["tennis_moneyline"]:state.sport==="ice_hockey"?["hockey_moneyline"]:state.sport==="baseball"?["baseball_moneyline"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":state.sport==="tennis"?"Player 1":state.sport==="ice_hockey"||state.sport==="baseball"?"Home":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set();$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();renderSlip();setStatus("Filters reset. Your prediction slip has been kept. Choose your options and Analyze.")}
+function resetFilters(){state.analyzerSelected.clear();state.rows=[];const defaults=state.sport==="basketball"?["basketball_total"]:state.sport==="tennis"?["tennis_moneyline"]:state.sport==="ice_hockey"?["hockey_moneyline"]:state.sport==="baseball"?["baseball_moneyline"]:["ou"];const first=state.sport==="basketball"?"Over 150.5":state.sport==="tennis"?"Player 1":state.sport==="ice_hockey"||state.sport==="baseball"?"Home":"Over 1.5";state.markets=new Set(defaults);state.selections=new Set();$("#gameLimit").value=20;$("#league").selectedIndex=-1;renderMarketOptions();renderSelectionOptions();renderRows();renderSlip();setStatus("Filters reset. Analyzer selections cleared; your prediction slip has been kept. Choose your options and Analyze.")}
 function showPage(n){
   $$(".page").forEach(p=>p.classList.remove("active-page"));$("#page-"+n)?.classList.add("active-page");
   document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===n));closeSide();scrollTo({top:0,behavior:"smooth"});
@@ -439,7 +439,7 @@ $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$(
 $$("[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 $("#snapToggle").onclick=()=>{$("#snapBody").classList.toggle("open");$("#snapArrow").textContent=$("#snapBody").classList.contains("open")?"⌃":"⌄"};
 $("#fixtureFile").onchange=e=>$("#fileName").textContent=e.target.files[0]?"Selected: "+e.target.files[0].name:"";
-$("#sportSelect").onchange=async e=>{saveSlip();state.sport=e.target.value||"football";restoreSlip();const defaults=state.sport==="basketball"?["basketball_total"]:state.sport==="tennis"?["tennis_moneyline"]:state.sport==="ice_hockey"?["hockey_moneyline"]:state.sport==="baseball"?["baseball_moneyline"]:["ou"];state.markets=new Set(defaults);state.selections=new Set();marketCatalog=allMarketCatalog;renderMarketOptions();renderSelectionOptions();renderRows();renderSlip();$("#league").innerHTML="";await Promise.all([loadLeagues(),loadBase()]);if($("#page-predictions")?.classList.contains("active-page"))loadDailyBest();};
+$("#sportSelect").onchange=async e=>{state.analyzerSelected.clear();state.rows=[];state.sport=e.target.value||"football";restoreSlip();const defaults=state.sport==="basketball"?["basketball_total"]:state.sport==="tennis"?["tennis_moneyline"]:state.sport==="ice_hockey"?["hockey_moneyline"]:state.sport==="baseball"?["baseball_moneyline"]:["ou"];state.markets=new Set(defaults);state.selections=new Set();marketCatalog=allMarketCatalog;renderMarketOptions();renderSelectionOptions();renderRows();renderSlip();$("#league").innerHTML="";await Promise.all([loadLeagues(),loadBase()]);if($("#page-predictions")?.classList.contains("active-page"))loadDailyBest();};
 $("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";await Promise.all([loadLeagues(),loadBase()])};
 $("#prevDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(-1);$("#fixtureDate").dispatchEvent(new Event("change"))};
 $("#nextDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(1);$("#fixtureDate").dispatchEvent(new Event("change"))};
@@ -447,15 +447,19 @@ $("#todayDate").onclick=async()=>{setDate(dateKey(new Date()));$("#fixtureDate")
 $("#league").onchange=()=>$("#leagueCount").textContent=(selectedLeagues().length?selectedLeagues().length+" selected":"All leagues");
 $("#analyze").onclick=analyze;$("#resetFilters").onclick=resetFilters;$("#booking").onclick=booking;
 $("#selectAll").onclick=()=>{
-  for(const row of state.rows){if(state.selected.size>=50)break;if(!state.selected.has(row.id))state.selected.set(row.id,{...row,sport:state.sport})}
-  renderRows();renderSlip();
+  for(const row of state.rows)state.analyzerSelected.set(row.id,{...row,sport:state.sport});
+  renderRows();
 };
 $("#clearAll").onclick=()=>{
-  state.rows.forEach(row=>state.selected.delete(row.id));
-  renderRows();renderSlip();
+  state.analyzerSelected.clear();
+  renderRows();
 };
-$("#holdSlip").onclick=()=>{const ok=saveSlip();if($("#slipStatus"))$("#slipStatus").textContent=ok?"Slip held and saved on this device · "+state.selected.size+" selection(s)":"Could not save the slip on this device.";};
-$("#clearSlip").onclick=()=>{if(!state.selected.size)return;if(!confirm("Clear every selection currently held in your prediction slip?"))return;state.selected.clear();renderRows();renderSlip();$("#bookingResult").hidden=true;};
+$("#holdSlip").onclick=()=>{
+  let added=0;for(const row of state.analyzerSelected.values()){if(state.selected.has(row.id))continue;if(state.selected.size>=50)break;state.selected.set(row.id,{...row,sport:state.sport});added++}
+  state.analyzerSelected.clear();renderRows();renderSlip();
+  const ok=saveSlip();if($("#slipStatus"))$("#slipStatus").textContent=ok?"Slip held and saved on this device · "+state.selected.size+" selection(s)"+(added?" · "+added+" added":""):"Could not save the slip on this device.";
+};
+$("#clearSlip").onclick=()=>{state.selected.clear();state.analyzerSelected.clear();try{localStorage.removeItem(slipStorageKey())}catch{};renderRows();renderSlip();$("#bookingResult").hidden=true;if($("#slipStatus"))$("#slipStatus").textContent="Prediction slip cleared.";};
 $("#sporty").onclick=()=>window.open("https://www.sportybet.com/ng/","_blank");
 $("#calendarDate").onchange=loadCalendar;$("#calPrev").onclick=()=>{$("#calendarDate").value=shiftDate(-1);loadCalendar()};$("#calNext").onclick=()=>{$("#calendarDate").value=shiftDate(1);loadCalendar()};$("#calToday").onclick=()=>{$("#calendarDate").value=dateKey(new Date());loadCalendar()};$("#calLoad").onclick=loadCalendar;
 $("#historyDate").onchange=()=>refreshHistory($("#historyDate").value);$("#csLoad").onclick=()=>loadCorrectScores($("#csDate").value);$("#csToday").onclick=()=>{$("#csDate").value=dateKey(new Date());loadCorrectScores($("#csDate").value)};$("#csPrev").onclick=()=>{const d=new Date($("#csDate").value+"T00:00:00");d.setDate(d.getDate()-1);$("#csDate").value=dateKey(d);loadCorrectScores($("#csDate").value)};$("#csNext").onclick=()=>{const d=new Date($("#csDate").value+"T00:00:00");d.setDate(d.getDate()+1);$("#csDate").value=dateKey(d);loadCorrectScores($("#csDate").value)};
@@ -470,7 +474,7 @@ function resetDailyState(){
   const today=dateKey(new Date());
   if(today===appDay)return;
   appDay=today;
-  state.date=today;state.dates=new Set([today]);state.rows=[];
+  state.date=today;state.dates=new Set([today]);state.rows=[];state.analyzerSelected.clear();
   $("#fixtureDate").value=today;$("#calendarDate").value=today;$("#selectedDateMetric").textContent=today.slice(5).replace("-","/");
   renderDateChips();renderRows();renderSlip();
   loadLeagues();loadBase();
@@ -478,7 +482,7 @@ function resetDailyState(){
 }
 function prepareDailyPage(){
   const today=dateKey(new Date());
-  if(state.date!==today){appDay=today;state.date=today;state.dates=new Set([today]);state.rows=[];$("#fixtureDate").value=today;$("#calendarDate").value=today;$("#selectedDateMetric").textContent=today.slice(5).replace("-","/");renderDateChips();renderRows();renderSlip();loadLeagues();loadBase()}
+  if(state.date!==today){appDay=today;state.date=today;state.dates=new Set([today]);state.rows=[];state.analyzerSelected.clear();$("#fixtureDate").value=today;$("#calendarDate").value=today;$("#selectedDateMetric").textContent=today.slice(5).replace("-","/");renderDateChips();renderRows();renderSlip();loadLeagues();loadBase()}
   loadDailyBest();
 }
 window.renderHistory=renderHistory;
