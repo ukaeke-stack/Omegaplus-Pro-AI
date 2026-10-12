@@ -10,6 +10,7 @@ import {rankByReliability} from "./analyzer-reliability.js";
 import {analyzeCorrectScores} from "./correct-score.js";
 import {createTicket,listUserTickets,getOrCreateChat,listChatMessages,addChatMessage,adminTickets,updateTicket,adminThreads,adminMessages,adminAddMessage,setThreadStatus,initSupportDb} from "./support.js";
 import {smartPickRank,buildBetBuilder,performanceFromArchives,buildMatchReport,oddsMovement,extractOddsSnapshot} from "./advanced-features.js";
+import {reconcileFixtures,providerSummary} from "./reliability-tools.js";
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -1436,6 +1437,35 @@ app.get("/api/intelligence-status",async(req,res)=>{
    const health=await independentHealth();
    res.json({ok:true,providers:{sofascore:!!health.sofascore,understat:!!health.understat,oddsHistory:true,lineups:"Sofascore event lineups when published",injuries:"Sofascore team injury feed when available"},note:"Lineups and injuries are availability-dependent and are never invented."});
  }catch(e){res.status(200).json({ok:false,providers:{sofascore:false,understat:false,oddsHistory:true},error:e.message})}
+});
+app.get("/api/admin/reliability-status",requireRole("admin"),async(req,res)=>{
+ try{
+   let health={},healthError=null;
+   try{health=await independentHealth()}catch(e){healthError=String(e?.message||e).slice(0,240)}
+   let databaseReady=false,databaseError=null;
+   try{databaseReady=Boolean(authDbConfigured()&&await dbReady())}catch(e){databaseError=String(e?.message||e).slice(0,180)}
+   const providers=providerSummary(health);
+   const checks={
+     accountDatabase:{value:databaseReady,detail:databaseError||(!authDbConfigured()?"Database connection is not configured.":"Account database connectivity check.")},
+     sofaScore:{value:providers.find(x=>/sofa/i.test(x.name))?.available??Boolean(health.sofascore),detail:"Independent statistics provider availability"},
+     understat:{value:providers.find(x=>/understat/i.test(x.name))?.available??Boolean(health.understat),detail:"Independent xG/statistics provider availability"},
+     resultVerification:{value:true,detail:"Result verification module is loaded; individual match verification remains per fixture."},
+     bookmakerRelay:{value:Boolean(process.env.BETRELAY_API_KEY),detail:process.env.BETRELAY_API_KEY?"Bookmaker conversion credentials are configured.":"Optional bookmaker conversion is not configured."},
+     oddsHistory:{value:true,detail:"Odds history route is available; historical coverage depends on snapshots collected."}
+   };
+   const ok=Object.values(checks).every(x=>x.value);
+   await audit(req,"admin.reliability.check",null,{ok,checks:Object.fromEntries(Object.entries(checks).map(([k,v])=>[k,v.value]))});
+   res.status(200).json({ok,generatedAt:new Date().toISOString(),checks,providerHealthError:healthError});
+ }catch(e){res.status(200).json({ok:false,error:String(e?.message||e).slice(0,240),checks:{}})}
+});
+app.post("/api/admin/reconcile-fixtures",requireRole("admin"),async(req,res)=>{
+ try{
+   const fixtures=Array.isArray(req.body?.fixtures)?req.body.fixtures:[];
+   if(fixtures.length>1000)return res.status(413).json({error:"Maximum 1000 fixtures per check."});
+   const result=reconcileFixtures(fixtures);
+   await audit(req,"admin.fixtures.reconcile",null,{checked:result.checked,issueCount:result.issueCount});
+   res.json(result);
+ }catch(e){res.status(400).json({error:String(e?.message||e).slice(0,240)})}
 });
 app.get("/{*splat}",(_,r)=>r.sendFile(path.join(__dirname,"public","index.html")));
 
