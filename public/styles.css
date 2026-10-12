@@ -117,3 +117,12 @@ main,.page,.active-page{min-width:0;max-width:100%}
 }
 
 .daily-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:12px 0 16px;padding:12px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(24,231,107,.09),rgba(255,255,255,.025))}.daily-combo{font-size:13px;color:var(--muted);margin-left:auto}.daily-combo b{color:var(--green);font-size:16px}.daily-selected-combo{width:100%;color:var(--muted);font-size:12px}.daily-actions button{min-height:40px}
+
+
+/* Analyzer evidence visibility and cache-refresh release */
+.market-source{display:inline-flex;align-items:center;gap:6px;margin:8px 0 4px;padding:5px 8px;border:1px solid rgba(24,231,107,.28);border-radius:999px;background:rgba(24,231,107,.08);color:#8bf3b0;font-size:10px;font-weight:800;letter-spacing:.45px;overflow-wrap:anywhere}
+.reason-box{margin:10px 0;padding:10px 12px;border:1px solid rgba(24,231,107,.22);border-radius:11px;background:rgba(24,231,107,.045);color:var(--text)}
+.reason-box summary{cursor:pointer;font-weight:800;color:#8bf3b0;font-size:12px}
+.reason-box ul{margin:9px 0 2px;padding-left:19px;color:#c8d6ce;font-size:12px;line-height:1.55}
+.reason-box li+li{margin-top:5px}
+@media(max-width:600px){.market-source{font-size:9px;white-space:normal}.reason-box{padding:9px 10px}}
