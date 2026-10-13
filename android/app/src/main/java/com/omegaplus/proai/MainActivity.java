@@ -18,8 +18,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
-import android.os.Handler;
-import android.os.Looper;
 
 public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
@@ -32,6 +30,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileChooserCallback;
     private WebView webView;
     private long lastBackPressTime = 0L;
+    private boolean notificationPromptVisible = false;
 
     public class AppBridge {
         @JavascriptInterface public String getVersionName() {
@@ -156,7 +155,7 @@ public class MainActivity extends Activity {
             return;
         }
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        if (prefs.getBoolean(PREF_NOTIFICATION_PROMPTED, false)) {
+        if (prefs.getBoolean(PREF_NOTIFICATION_PROMPTED, false) || notificationPromptVisible) {
             return;
         }
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -165,6 +164,7 @@ public class MainActivity extends Activity {
             return;
         }
 
+        notificationPromptVisible = true;
         new AlertDialog.Builder(this)
                 .setTitle("Enable notifications?")
                 .setMessage("Allow Omegaplus Pro AI to send notifications? You can choose Not now and change this later in your phone's app settings.")
@@ -178,6 +178,7 @@ public class MainActivity extends Activity {
                         prefs.edit().putBoolean(PREF_NOTIFICATION_PROMPTED, true).apply())
                 .setOnCancelListener(dialog ->
                         prefs.edit().putBoolean(PREF_NOTIFICATION_PROMPTED, true).apply())
+                .setOnDismissListener(dialog -> notificationPromptVisible = false)
                 .show();
     }
 
