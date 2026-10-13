@@ -6,12 +6,19 @@ import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
 import android.content.Intent;
 import android.net.Uri;
 import android.content.pm.PackageInfo;
+import android.provider.MediaStore;
 
 public class MainActivity extends Activity {
+    private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
+    private ValueCallback<Uri[]> fileChooserCallback;
+    private WebView webView;
+
     public class AppBridge {
         @JavascriptInterface public String getVersionName() {
             try {
@@ -36,9 +43,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface public void openPlayStore() {
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id="+getPackageName())));
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName())));
             } catch (Exception e) {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id="+getPackageName())));
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + getPackageName())));
             }
         }
     }
@@ -47,22 +54,78 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        WebView web = new WebView(this);
-        web.setWebViewClient(new WebViewClient());
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setAllowFileAccess(false);
-        s.setSupportZoom(false);
-        web.addJavascriptInterface(new AppBridge(), "AndroidApp");
-        web.loadUrl(APP_URL);
-        setContentView(web);
+        webView = new WebView(this);
+        webView.setWebViewClient(new WebViewClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                              FileChooserParams fileChooserParams) {
+                if (fileChooserCallback != null) {
+                    fileChooserCallback.onReceiveValue(null);
+                }
+                fileChooserCallback = callback;
+
+                try {
+                    Intent pickImage = new Intent(Intent.ACTION_GET_CONTENT);
+                    pickImage.addCategory(Intent.CATEGORY_OPENABLE);
+                    pickImage.setType("image/*");
+                    pickImage.putExtra(Intent.EXTRA_MIME_TYPES,
+                            new String[]{"image/png", "image/jpeg", "image/webp"});
+                    Intent chooser = Intent.createChooser(pickImage, "Select fixture screenshot");
+                    startActivityForResult(chooser, FILE_CHOOSER_REQUEST_CODE);
+                    return true;
+                } catch (Exception e) {
+                    fileChooserCallback = null;
+                    callback.onReceiveValue(null);
+                    return false;
+                }
+            }
+        });
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setSupportZoom(false);
+        webView.addJavascriptInterface(new AppBridge(), "AndroidApp");
+        webView.loadUrl(APP_URL);
+        setContentView(webView);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            if (fileChooserCallback != null) {
+                Uri[] results = null;
+                if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                    results = new Uri[]{data.getData()};
+                }
+                fileChooserCallback.onReceiveValue(results);
+                fileChooserCallback = null;
+            }
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(null);
+            fileChooserCallback = null;
+        }
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
     }
 
     @Override public void onBackPressed() {
-        WebView web = (WebView) findViewById(android.R.id.content);
-        if (web != null && web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 }
