@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android v1.6.0
+    name: Build Android release
     runs-on: ubuntu-latest
 
     steps:
@@ -70,7 +70,7 @@ jobs:
       - name: Upload Android release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-v1.6.0-android-release
+          name: Omegaplus-Pro-AI-android-release
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
@@ -78,19 +78,20 @@ jobs:
           retention-days: 30
 
       - name: Publish release assets
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          TAG="android-v1.6.0"
+          VERSION_NAME=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -n 1)
+          test -n "$VERSION_NAME" || { echo "Unable to read Android versionName"; exit 1; }
+          TAG="android-v${VERSION_NAME}"
           APK="android/app/build/outputs/apk/release/app-release.apk"
           AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG"               --title "Omegaplus Pro AI Android v1.6.0"               --notes "Signed production Android build for Google Play release."
+            gh release create "$TAG" --title "Omegaplus Pro AI Android v${VERSION_NAME}" --notes "Signed Android release with native WebView image picker support."
           fi
 
-          gh release upload "$TAG" "$APK" --clobber
-          gh release upload "$TAG" "$AAB" --clobber
-
+          gh release upload "$TAG" "$APK" "$AAB" --clobber
           echo "Signed APK and AAB published successfully."
