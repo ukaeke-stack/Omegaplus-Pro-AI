@@ -3,6 +3,8 @@ package com.omegaplus.proai;
 import android.app.Activity;
 import android.os.Build;
 import android.os.Bundle;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
@@ -12,6 +14,9 @@ import android.net.Uri;
 import android.content.pm.PackageInfo;
 
 public class MainActivity extends Activity {
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 4201;
+    private WebView webView;
+
     public class AppBridge {
         @JavascriptInterface public String getVersionName() {
             try {
@@ -36,9 +41,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface public void openPlayStore() {
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id="+getPackageName())));
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName())));
             } catch (Exception e) {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id="+getPackageName())));
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + getPackageName())));
             }
         }
     }
@@ -47,22 +52,34 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        WebView web = new WebView(this);
-        web.setWebViewClient(new WebViewClient());
-        WebSettings s = web.getSettings();
+        webView = new WebView(this);
+        webView.setWebViewClient(new WebViewClient());
+        WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(false);
         s.setSupportZoom(false);
-        web.addJavascriptInterface(new AppBridge(), "AndroidApp");
-        web.loadUrl(APP_URL);
-        setContentView(web);
+        webView.addJavascriptInterface(new AppBridge(), "AndroidApp");
+        setContentView(webView);
+        webView.loadUrl(APP_URL);
+        requestNotificationPermissionIfNeeded();
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        android.content.SharedPreferences prefs = getSharedPreferences("omegaplus_notifications", MODE_PRIVATE);
+        if (prefs.getBoolean("permission_prompted", false)) return;
+        prefs.edit().putBoolean("permission_prompted", true).apply();
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
     }
 
     @Override public void onBackPressed() {
-        WebView web = (WebView) findViewById(android.R.id.content);
-        if (web != null && web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 }
