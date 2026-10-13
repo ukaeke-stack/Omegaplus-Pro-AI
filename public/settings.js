@@ -1,5 +1,5 @@
 (()=> {
-  const APP_VERSION="1.6.0";
+  const APP_VERSION=(()=>{try{return window.AndroidApp?.getVersionName?.()||"1.6.2"}catch{return "1.6.2"}})();
   const APP_ID="com.omegaplus.proai";
   const nativeVersionCode=()=>{try{return Number(window.AndroidApp?.getVersionCode?.()||0)}catch{return 0}};
   const KEY="omegaplus_settings_v2";
@@ -57,7 +57,12 @@
       </div>
       <div class="settings-section">
         <strong>Notifications</strong>
-        <label class="settings-check"><input id="setNotifications" type="checkbox"> Enable prediction/update notifications</label>
+        <label class="settings-check"><input id="setNotifications" type="checkbox"> Enable notifications on this device</label>
+        <label class="settings-check"><input id="setNotifyDailyBest" type="checkbox"> Daily Best available</label>
+        <label class="settings-check"><input id="setNotifyPremium" type="checkbox"> Premium predictions (eligible subscribers)</label>
+        <label class="settings-check"><input id="setNotifyMatchStart" type="checkbox"> Match starting soon</label>
+        <label class="settings-check"><input id="setNotifyResults" type="checkbox"> Prediction results (won, lost, or void)</label>
+        <small id="notificationStatus">Choose which alerts you want. Remote alerts require notification service configuration.</small>
       </div>
       <div class="settings-section">
         <strong>App Updates</strong>
@@ -79,11 +84,20 @@
     </section>`;
   document.body.appendChild(modal);
 
+  const NOTIFY_KEY="omegaplus_notification_preferences_v1";
+  const notifyDefaults={enabled:false,dailyBest:false,premiumPredictions:false,matchStartingSoon:false,predictionResults:false};
+  const getNotify=()=>{try{return {...notifyDefaults,...JSON.parse(localStorage.getItem(NOTIFY_KEY)||"{}")}}catch{return {...notifyDefaults}}};
   function fill(){
     const s=get();
+    const n=getNotify();
+    $("#setNotifyDailyBest").checked=!!n.dailyBest;
+    $("#setNotifyPremium").checked=!!n.premiumPredictions;
+    $("#setNotifyMatchStart").checked=!!n.matchStartingSoon;
+    $("#setNotifyResults").checked=!!n.predictionResults;
+    ["#setNotifyDailyBest","#setNotifyPremium","#setNotifyMatchStart","#setNotifyResults"].forEach(sel=>{$(sel).disabled=!n.enabled});
     $("#setGames").value=s.games; $("#setConfidence").value=s.minConfidence; $("#setMarket").value=s.defaultMarket;
     $("#setSelection").value=s.defaultSelection; $("#setRisk").value=s.riskProfile; $("#setOddsMin").value=s.oddsMin; $("#setOddsMax").value=s.oddsMax;
-    $("#setShowConfidence").checked=!!s.showConfidence; $("#setAutoRefresh").checked=!!s.autoRefresh; $("#setNotifications").checked=!!s.notifications;
+    $("#setShowConfidence").checked=!!s.showConfidence; $("#setAutoRefresh").checked=!!s.autoRefresh; $("#setNotifications").checked=!!getNotify().enabled;
   }
   function read(){
     return {
@@ -98,8 +112,28 @@
   function closeSettings(){modal.classList.remove("open")}
   $("#settingsClose").onclick=closeSettings;
   modal.addEventListener("click",e=>{if(e.target===modal)closeSettings()});
-  $("#saveSettings").onclick=()=>{
+  async function registerDeviceToken(){
+    const token=localStorage.getItem("omegaplus_fcm_token");
+    if(!token||!getNotify().enabled)return;
+    try{
+      const r=await fetch("/api/notifications/device",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});
+      const d=await r.json();
+      $("#notificationStatus").textContent=d.ok?(d.configured?"This device is registered for notifications.":"Device registered; push service setup is still required."):(d.error||"Sign in to register this device for notifications.");
+    }catch{$("#notificationStatus").textContent="Could not register this device. Check your connection."}
+  }
+  window.onOmegaplusPushToken=token=>{if(!token)return;localStorage.setItem("omegaplus_fcm_token",String(token));registerDeviceToken()};
+  $("#setNotifications").addEventListener("change",e=>{["#setNotifyDailyBest","#setNotifyPremium","#setNotifyMatchStart","#setNotifyResults"].forEach(sel=>{$(sel).disabled=!e.target.checked})});
+  $("#saveSettings").onclick=async()=>{
     const s=read(); save(s);
+    const n={enabled:$("#setNotifications").checked,dailyBest:$("#setNotifyDailyBest").checked,premiumPredictions:$("#setNotifyPremium").checked,matchStartingSoon:$("#setNotifyMatchStart").checked,predictionResults:$("#setNotifyResults").checked};
+    localStorage.setItem(NOTIFY_KEY,JSON.stringify(n));
+    ["#setNotifyDailyBest","#setNotifyPremium","#setNotifyMatchStart","#setNotifyResults"].forEach(sel=>{$(sel).disabled=!n.enabled});
+    try{
+      const pr=await fetch("/api/notifications/preferences",{method:"PUT",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(n)});
+      const pd=await pr.json();
+      $("#notificationStatus").textContent=pd.ok?(pd.configured?"Notification preferences saved to your account.":"Preferences saved; remote delivery still needs service configuration."):(pd.error||"Sign in to sync preferences.");
+    }catch{$("#notificationStatus").textContent="Preferences saved on this device, but server sync failed."}
+    await registerDeviceToken();
     localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());
     if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(s);
     $("#settingsSaveStatus").textContent="Settings saved successfully.";
