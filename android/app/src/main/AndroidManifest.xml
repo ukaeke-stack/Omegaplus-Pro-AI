@@ -1,7 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:theme="@style/AppTheme" android:label="Omegaplus Pro AI" android:usesCleartextTraffic="false" android:icon="@drawable/ic_launcher">
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:theme="@style/AppTheme"
+        android:label="Omegaplus Pro AI"
+        android:usesCleartextTraffic="false"
+        android:icon="@drawable/ic_launcher">
+        <service android:name=".OmegaMessagingService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <activity
+            android:name=".MainActivity"
+            android:screenOrientation="portrait"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
