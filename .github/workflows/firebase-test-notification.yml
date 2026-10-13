@@ -1,0 +1,78 @@
+name: Send Firebase test notification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send-test-notification:
+    name: Send one test notification to the registered device
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install notification client dependencies
+        run: python -m pip install --disable-pip-version-check google-auth requests
+
+      - name: Send Firebase Cloud Messaging test
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FCM_TEST_DEVICE_TOKEN: ${{ secrets.FCM_TEST_DEVICE_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          raw = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+          device_token = os.environ.get("FCM_TEST_DEVICE_TOKEN", "").strip()
+          if not raw:
+              sys.exit("Missing FIREBASE_SERVICE_ACCOUNT_JSON repository secret.")
+          if not device_token:
+              sys.exit("Missing FCM_TEST_DEVICE_TOKEN repository secret.")
+          try:
+              service_info = json.loads(raw)
+          except json.JSONDecodeError:
+              sys.exit("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.")
+          project_id = service_info.get("project_id")
+          if not project_id:
+              sys.exit("The Firebase service-account JSON has no project_id.")
+          credentials = service_account.Credentials.from_service_account_info(
+              service_info,
+              scopes=["https://www.googleapis.com/auth/firebase.messaging"],
+          )
+          credentials.refresh(Request())
+          endpoint = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
+          payload = {
+              "message": {
+                  "token": device_token,
+                  "notification": {
+                      "title": "Omegaplus Pro AI test notification",
+                      "body": "Firebase notifications are working on this device.",
+                  },
+                  "android": {"priority": "HIGH"},
+              }
+          }
+          response = requests.post(
+              endpoint,
+              headers={"Authorization": f"Bearer {credentials.token}"},
+              json=payload,
+              timeout=30,
+          )
+          if not response.ok:
+              print(f"Firebase returned HTTP {response.status_code}.")
+              print(response.text[:2000])
+              response.raise_for_status()
+          print("Firebase accepted the test notification.")
+          print("Message name:", response.json().get("name", "(not returned)"))
+          PY
