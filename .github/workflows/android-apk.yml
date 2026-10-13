@@ -79,11 +79,16 @@ jobs:
           retention-days: 30
 
       - name: Publish release assets
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/fix/android-gallery-picker-v161'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+          CURRENT_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/fix/android-gallery-picker-v161" --jq '.object.sha')
+          if [ "$CURRENT_SHA" != "$GITHUB_SHA" ]; then
+            echo "Skipping release publication for superseded branch commit $GITHUB_SHA."
+            exit 0
+          fi
           VERSION_NAME=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -n 1)
           test -n "$VERSION_NAME" || { echo "Unable to read Android versionName"; exit 1; }
           TAG="android-v${VERSION_NAME}"
