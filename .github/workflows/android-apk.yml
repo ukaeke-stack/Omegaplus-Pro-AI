@@ -19,6 +19,16 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Validate server-side JavaScript syntax
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check notification and app syntax
+        run: |
+          node --check server.js
+          node --check notifications.js
+          node --check public/auth-ui.js
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
