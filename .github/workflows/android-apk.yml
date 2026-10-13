@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/android-gallery-picker-v161
   workflow_dispatch:
 
 permissions:
