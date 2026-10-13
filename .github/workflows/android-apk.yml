@@ -97,7 +97,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          VERSION_NAME=$(sed -n "s/.*versionName '\\([^']*\\)'.*/\\1/p" android/app/build.gradle | head -n 1)
+          VERSION_NAME=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -n 1)
           test -n "$VERSION_NAME" || { echo "Unable to read Android versionName"; exit 1; }
           TAG="android-v${VERSION_NAME}"
           APK="android/app/build/outputs/apk/release/app-release.apk"
