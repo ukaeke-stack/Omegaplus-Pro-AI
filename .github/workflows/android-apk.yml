@@ -84,7 +84,7 @@ jobs:
       - name: Upload Android release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-${{ github.ref_name }}-android-release
+          name: Omegaplus-Pro-AI-v1.6.3-android-release
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
