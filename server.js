@@ -14,6 +14,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
+import {initPushNotifications,registerPushDevice,getPushPreferences,savePushPreferences,sendPushCategory,pushConfigured} from "./push-notifications.js";
 
 async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
 const app=express();
@@ -62,7 +63,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
-initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
+initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initPushNotifications()}).then(ok=>console.log("Notification database:",ok?"ready":"not configured/unavailable")).then(()=>initSupportDb()).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
@@ -619,6 +620,50 @@ app.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
+
+app.get("/api/notifications/status",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:true,configured:pushConfigured(),signedIn:Boolean(user),preferences:user?await getPushPreferences(user.id):null})}catch(e){r.status(503).json({ok:false,configured:pushConfigured(),error:e.message})}});
+app.get("/api/notifications/preferences",requireAuth,async(req,r)=>{try{r.json({ok:true,preferences:await getPushPreferences(req.user.id)})}catch(e){r.status(503).json({ok:false,error:e.message})}});
+app.put("/api/notifications/preferences",requireAuth,async(req,r)=>{try{const preferences=await savePushPreferences(req.user.id,req.body||{});r.json({ok:true,preferences,configured:pushConfigured()})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/notifications/device",requireAuth,async(req,r)=>{try{const result=await registerPushDevice(req.user.id,req.body?.token);r.status(201).json({ok:true,...result})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/notifications/dispatch",async(req,r)=>{
+  if(!process.env.CRON_SECRET||req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});
+  const report={configured:pushConfigured(),date:localDayKey(Date.now()),dailyBest:null,matchStartingSoon:[],predictionResults:[]};
+  if(!pushConfigured())return r.json({ok:true,report,message:"Add FCM_SERVICE_ACCOUNT_JSON to activate remote delivery."});
+  try{
+    const now=Date.now(),date=report.date,hour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Africa/Lagos",hour:"2-digit",hourCycle:"h23"}).format(new Date(now)));
+    if(hour>=8){
+      const daily=await buildDailyBest(date,"football");
+      if(Array.isArray(daily.predictions)&&daily.predictions.length){
+        report.dailyBest=await sendPushCategory({category:"dailyBest",eventKey:"daily-best:"+date,title:"Daily Best is available",body:"Today's qualified Daily Best picks are ready. Open Omegaplus Pro AI to view them.",data:{url:"/"}});
+        report.premiumPredictions=await sendPushCategory({category:"premiumPredictions",premiumOnly:true,eventKey:"premium-predictions:"+date,title:"Premium predictions updated",body:"Today's premium prediction selections are ready to review.",data:{url:"/"}});
+      }else report.dailyBest={sent:0,reason:"No qualifying Daily Best set was published."};
+    }
+    for(const sport of ["football","basketball"]){
+      try{
+        const fixtures=(await getDayFixtures(date,false,sport)).fixtures||[];
+        for(const f of fixtures){
+          const start=Number(f.startTimeMs||0),until=start-now;if(!f.eventId||until<0||until>20*60*1000)continue;
+          report.matchStartingSoon.push({eventId:String(f.eventId),sport,...await sendPushCategory({category:"matchStartingSoon",eventKey:"match-start:"+sport+":"+f.eventId,title:"Match starting soon",body:String((f.home||"Home")+" vs "+(f.away||"Away")+" starts in about "+Math.max(1,Math.round(until/60000))+" minutes."),data:{eventId:String(f.eventId),sport,url:"/"}})});
+        }
+      }catch(e){report.matchStartingSoon.push({sport,error:e.message})}
+      for(const archiveDate of [date,localDayKey(now-86400000)]){
+        try{
+          const archive=await readPersistentArchive(archiveDate,sport);if(!archive)continue;
+          const rr=await getVerifiedResults(archiveDate,false,sport),resultRows=Array.isArray(rr.results)?rr.results:[];
+          const candidates=[...(Array.isArray(archive.predictions)?archive.predictions:[]),...(Array.isArray(archive.dailyBestPredictions)?archive.dailyBestPredictions:[]),...(Array.isArray(archive.correctScores)?archive.correctScores:[])],seen=new Set();
+          for(const p of candidates){
+            const result=matchArchiveResult(p,resultRows,archiveDate);if(!result)continue;
+            const outcome=serverSettlePrediction(p,result);if(!["Won","Lost","Void"].includes(outcome))continue;
+            const key=String(p.id||p.eventId||p.matchId||"");if(!key||seen.has(key))continue;seen.add(key);
+            report.predictionResults.push({sport,date:archiveDate,id:key,...await sendPushCategory({category:"predictionResults",eventKey:"prediction-result:"+sport+":"+archiveDate+":"+key+":"+outcome,title:"Prediction result: "+outcome,body:String((p.home||"Match")+" vs "+(p.away||"")+" — "+(p.pick||p.selection||p.market||"Prediction")+" settled "+outcome.toLowerCase()+"."),data:{eventId:String(p.eventId||""),sport,outcome,url:"/"}})});
+          }
+        }catch(e){report.predictionResults.push({sport,date:archiveDate,error:e.message})}
+      }
+    }
+    r.json({ok:true,report});
+  }catch(e){r.status(500).json({ok:false,error:e.message,report})}
+});
+
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
