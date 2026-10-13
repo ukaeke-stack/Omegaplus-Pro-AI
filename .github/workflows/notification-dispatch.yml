@@ -1,0 +1,29 @@
+name: Dispatch Omegaplus notifications
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call notification dispatcher
+        env:
+          OMEGAPLUS_BASE_URL: ${{ secrets.OMEGAPLUS_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$OMEGAPLUS_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "Set OMEGAPLUS_BASE_URL and CRON_SECRET repository secrets before enabling delivery."
+            exit 0
+          fi
+          curl --fail-with-body --silent --show-error --max-time 90 \
+            -X POST "${OMEGAPLUS_BASE_URL%/}/api/notifications/dispatch" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --data '{}'
