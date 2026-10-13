@@ -1,0 +1,36 @@
+name: Publish Android v1.6.3 direct APK release
+
+on:
+  push:
+    branches:
+      - fix/android-picker-notifications-on-9b88b9b
+    paths:
+      - .github/workflows/publish-v1.6.3-release.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the successful v1.6.3 build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 38455063085 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "Omegaplus-Pro-AI-v1.6.3-android-release" \
+            --dir artifact
+      - name: Verify and publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="artifact/apk/release/app-release.apk"
+          test -s "$APK"
+          gh release create android-v1.6.3 "$APK" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target 408c1b86fcd1cf5113d4d4fdfd5d4d7d97cdbf8e \
+            --title "Omegaplus Pro AI v1.6.3" \
+            --notes "Android v1.6.3 release APK built successfully from commit 408c1b86fcd1cf5113d4d4fdfd5d4d7d97cdbf8e. This release publishes the existing APK build artifact; it does not deploy the web app."
