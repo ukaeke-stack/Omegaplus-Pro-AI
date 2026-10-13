@@ -71,7 +71,7 @@ jobs:
       - name: Upload Android release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-android-release
+          name: Omegaplus-Pro-AI-v1.6.1-android-release
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
@@ -91,7 +91,7 @@ jobs:
           AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Omegaplus Pro AI Android v${VERSION_NAME}" --notes "Signed Android release with native WebView image picker support."
+            gh release create "$TAG" --title "Omegaplus Pro AI Android v${VERSION_NAME}" --notes "Signed Android release with image picker, graceful back handling, and optional notification permission support."
           fi
 
           gh release upload "$TAG" "$APK" "$AAB" --clobber
