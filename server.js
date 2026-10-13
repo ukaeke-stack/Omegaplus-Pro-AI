@@ -14,6 +14,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
+import {initNotificationDb,registerPushDevice,notifyAllOnce,notifyUserOnce,sendSubscriptionExpiryReminders,firebaseNotificationsConfigured} from "./notifications.js";
 
 async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
 const app=express();
@@ -62,7 +63,7 @@ async function generateTargetBooking(target,selections,sport="football"){const t
 
 
 app.use(express.json({limit:"1mb",verify:(req,res,buf)=>{req.rawBody=Buffer.from(buf)}}));
-initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>console.log("Support database:",ok?"ready":"not configured/unavailable"));
+initAuthDb().then(ok=>{console.log("Account database:",ok?"ready":"not configured/unavailable");return initSupportDb()}).then(ok=>{console.log("Support database:",ok?"ready":"not configured/unavailable");return initNotificationDb()}).then(ok=>console.log("Notification database:",ok?"ready":"not configured/unavailable"));
 app.use((req,res,next)=>{
   if(req.path==="/"||/\.(?:js|css|html|webmanifest)$/.test(req.path)) res.setHeader("Cache-Control","no-store, no-cache, must-revalidate, proxy-revalidate");
   next();
@@ -619,6 +620,34 @@ app.get("/api/admin/release-check",requireRole("admin"),async(req,r)=>{
 app.get("/api/sports",(_,r)=>r.json({ok:true,sports:SPORTS}));
 app.get("/health",(_,r)=>r.status(200).json({status:"healthy",service:"omegaplus-pro-ai",version:APP_VERSION,uptime:Math.round(process.uptime())}));
 app.get("/api/health",async(_,r)=>{const stats=await independentHealth();r.json({ok:true,service:"Omegaplus Pro AI",version:APP_VERSION,branch:"main",liveSportyBet:true,accountSystem:{configured:authDbConfigured(),ready:await dbReady()},independentStats:stats,multiBookmaker:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY)}))})});
+
+app.post("/api/notifications/register-device",requireAuth,async(req,r)=>{
+  try{
+    const token=String(req.body?.token||"").trim();
+    await registerPushDevice(req.user.id,token,String(req.body?.platform||"android"));
+    r.json({ok:true,notificationsConfigured:firebaseNotificationsConfigured()});
+  }catch(e){r.status(400).json({ok:false,error:e.message,notificationsConfigured:firebaseNotificationsConfigured()})}
+});
+app.get("/api/notifications/status",requireAuth,async(req,r)=>{
+  try{r.json({ok:true,configured:firebaseNotificationsConfigured(),platform:"android"})}
+  catch(e){r.status(503).json({ok:false,error:e.message})}
+});
+const runNotificationCron=async(req,r)=>{
+  if(!process.env.CRON_SECRET||req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return r.status(401).json({ok:false,error:"Unauthorized"});
+  try{r.json({ok:true,configured:firebaseNotificationsConfigured(),...(await sendSubscriptionExpiryReminders())})}
+  catch(e){r.status(503).json({ok:false,error:e.message,configured:firebaseNotificationsConfigured()})}
+};
+app.get("/api/notifications/cron",runNotificationCron);
+app.post("/api/notifications/cron",runNotificationCron);
+app.post("/api/admin/notifications/announcement",requireRole("admin"),async(req,r)=>{
+  const title=String(req.body?.title||"").trim().slice(0,120);
+  const body=String(req.body?.body||"").trim().slice(0,500);
+  if(!title||!body)return r.status(400).json({ok:false,error:"Title and message are required."});
+  const eventKey="announcement:"+crypto.randomUUID();
+  const result=await notifyAllOnce({eventKey,type:"announcement",title,body,route:"home"});
+  r.json({ok:true,eventKey,...result});
+});
+
 app.get("/api/auth/me",async(req,r)=>{try{const user=await currentUser(req);r.json({ok:Boolean(user),user:user||null})}catch{r.json({ok:false,user:null})}});
 app.post("/api/auth/register",async(req,r)=>{try{if(!(await getAdminSettings()).registrationEnabled)return r.status(403).json({ok:false,error:"New registration is currently disabled by the administrator."});const user=await registerUser(req.body||{},req);const session=await (await import("./auth.js")).createSession(user,req);setSessionCookie(r,session.token);r.status(201).json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/auth/login",async(req,r)=>{try{const x=await loginUser(req.body||{},req);setSessionCookie(r,x.session.token);r.json({ok:true,user:x.user})}catch(e){r.status(401).json({ok:false,error:e.message})}});
@@ -677,6 +706,7 @@ app.get("/api/payments/paystack/verify/:reference",requireAuth,async(req,r)=>{
     if(!plan)throw new Error("Paid plan not found.");
     const sub=await activateProviderSubscription(req.user.id,planId,"paystack",reference,30,{amountNgn:plan.price_ngn,channel:data.data?.channel,paidAt:data.data?.paid_at,transactionId:data.data?.id});
     await audit(req,"payment.verified",reference,{provider:"paystack",planId});
+    await notifyUserOnce(req.user.id,{eventKey:"subscription-paid:"+sub.id,type:"subscription",title:"Payment confirmed — subscription active",body:"Your "+planId.toUpperCase()+" subscription is now active.",route:"account"});
     r.json({ok:true,subscription:sub,user:await currentUser(req)});
   }catch(e){r.status(400).json({ok:false,error:e.message})}
 });
@@ -693,7 +723,7 @@ app.post("/api/payments/paystack/webhook",async(req,r)=>{
       const meta=event.data?.metadata||{},userId=String(meta.userId||""),planId=String(meta.planId||"");
       if(userId&&planId){
         const plans=await listPlans(),plan=plans.find(x=>x.id===planId&&x.price_ngn>0);
-        if(plan)await activateProviderSubscription(userId,planId,"paystack",String(event.data?.reference||""),30,{amountNgn:plan.price_ngn,channel:event.data?.channel,paidAt:event.data?.paid_at,webhookEvent:event.event});
+        if(plan){const sub=await activateProviderSubscription(userId,planId,"paystack",String(event.data?.reference||""),30,{amountNgn:plan.price_ngn,channel:event.data?.channel,paidAt:event.data?.paid_at,webhookEvent:event.event});await notifyUserOnce(userId,{eventKey:"subscription-paid:"+sub.id,type:"subscription",title:"Payment confirmed — subscription active",body:"Your "+planId.toUpperCase()+" subscription is now active.",route:"account"});}
       }
     }
   }catch(e){console.error("Paystack webhook processing failed:",e.message)}
@@ -705,11 +735,12 @@ app.post("/api/admin/create-admin",requireRole("admin"),async(req,r)=>{try{const
 app.get("/api/admin/stats",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,stats:await adminStats()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.get("/api/admin/users",requireRole("admin"),async(req,r)=>{try{r.json({ok:true,users:await adminUsers({page:req.query.page,limit:req.query.limit,search:req.query.search})})}catch(e){r.status(503).json({ok:false,error:e.message,users:[]})}});
 app.patch("/api/admin/users/:id",requireRole("admin"),async(req,r)=>{try{const user=await setUserAccess(req.params.id,req.body||{});await audit(req,"admin.user.update",req.params.id,{changes:req.body||{}});r.json({ok:true,user})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const plan=String(req.body?.plan||"pro"),days=Math.max(1,Math.min(3650,Number(req.body?.days)||30));const sub=await activateSubscription(req.params.id,plan,days,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan,days,grantedByAdmin:true});r.json({ok:true,subscription:sub,grantedByAdmin:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/subscription",requireRole("admin"),async(req,r)=>{try{const plan=String(req.body?.plan||"pro"),days=Math.max(1,Math.min(3650,Number(req.body?.days)||30));const sub=await activateSubscription(req.params.id,plan,days,"admin");await audit(req,"admin.subscription.activate",req.params.id,{plan,days,grantedByAdmin:true});await notifyUserOnce(req.params.id,{eventKey:"subscription-activated:"+sub.id,type:"subscription",title:"Your Omegaplus subscription is active",body:"Your "+plan.toUpperCase()+" access has been activated for "+days+" days.",route:"account"});r.json({ok:true,subscription:sub,grantedByAdmin:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/subscription/revoke",requireRole("admin"),async(req,r)=>{try{await revokeSubscription(req.params.id);await audit(req,"admin.subscription.revoke",req.params.id,{});await notifyUserOnce(req.params.id,{eventKey:"subscription-revoked:"+req.params.id+":"+new Date().toISOString().slice(0,10),type:"subscription",title:"Your Omegaplus subscription was revoked",body:"Your paid access has been removed. Contact support if you believe this is an error.",route:"account"});r.json({ok:true})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.post("/api/admin/plans",requireRole("admin"),async(req,r)=>{try{const plan=await createOrUpdatePlan(req.body||{});await audit(req,"admin.plan.update",String(req.body?.id||""),req.body||{});r.json({ok:true,plan})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 app.get("/api/admin/access-settings",requireRole("admin"),async(_,r)=>{try{r.json({ok:true,settings:await getAccessSettings()})}catch(e){r.status(503).json({ok:false,error:e.message})}});
 app.patch("/api/admin/access-settings",requireRole("admin"),async(req,r)=>{try{const settings=await updateAccessSettings(req.body||{});await audit(req,"admin.access_settings.update","app",settings);r.json({ok:true,settings})}catch(e){r.status(400).json({ok:false,error:e.message})}});
-app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
+app.post("/api/admin/users/:id/free-trial",requireRole("admin"),async(req,r)=>{try{const days=Math.max(1,Math.min(365,Number(req.body?.days)||3));const sub=await grantFreeTrial(req.params.id,days);await audit(req,"admin.free_trial.grant",req.params.id,{days});await notifyUserOnce(req.params.id,{eventKey:"subscription-trial:"+sub.id,type:"subscription",title:"Your Omegaplus free trial is active",body:"Your free trial has been activated for "+days+" days.",route:"account"});r.json({ok:true,subscription:sub})}catch(e){r.status(400).json({ok:false,error:e.message})}});
 
 app.get("/api/stats/status",async(_,r)=>{try{const x=await independentHealth();r.json({ok:true,checkedAt:x.checkedAt||new Date().toISOString(),providers:{Sofascore:{configured:true,available:Boolean(x.sofascore),role:"fixtures, form, match statistics, standings-compatible data",...(x.details?.sofascore||{})},Understat:{configured:true,available:Boolean(x.understat),role:"xG, xGA, shot-quality data",coverage:["Premier League","LaLiga","Serie A","Bundesliga","Ligue 1"],...(x.details?.understat||{})},Sportmonks:{configured:Boolean(process.env.SPORTMONKS_API_TOKEN),available:null,role:"supplementary results/statistics where subscription covers the league",note:process.env.SPORTMONKS_API_TOKEN?"Credentials are present; live availability is not checked by this endpoint.":"SPORTMONKS_API_TOKEN is missing."},GOAL_API:{configured:Boolean(process.env.GOAL_API_KEY),available:null,role:"secondary football results provider; not used as an xG source",note:process.env.GOAL_API_KEY?"Credentials are present; live availability is not checked by this endpoint.":"GOAL_API_KEY is missing."}}})}catch(e){r.status(200).json({ok:false,checkedAt:new Date().toISOString(),error:e.message,providers:{Sofascore:{available:false},Understat:{available:false}}})}});
 app.get("/api/bookmakers",(_,r)=>r.json({ok:true,bookmakers:BOOKMAKERS.map(x=>({id:x.id,name:x.name,codeGeneration:x.id==="sportybet"||Boolean(BETRELAY_API_KEY),method:x.id==="sportybet"?"native":"SportyBet→BetRelay"})),configured:Boolean(BETRELAY_API_KEY)}));
@@ -881,6 +912,24 @@ app.get("/api/history",async(req,r)=>{
         const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
         const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
         if(changed||resultsChanged){
+          const settledTransitions=[];
+          const collectSettledTransitions=(before,after,section)=>{
+            const oldRows=Array.isArray(before)?before:[];
+            const newRows=Array.isArray(after)?after:[];
+            const oldById=new Map(oldRows.map((row,index)=>[String(row.id||row.eventId||row.fixtureId||index),row]));
+            for(const row of newRows){
+              const key=String(row.id||row.eventId||row.fixtureId||"");
+              if(!key)continue;
+              const prior=oldById.get(key);
+              const oldOutcome=String(prior?.outcome||prior?.status||"pending").toLowerCase();
+              const newOutcome=String(row.outcome||row.status||"pending").toLowerCase();
+              const isSettled=value=>["won","lost","void","voided"].includes(value);
+              if(prior&&!isSettled(oldOutcome)&&isSettled(newOutcome)) settledTransitions.push({section,id:key,outcome:newOutcome});
+            }
+          };
+          collectSettledTransitions(archive.predictions,predictions,"predictions");
+          collectSettledTransitions(archive.dailyBestPredictions,dailyBestPredictions,"daily-best");
+          collectSettledTransitions(archive.correctScores,correctScores,"correct-score");
           archive.predictions=predictions;
           if(dailyBestPredictions)archive.dailyBestPredictions=dailyBestPredictions;
           archive.correctScores=correctScores;
@@ -888,6 +937,10 @@ app.get("/api/history",async(req,r)=>{
           archive.settlementUpdatedAt=new Date().toISOString();
           archive.updatedAt=archive.settlementUpdatedAt;
           await writePersistentArchive(date,archive,sport);
+          if(settledTransitions.length){
+            const digest=crypto.createHash("sha256").update(JSON.stringify(settledTransitions)).digest("hex").slice(0,20);
+            await notifyAllOnce({eventKey:"results-settled:"+sport+":"+date+":"+digest,type:"results",title:"Match results updated",body:settledTransitions.length+" prediction result"+(settledTransitions.length===1?" has":"s have")+" been confirmed. History has been updated.",route:"history"});
+          }
         }
       }
     }
@@ -1217,6 +1270,7 @@ app.get("/api/correct-scores",requirePaid,async(req,r)=>{if(!(await getAdminSett
     archive.updatedAt=new Date().toISOString();
     if(!archive.savedAt)archive.savedAt=archive.updatedAt;
     await writePersistentArchive(date,archive,sport);
+    if(topFive.length) await notifyAllOnce({eventKey:"correct-score:"+sport+":"+date,type:"correct_score",title:"Correct Score selections are ready",body:"The daily Correct Score selections are available in Omegaplus Pro AI.",route:"correct-score"});
     r.json({ok:true,date,sport,predictions:topFive,generatedAt:archive.correctScoresGeneratedAt,count:topFive.length,requiredCount:5,archived:false,method:"Top five correct-score matches ranked with independent form/xG/recent-results signals plus live market probability"});
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
@@ -1247,6 +1301,7 @@ app.get("/api/daily-best",async(req,r)=>{try{
   archive.dailyCombinedOdds=Number(built.combinedOdds)||0;archive.dailyShortfall=Number(built.shortfall)||0;archive.dailyFixtureCount=Number(built.fixtureCount)||0;archive.dailyMessage=built.message||"";
   archive.updatedAt=new Date().toISOString();if(!archive.savedAt)archive.savedAt=archive.updatedAt;
   await writePersistentArchive(date,archive,sport);
+  if(predictions.length) await notifyAllOnce({eventKey:"daily-best:"+sport+":"+date,type:"daily_best",title:"Daily Best is ready",body:predictions.length+" qualifying Daily Best pick"+(predictions.length===1?" is":"s are")+" available for "+date+".",route:"daily-best"});
   r.json({ok:true,date,sport,predictions,combinedOdds:archive.dailyCombinedOdds,shortfall:archive.dailyShortfall,fixtureCount:archive.dailyFixtureCount,message:archive.dailyMessage,qualifiedCount:built.qualifiedCount||0,archived:true});
 }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}});
 app.post("/api/predictions/analyze",requirePaid,async(req,r)=>{
