@@ -9,9 +9,13 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.SharedPreferences;
+import android.provider.Settings;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
 import android.content.Intent;
 import android.net.Uri;
@@ -24,7 +28,12 @@ import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4201;
+    private static final int FILE_CHOOSER_REQUEST_CODE = 1001;
+    private static final long BACK_PRESS_INTERVAL_MS = 2000L;
     private WebView webView;
+    private ValueCallback<Uri[]> fileChooserCallback;
+    private long lastBackPressTime = 0L;
+    private boolean notificationPromptVisible;
     private boolean volumeUpPressed;
     private boolean volumeDownPressed;
     private boolean tokenDialogOpen;
@@ -52,11 +61,21 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface public void openPlayStore() {
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName())));
-            } catch (Exception e) {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + getPackageName())));
-            }
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName())));
+                } catch (Exception e) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + getPackageName())));
+                }
+            });
+        }
+
+        @JavascriptInterface public void openAppNotificationSettings() {
+            runOnUiThread(() -> {
+                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            });
         }
     }
 
@@ -64,8 +83,37 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        createNotificationChannel();
         webView = new WebView(this);
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                maybeAskForNotificationPermission();
+            }
+        });
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                                       FileChooserParams fileChooserParams) {
+                if (fileChooserCallback != null) fileChooserCallback.onReceiveValue(null);
+                fileChooserCallback = callback;
+                try {
+                    Intent pickImage = new Intent(Intent.ACTION_GET_CONTENT);
+                    pickImage.addCategory(Intent.CATEGORY_OPENABLE);
+                    pickImage.setType("image/*");
+                    pickImage.putExtra(Intent.EXTRA_MIME_TYPES,
+                            new String[]{"image/png", "image/jpeg", "image/webp"});
+                    startActivityForResult(Intent.createChooser(pickImage, "Select fixture screenshot"),
+                            FILE_CHOOSER_REQUEST_CODE);
+                    return true;
+                } catch (Exception e) {
+                    fileChooserCallback = null;
+                    callback.onReceiveValue(null);
+                    Toast.makeText(MainActivity.this,
+                            "Unable to open the image picker. Please try again.", Toast.LENGTH_LONG).show();
+                    return true;
+                }
+            }
+        });
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -74,17 +122,43 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         webView.addJavascriptInterface(new AppBridge(), "AndroidApp");
         setContentView(webView);
-        webView.loadUrl(APP_URL);
-        requestNotificationPermissionIfNeeded();
+        if (state != null) webView.restoreState(state);
+        else webView.loadUrl(APP_URL);
     }
 
-    private void requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < 33) return;
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
-        android.content.SharedPreferences prefs = getSharedPreferences("omegaplus_notifications", MODE_PRIVATE);
-        if (prefs.getBoolean("permission_prompted", false)) return;
-        prefs.edit().putBoolean("permission_prompted", true).apply();
-        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.NotificationChannel channel = new android.app.NotificationChannel(
+                    "omegaplus_updates", "Omegaplus Pro AI notifications",
+                    android.app.NotificationManager.IMPORTANCE_DEFAULT);
+            channel.setDescription("Optional updates and alerts from Omegaplus Pro AI");
+            android.app.NotificationManager manager = getSystemService(android.app.NotificationManager.class);
+            if (manager != null) manager.createNotificationChannel(channel);
+        }
+    }
+
+    private void maybeAskForNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            getSharedPreferences("omegaplus_notifications", MODE_PRIVATE)
+                    .edit().putBoolean("permission_prompted", true).apply();
+            return;
+        }
+        SharedPreferences prefs = getSharedPreferences("omegaplus_notifications", MODE_PRIVATE);
+        if (prefs.getBoolean("permission_explainer_prompted", false) || notificationPromptVisible) return;
+        notificationPromptVisible = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Enable notifications?")
+                .setMessage("Allow Omegaplus Pro AI to send notifications? Choose Not now to decide later in your phone's app settings.")
+                .setPositiveButton("Enable", (dialog, which) -> {
+                    prefs.edit().putBoolean("permission_explainer_prompted", true).apply();
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+                })
+                .setNegativeButton("Not now", (dialog, which) ->
+                        prefs.edit().putBoolean("permission_explainer_prompted", true).apply())
+                .setOnCancelListener(dialog -> prefs.edit().putBoolean("permission_explainer_prompted", true).apply())
+                .setOnDismissListener(dialog -> notificationPromptVisible = false)
+                .show();
     }
 
     @Override public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -149,11 +223,47 @@ public class MainActivity extends Activity {
         });
     }
 
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE && fileChooserCallback != null) {
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                results = new Uri[]{data.getData()};
+            }
+            fileChooserCallback.onReceiveValue(results);
+            fileChooserCallback = null;
+        }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        if (webView != null) webView.saveState(outState);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override protected void onDestroy() {
+        if (fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(null);
+            fileChooserCallback = null;
+        }
+        if (webView != null) {
+            webView.stopLoading();
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+
     @Override public void onBackPressed() {
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastBackPressTime < BACK_PRESS_INTERVAL_MS) {
+            finish();
         } else {
-            super.onBackPressed();
+            lastBackPressTime = now;
+            Toast.makeText(this, "Press back again to exit Omegaplus Pro AI", Toast.LENGTH_SHORT).show();
         }
     }
 }

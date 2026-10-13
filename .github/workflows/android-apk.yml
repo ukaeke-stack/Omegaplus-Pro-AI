@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/android-gallery-picker-v163
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android v1.6.2
+    name: Build Android release
     runs-on: ubuntu-latest
 
     steps:
@@ -83,7 +84,7 @@ jobs:
       - name: Upload Android release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-v1.6.2-android-release
+          name: Omegaplus-Pro-AI-v1.6.3-android-release
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
@@ -91,18 +92,20 @@ jobs:
           retention-days: 30
 
       - name: Publish release assets
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          TAG="android-v1.6.2"
+          VERSION_NAME=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" android/app/build.gradle | head -n 1)
+          test -n "$VERSION_NAME" || { echo "Unable to read Android versionName"; exit 1; }
+          TAG="android-v${VERSION_NAME}"
           APK="android/app/build/outputs/apk/release/app-release.apk"
           AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Omegaplus Pro AI Android v1.6.2" --notes "Signed Android release with Firebase notification diagnostics. Hold both volume buttons together to display the device's Firebase messaging token for test-message verification."
+            gh release create "$TAG" --title "Omegaplus Pro AI Android v${VERSION_NAME}" --notes "Signed Android release with Snap Predict image-picker support, graceful back handling, and optional notification permission support."
           fi
 
-          gh release upload "$TAG" "$APK" --clobber
-          gh release upload "$TAG" "$AAB" --clobber
+          gh release upload "$TAG" "$APK" "$AAB" --clobber
           echo "Signed APK and AAB published successfully."
