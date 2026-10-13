@@ -639,6 +639,13 @@ const runNotificationCron=async(req,r)=>{
 };
 app.get("/api/notifications/cron",runNotificationCron);
 app.post("/api/notifications/cron",runNotificationCron);
+app.post("/api/admin/notifications/test",requireRole("admin"),async(req,r)=>{
+  const title=String(req.body?.title||"Omegaplus Notification Test").trim().slice(0,120);
+  const body=String(req.body?.body||"This is a test notification from the Omegaplus Pro AI administrator.").trim().slice(0,500);
+  if(!title||!body)return r.status(400).json({ok:false,error:"Title and message are required."});
+  const result=await notifyUserOnce(req.user.id,{eventKey:"admin-test:"+crypto.randomUUID(),type:"notification_test",title,body,route:"home"});
+  r.json({ok:true,scope:"admin-device-only",...result});
+});
 app.post("/api/admin/notifications/announcement",requireRole("admin"),async(req,r)=>{
   const title=String(req.body?.title||"").trim().slice(0,120);
   const body=String(req.body?.body||"").trim().slice(0,500);
