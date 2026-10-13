@@ -202,6 +202,9 @@ async function dispatch({ userId = null, eventKey, type, title, body, route = "h
       errors.push(err.message);
     }
   }
+  if (eventKey && sent === 0 && errors.length) {
+    await db().query("DELETE FROM public.notification_events WHERE event_key=$1", [String(eventKey).slice(0, 250)]).catch(() => {});
+  }
   return { sent, configured: true, failed: errors.length, error: errors[0] || null };
 }
 
