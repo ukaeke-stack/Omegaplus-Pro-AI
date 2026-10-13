@@ -71,6 +71,7 @@ jobs:
         run: |
           node --check server.js
           node --check push-notifications.js
+          node --check public/settings.js
 
       - name: Build signed release APK and AAB
         working-directory: android
