@@ -128,6 +128,9 @@
     const s=read(); save(s);
     localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());
     if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(s);
+    if(s.notifications&&window.AndroidApp&&typeof window.AndroidApp.requestNotificationPermission==="function"){
+      try{window.AndroidApp.requestNotificationPermission()}catch{}
+    }
     $("#settingsSaveStatus").textContent="Saving settings…";
     try{
       const result=await syncNotificationPreference(s.notifications);
