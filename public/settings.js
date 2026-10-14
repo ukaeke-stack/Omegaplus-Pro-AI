@@ -57,7 +57,8 @@
       </div>
       <div class="settings-section">
         <strong>Notifications</strong>
-        <label class="settings-check"><input id="setNotifications" type="checkbox"> Enable prediction/update notifications</label>
+        <label class="settings-check"><input id="setNotifications" type="checkbox"> Allow push announcements and account alerts</label>
+        <small>Sign in to save this preference to your account. Android notifications also require phone permission.</small>
       </div>
       <div class="settings-section">
         <strong>App Updates</strong>
@@ -94,18 +95,59 @@
       showConfidence:$("#setShowConfidence").checked,autoRefresh:$("#setAutoRefresh").checked,notifications:$("#setNotifications").checked
     };
   }
-  function openSettings(){fill();modal.classList.add("open")}
+  async function syncNotificationPreference(enabled){
+    const meResponse=await fetch("/api/auth/me",{cache:"no-store"});
+    const me=await meResponse.json().catch(()=>({}));
+    if(!me.user)return {signedIn:false};
+    const response=await fetch("/api/notifications/preferences",{
+      method:"PATCH",headers:{"content-type":"application/json"},
+      body:JSON.stringify({enabled})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok||!data.ok)throw new Error(data.error||"Could not update notification preferences.");
+    return {signedIn:true,enabled:data.enabled};
+  }
+  async function loadNotificationPreference(){
+    try{
+      const meResponse=await fetch("/api/auth/me",{cache:"no-store"});
+      const me=await meResponse.json().catch(()=>({}));
+      if(!me.user)return;
+      const response=await fetch("/api/notifications/preferences",{cache:"no-store"});
+      const data=await response.json().catch(()=>({}));
+      if(response.ok&&data.ok&&typeof data.enabled==="boolean"){
+        const settings=get();settings.notifications=data.enabled;save(settings);
+        $("#setNotifications").checked=data.enabled;
+      }
+    }catch{}
+  }
+  function openSettings(){fill();modal.classList.add("open");loadNotificationPreference()}
   function closeSettings(){modal.classList.remove("open")}
   $("#settingsClose").onclick=closeSettings;
   modal.addEventListener("click",e=>{if(e.target===modal)closeSettings()});
-  $("#saveSettings").onclick=()=>{
+  $("#saveSettings").onclick=async()=>{
     const s=read(); save(s);
     localStorage.setItem("omegaplus_settings_updated_at",Date.now().toString());
     if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(s);
-    $("#settingsSaveStatus").textContent="Settings saved successfully.";
-    setTimeout(()=>$("#settingsSaveStatus").textContent="",1800);
+    if(s.notifications&&window.AndroidApp&&typeof window.AndroidApp.requestNotificationPermission==="function"){
+      try{window.AndroidApp.requestNotificationPermission()}catch{}
+    }
+    $("#settingsSaveStatus").textContent="Saving settings…";
+    try{
+      const result=await syncNotificationPreference(s.notifications);
+      $("#settingsSaveStatus").textContent=result.signedIn
+        ? (s.notifications?"Settings saved. Push announcements and account alerts are enabled.":"Settings saved. Push notifications are disabled for this account.")
+        : (s.notifications?"Settings saved on this device. Sign in to enable account push notifications.":"Settings saved on this device.");
+    }catch(e){
+      $("#settingsSaveStatus").textContent="Settings saved on this device, but notification preference could not sync: "+e.message;
+    }
+    setTimeout(()=>$("#settingsSaveStatus").textContent="",5000);
   };
-  $("#resetSettings").onclick=()=>{save({...defaults});fill();if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(get());$("#settingsSaveStatus").textContent="Settings reset to defaults."};
+  $("#resetSettings").onclick=async()=>{
+    save({...defaults});fill();
+    if(typeof window.applyOmegaplusSettings==="function")window.applyOmegaplusSettings(get());
+    try{await syncNotificationPreference(false);$("#settingsSaveStatus").textContent="Settings reset. Account push notifications are disabled."}
+    catch{$("#settingsSaveStatus").textContent="Settings reset on this device."}
+  };
   $("#checkUpdates").onclick=async()=>{
     const status=$("#updateStatus"),apply=$("#applyUpdate");status.textContent="Checking the latest release…";apply.hidden=true;
     try{

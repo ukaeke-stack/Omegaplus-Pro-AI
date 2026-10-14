@@ -37,7 +37,9 @@ public class OmegaplusFirebaseMessagingService extends FirebaseMessagingService 
 
     @Override
     public void onNewToken(String token) {
-        // Token registration with a notification backend can be added when that endpoint is available.
+        // If a signed-in WebView session is available, register the refreshed token immediately.
+        // Otherwise, MainActivity syncs the current token after the app opens or the user signs in.
+        MainActivity.registerTokenWithBackend(token);
     }
 
     private void showNotification(String title, String body) {

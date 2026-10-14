@@ -14,7 +14,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import {fileURLToPath} from "node:url";
-import {initNotificationDb,registerPushDevice,notifyAllOnce,notifyUserOnce,sendSubscriptionExpiryReminders,firebaseNotificationsConfigured} from "./notifications.js";
+import {initNotificationDb,registerPushDevice,notifyAllOnce,notifyUserOnce,sendSubscriptionExpiryReminders,firebaseNotificationsConfigured,getNotificationPreference,setNotificationPreference} from "./notifications.js";
 
 async function enrichAndModel(rows,opts){return applyDerivedModel(await enrichPredictions(rows,opts))}
 const app=express();
@@ -630,6 +630,15 @@ app.post("/api/notifications/register-device",requireAuth,async(req,r)=>{
 });
 app.get("/api/notifications/status",requireAuth,async(req,r)=>{
   try{r.json({ok:true,configured:firebaseNotificationsConfigured(),platform:"android"})}
+  catch(e){r.status(503).json({ok:false,error:e.message})}
+});
+app.get("/api/notifications/preferences",requireAuth,async(req,r)=>{
+  try{r.json({ok:true,enabled:await getNotificationPreference(req.user.id)})}
+  catch(e){r.status(503).json({ok:false,error:e.message})}
+});
+app.patch("/api/notifications/preferences",requireAuth,async(req,r)=>{
+  if(typeof req.body?.enabled!=="boolean")return r.status(400).json({ok:false,error:"The enabled field must be true or false."});
+  try{r.json({ok:true,enabled:await setNotificationPreference(req.user.id,req.body.enabled)})}
   catch(e){r.status(503).json({ok:false,error:e.message})}
 });
 const runNotificationCron=async(req,r)=>{

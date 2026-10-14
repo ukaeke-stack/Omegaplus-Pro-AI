@@ -51,6 +51,11 @@ async function ensureSchema() {
       );
       CREATE INDEX IF NOT EXISTS push_devices_user_active_idx
         ON public.push_devices(user_id, active);
+      CREATE TABLE IF NOT EXISTS public.user_notification_preferences (
+        user_id uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+        enabled boolean NOT NULL DEFAULT false,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
       CREATE TABLE IF NOT EXISTS public.notification_events (
         event_key text PRIMARY KEY,
         notification_type text NOT NULL,
@@ -85,6 +90,28 @@ export async function registerPushDevice(userId, token, platform = "android") {
       platform=EXCLUDED.platform,active=true,last_seen_at=now(),updated_at=now()
   `, [cleanToken, userId, String(platform || "android").slice(0, 30)]);
   return true;
+}
+
+export async function getNotificationPreference(userId) {
+  if (!userId) throw new Error("Login required to read notification preferences.");
+  if (!(await ensureSchema())) throw new Error("Notification database is not configured.");
+  const result = await db().query(
+    "SELECT enabled FROM public.user_notification_preferences WHERE user_id=$1",
+    [userId]
+  );
+  return result.rowCount ? Boolean(result.rows[0].enabled) : false;
+}
+
+export async function setNotificationPreference(userId, enabled) {
+  if (!userId) throw new Error("Login required to update notification preferences.");
+  if (!(await ensureSchema())) throw new Error("Notification database is not configured.");
+  const value = Boolean(enabled);
+  await db().query(`
+    INSERT INTO public.user_notification_preferences(user_id,enabled,updated_at)
+    VALUES($1,$2,now())
+    ON CONFLICT(user_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now()
+  `, [userId, value]);
+  return value;
 }
 
 function serviceAccount() {
@@ -178,11 +205,15 @@ async function dispatch({ userId = null, eventKey, type, title, body, route = "h
   if (!(await ensureSchema())) return { sent: 0, configured: false, reason: "Notification database is not configured." };
   const result = await db().query(
     userId
-      ? "SELECT token FROM public.push_devices WHERE active=true AND user_id=$1"
-      : "SELECT token FROM public.push_devices WHERE active=true",
+      ? `SELECT d.token FROM public.push_devices d
+         JOIN public.user_notification_preferences p ON p.user_id=d.user_id AND p.enabled=true
+         WHERE d.active=true AND d.user_id=$1`
+      : `SELECT d.token FROM public.push_devices d
+         JOIN public.user_notification_preferences p ON p.user_id=d.user_id AND p.enabled=true
+         WHERE d.active=true`,
     userId ? [userId] : []
   );
-  if (!result.rows.length) return { sent: 0, configured: true, reason: "No registered devices." };
+  if (!result.rows.length) return { sent: 0, configured: true, reason: "No opted-in registered devices." };
 
   if (eventKey) {
     const claimed = await db().query(
