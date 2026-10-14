@@ -87,44 +87,52 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void syncNotificationToken() {
             FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
                 if (!task.isSuccessful() || task.getResult() == null) return;
-                String token = task.getResult().trim();
-                if (token.isEmpty()) return;
-                new Thread(() -> {
-                    HttpURLConnection connection = null;
-                    try {
-                        String cookies = CookieManager.getInstance().getCookie(APP_URL);
-                        if (cookies == null || cookies.trim().isEmpty()) return;
-                        URL url = new URL(APP_URL + "api/notifications/register-device");
-                        connection = (HttpURLConnection) url.openConnection();
-                        connection.setRequestMethod("POST");
-                        connection.setConnectTimeout(8000);
-                        connection.setReadTimeout(8000);
-                        connection.setDoOutput(true);
-                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                        connection.setRequestProperty("Cookie", cookies);
-                        JSONObject payload = new JSONObject();
-                        payload.put("token", token);
-                        payload.put("platform", "android");
-                        byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
-                        connection.setFixedLengthStreamingMode(bytes.length);
-                        try (OutputStream output = connection.getOutputStream()) {
-                            output.write(bytes);
-                        }
-                        int responseCode = connection.getResponseCode();
-                        if (responseCode >= 400) {
-                            android.util.Log.w("OmegaplusNotifications", "Device-token registration returned HTTP " + responseCode);
-                        }
-                    } catch (Exception e) {
-                        android.util.Log.w("OmegaplusNotifications", "Device-token registration failed", e);
-                    } finally {
-                        if (connection != null) connection.disconnect();
-                    }
-                }).start();
+                registerTokenWithBackend(task.getResult().trim());
             });
         }
     }
 
     private static final String APP_URL = "https://omegaplus-pro-ai.vercel.app/";
+
+    /**
+     * Registers a token only when this WebView installation has an authenticated session cookie.
+     * If no session exists yet, the login/registration flow calls syncNotificationToken again.
+     */
+    public static void registerTokenWithBackend(String token) {
+        if (token == null || token.trim().isEmpty()) return;
+        String cleanToken = token.trim();
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                String cookies = CookieManager.getInstance().getCookie(APP_URL);
+                if (cookies == null || cookies.trim().isEmpty()) return;
+                URL url = new URL(APP_URL + "api/notifications/register-device");
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(8000);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setRequestProperty("Cookie", cookies);
+                JSONObject payload = new JSONObject();
+                payload.put("token", cleanToken);
+                payload.put("platform", "android");
+                byte[] bytes = payload.toString().getBytes(StandardCharsets.UTF_8);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(bytes);
+                }
+                int responseCode = connection.getResponseCode();
+                if (responseCode >= 400) {
+                    android.util.Log.w("OmegaplusNotifications", "Device-token registration returned HTTP " + responseCode);
+                }
+            } catch (Exception e) {
+                android.util.Log.w("OmegaplusNotifications", "Device-token registration failed", e);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
+    }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
