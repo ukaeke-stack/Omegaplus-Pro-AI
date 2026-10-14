@@ -213,7 +213,7 @@ async function dispatch({ userId = null, eventKey, type, title, body, route = "h
          WHERE d.active=true`,
     userId ? [userId] : []
   );
-  if (!result.rows.length) return { sent: 0, configured: true, reason: "No registered devices." };
+  if (!result.rows.length) return { sent: 0, configured: true, reason: "No opted-in registered devices." };
 
   if (eventKey) {
     const claimed = await db().query(
