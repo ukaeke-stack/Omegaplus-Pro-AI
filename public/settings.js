@@ -57,7 +57,8 @@
       </div>
       <div class="settings-section">
         <strong>Notifications</strong>
-        <label class="settings-check"><input id="setNotifications" type="checkbox"> Enable prediction/update notifications</label>
+        <label class="settings-check"><input id="setNotifications" type="checkbox"> Allow push announcements and account alerts</label>
+        <small>Sign in to save this preference to your account. Android notifications also require phone permission.</small>
       </div>
       <div class="settings-section">
         <strong>App Updates</strong>
