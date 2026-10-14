@@ -84,6 +84,34 @@ public class MainActivity extends Activity {
             });
         }
 
+        @JavascriptInterface public void requestNotificationPermission() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    syncNotificationToken();
+                    return;
+                }
+                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                    syncNotificationToken();
+                    return;
+                }
+                if (notificationPromptVisible) return;
+                notificationPromptVisible = true;
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Enable Omegaplus notifications?")
+                        .setMessage("Allow push announcements and account alerts. You can change this later in Android settings.")
+                        .setPositiveButton("Enable", (dialog, which) ->
+                                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST))
+                        .setNegativeButton("Open Settings", (dialog, which) -> {
+                            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        })
+                        .setNeutralButton("Not now", (dialog, which) -> {})
+                        .setOnDismissListener(dialog -> notificationPromptVisible = false)
+                        .show();
+            });
+        }
+
         @JavascriptInterface public void syncNotificationToken() {
             FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task -> {
                 if (!task.isSuccessful() || task.getResult() == null) return;
