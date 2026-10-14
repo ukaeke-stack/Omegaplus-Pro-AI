@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - fix/android-picker-notifications-on-9b88b9b
+      - fix/push-notification-registration
   workflow_dispatch:
 
 permissions:
@@ -28,6 +29,7 @@ jobs:
           node --check server.js
           node --check notifications.js
           node --check public/auth-ui.js
+          node --check public/settings.js
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
