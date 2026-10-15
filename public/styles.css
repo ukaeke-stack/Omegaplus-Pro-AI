@@ -188,3 +188,131 @@ html,body{background:radial-gradient(ellipse at 80% 0%,#102b39 0%,#071019 42%,#0
 /* Brand refinement: keep the existing dashboard design and make the product name the hero. */
 .top-brand .brand-copy{min-width:0;display:block}.top-brand .brand-copy strong{font-size:clamp(16px,2vw,22px);letter-spacing:-.45px;line-height:1.08}.top-brand .brand-copy strong em{font-style:normal;color:var(--green)}.top-brand .brand-copy small{font-size:clamp(7px,.8vw,10px);letter-spacing:.25px;margin-top:5px;color:#9bb4c2}.top-brand .brand-copy small i{font-style:normal;color:var(--green);padding:0 3px}.hero-dashboard .home-brand-title{font-size:clamp(31px,4.5vw,52px);line-height:1.08;letter-spacing:-1.35px;margin:17px 0 9px}.hero-dashboard .home-brand-title span{color:#f2f7fb}.hero-dashboard .home-brand-title em{font-style:normal;background:linear-gradient(95deg,#b7f34b 8%,#63e7d2 58%,#54b8ff);background-clip:text;-webkit-background-clip:text;color:transparent}.hero-dashboard .home-brand-tagline{font-size:clamp(12px,1.35vw,15px);line-height:1.4;letter-spacing:.05px;color:#b6d0df;margin:0 0 10px;max-width:560px}.hero-dashboard .home-brand-tagline span{color:var(--green);padding:0 3px}.hero-dashboard .home-brand-description{font-size:12px;line-height:1.5;margin:0;max-width:510px;color:#8fa8b6}.hero-dashboard .hero-actions{margin-top:20px}
 @media(max-width:600px){.top-brand .brand-copy strong{font-size:clamp(13px,4vw,17px);letter-spacing:-.35px}.top-brand .brand-copy small{font-size:7px;letter-spacing:0;margin-top:3px}.top-brand .brand-copy small i{padding:0 1px}.hero-dashboard .home-brand-title{font-size:clamp(29px,8vw,37px);letter-spacing:-.8px;margin:15px 0 8px;max-width:100%}.hero-dashboard .home-brand-tagline{font-size:11px;line-height:1.5;max-width:88%;margin-bottom:8px}.hero-dashboard .home-brand-description{font-size:10px;max-width:88%}}
+
+
+/* Fixture Analyzer readability and full-width workspace */
+.today-picks,
+.analysis-controls,
+.analysis-status,
+.slip-card {
+  width: calc(100% - 32px);
+  max-width: none;
+  min-width: 0;
+}
+.today-picks {
+  margin-left: auto;
+  margin-right: auto;
+}
+.analysis-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.analysis-controls .control-card {
+  min-width: 0;
+}
+.analysis-controls .control-card select,
+.analysis-controls .control-card input,
+.analysis-controls .bookmaker-box select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  font-size: 15px;
+}
+.analysis-controls .control-card select[multiple],
+.analysis-controls .control-card .dynamic-select {
+  height: auto;
+  min-height: 150px;
+  max-height: 240px;
+  overflow-y: auto;
+  line-height: 1.5;
+  font-size: 15px;
+}
+.analysis-controls .control-card select option {
+  padding: 9px 8px;
+  white-space: normal;
+}
+.date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.date-row input,
+.calendar-picker input,
+#fixtureDate {
+  flex: 1 1 170px;
+  min-width: 0;
+  min-height: 46px;
+  font-size: 15px;
+}
+#results,
+#analysisResults,
+#fixtureResults,
+#osResults,
+.today-picks .match,
+.today-picks .history-item,
+.today-picks .calendar-game,
+.today-picks .result-card {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+.today-picks .match,
+.today-picks .history-item,
+.today-picks .calendar-game,
+.today-picks .result-card {
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.slip-card {
+  padding: 20px;
+}
+.slip-card select,
+.slip-card input,
+.slip-card button {
+  font-size: 15px;
+  min-height: 44px;
+}
+@media (max-width: 700px) {
+  .today-picks,
+  .analysis-controls,
+  .analysis-status,
+  .slip-card {
+    width: calc(100% - 16px);
+  }
+  .analysis-controls {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .analysis-controls .control-card {
+    padding: 14px;
+  }
+  .analysis-controls .control-card > label {
+    font-size: 15px;
+  }
+  .analysis-controls .control-card select,
+  .analysis-controls .control-card input,
+  .analysis-controls .bookmaker-box select {
+    font-size: 16px;
+    min-height: 48px;
+  }
+  .analysis-controls .control-card select[multiple],
+  .analysis-controls .control-card .dynamic-select {
+    min-height: 160px;
+    max-height: 260px;
+    font-size: 16px;
+  }
+  .date-row {
+    align-items: stretch;
+  }
+  .date-row input,
+  .calendar-picker input,
+  #fixtureDate {
+    flex-basis: 100%;
+    width: 100%;
+  }
+  .slip-card {
+    padding: 15px;
+  }
+}
