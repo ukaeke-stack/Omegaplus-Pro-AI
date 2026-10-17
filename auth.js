@@ -125,7 +125,7 @@ export async function initAuthDb(){
       insert into plans(id,name,description,price_ngn,billing_period,features,paystack_plan_code)
       values
         ('free','Free','Visitor and registered free access',0,'monthly','["limited predictions","basic history"]',null),
-        ('pro','Pro','Full prediction access',5000,'monthly','["full predictions","Daily Best 10","football","basketball","history","booking tools"]',null),
+        ('pro','Pro','Full prediction access',5000,'monthly','["full predictions","Daily Best 15","football","basketball","history","booking tools"]',null),
         ('premium','Premium','Advanced access for serious users',10000,'monthly','["everything in Pro","priority features","advanced analytics"]',null)
       on conflict(id) do nothing;
       delete from sessions where expires_at < now();
