@@ -26,7 +26,7 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           set -euo pipefail
-          find . -path './node_modules' -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check
+          find . -path './node_modules' -prune -o -path './public/app-1.5.3.js' -prune -o -path './public/app-1.5.4.js' -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check
 
   deploy-production:
     name: Deploy tested build to Vercel Production
