@@ -1,4 +1,4 @@
-const state={sport:"football",rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
+const state={sport:"football",rows:[],selected:new Map(),dailyBestSelected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
 function readSavedSettings(){try{return {...state.settings,...JSON.parse(localStorage.getItem("omegaplus_settings_v2")||"{}")}}catch{return {...state.settings}}}
 function applySettings(s){
   state.settings={...state.settings,...s};
@@ -349,18 +349,121 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(attempt=0){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading archived Daily Best picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
-    let rows=(d.predictions||[]).slice(0,10);
-    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date),{cache:"no-store"});
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    if(d.retryable&&attempt<2){
+      if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="No fixture response yet — retrying automatically ("+(attempt+1)+"/2)…";
+      await new Promise(resolve=>setTimeout(resolve,1400));
+      if(date!==state.date)return;
+      return loadDailyBest(attempt+1);
+    }
+    const rows=(d.predictions||[]).slice(0,15).map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const odds=rows.reduce((v,x)=>v*Number(x.odds||1),1);
+    if($("#bestPicksStatus"))$("#bestPicksStatus").textContent=d.message||"Direct Winning / BTTS Yes only · minimum odds 1.20 each · combined odds "+Number(d.combinedOdds||odds).toFixed(2);
     updateOutcomeSummary(rows,"daily");
-    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
+    if(rows.length){try{window.dispatchEvent(new CustomEvent("omega-daily-best-ready",{detail:{date,picks:rows.length,combinedOdds:Number(d.combinedOdds||odds)}}))}catch{}}
+    if(!rows.length){
+      box.innerHTML='<div class="empty">'+esc(d.message||("No 15-game quality-qualified Daily Best set is available for "+prettyDate(date)+"."))+'</div>';
+      return;
+    }
+    state.dailyBestSelected.clear();
+    let dailyBestBookingCodeForImage="";
+    const clearDailyBookingCode=()=>{dailyBestBookingCodeForImage="";const resultBox=$("#dailyBookingResult");if(resultBox)resultBox.hidden=true;};
+    const actionBar='<div class="daily-actions"><button class="primary" id="dailySelectAll">Select All '+rows.length+'</button><button class="secondary" id="dailyClearAll">Clear Daily Selections</button><button class="primary" id="dailyGenerateBooking">Generate Booking Code</button><button class="secondary" id="dailySaveImage">Save Image</button><span class="daily-combo">Combined odds: <b>'+esc(Number(d.combinedOdds||odds).toFixed(2))+'</b></span><small id="dailySelectedCombo" class="daily-selected-combo">0 selected</small></div><div id="dailyBookingResult" class="booking-result" aria-live="polite" hidden><small id="dailyBookingTarget">DAILY BEST BOOKING CODE</small><strong id="dailyBookingCode"></strong><small id="dailyBookingSource"></small><div id="dailyBookingUnavailable" class="muted"></div><button class="secondary" id="dailyCopyBooking">Copy code</button></div>';
+    box.innerHTML=rows.map(x=>'<article class="match compact"><div><div class="meta">#'+esc(x.dailyRank||"—")+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS":x.pick)+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.dailyBestSelected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.dailyBestSelected.has(x.id)?"Remove":"Select")+'</button></div></article>').join("")+actionBar;
+    const renderDailyActions=()=>{
+      const selectedRows=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      const combined=selectedRows.reduce((v,x)=>v*Number(x.odds||1),selectedRows.length?1:0);
+      const badge=$("#dailySelectedCombo");
+      if(badge)badge.textContent=selectedRows.length+" selected"+(selectedRows.length?" · odds "+combined.toFixed(2):"");
+      if($("#dailySelected"))$("#dailySelected").textContent=selectedRows.length+"/15";
+      const all=$("#dailySelectAll");if(all)all.textContent=rows.length>0&&rows.every(x=>state.dailyBestSelected.has(x.id))?"Clear All "+rows.length:"Select All "+rows.length;
+      document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>{const on=state.dailyBestSelected.has(b.dataset.topId);b.classList.toggle("selected",on);b.textContent=on?"Remove":"Select"});
+    };
+    $("#dailySelectAll").onclick=()=>{
+      clearDailyBookingCode();
+      const allSelected=rows.length>0&&rows.every(x=>state.dailyBestSelected.has(x.id));
+      if(allSelected)rows.forEach(x=>state.dailyBestSelected.delete(x.id));
+      else rows.forEach(x=>state.dailyBestSelected.set(x.id,x));
+      renderDailyActions();
+    };
+    $("#dailyClearAll").onclick=()=>{clearDailyBookingCode();rows.forEach(x=>state.dailyBestSelected.delete(x.id));renderDailyActions()};
+    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{
+      clearDailyBookingCode();
+      const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;
+      if(state.dailyBestSelected.has(row.id))state.dailyBestSelected.delete(row.id);else if(state.dailyBestSelected.size<15)state.dailyBestSelected.set(row.id,row);
+      renderDailyActions();
+    });
+    $("#dailyGenerateBooking").onclick=async()=>{
+      const chosen=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      if(!chosen.length){alert("Select at least one Daily Best game first.");return}
+      const missing=chosen.filter(x=>!x.eventId||!x.marketId||!x.outcomeId);
+      if(missing.length){alert("Some selected Daily Best rows do not contain the SportyBet market identifiers needed for booking. Refresh Daily Best and try again.");return}
+      const button=$("#dailyGenerateBooking");button.disabled=true;button.textContent="Generating…";
+      try{
+        const bookmaker=$("#bookmaker")?.value||"sportybet";
+        const response=await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:"football",bookmaker,selections:chosen.map(x=>({eventId:x.eventId,home:x.home,away:x.away,pick:x.pick,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId,date:x.date||date}))})});
+        const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"Booking code unavailable.");
+        dailyBestBookingCodeForImage=String(result.bookingCode||"");
+        $("#dailyBookingCode").textContent=dailyBestBookingCodeForImage;
+        $("#dailyBookingTarget").textContent=(result.target||bookmaker)+" · DAILY BEST BOOKING CODE";
+        $("#dailyBookingSource").textContent=(result.source||"")+" · "+(result.availableSelections?.length??chosen.length)+" available selection(s)";
+        $("#dailyBookingUnavailable").textContent=result.unavailableSelections?.length?result.unavailableSelections.length+" selection(s) were unavailable and excluded.": "";
+        $("#dailyBookingResult").hidden=false;
+        $("#dailyCopyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(result.bookingCode);$("#dailyCopyBooking").textContent="Copied"}catch{alert("Booking code: "+result.bookingCode)}};
+      }catch(e){alert(e.message||"Booking code unavailable.")}finally{button.disabled=false;button.textContent="Generate Booking Code"}
+    };
+    $("#dailySaveImage").onclick=()=>{
+      const chosen=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      if(!chosen.length){alert("Select the Daily Best games you want in the image first.");return}
+      if(!dailyBestBookingCodeForImage){alert("Generate the booking code first. It will be displayed in bold, centered directly below the app name on the saved image.");return}
+      const canvas=document.createElement("canvas"),scale=2,pad=72,rowH=240,width=1800,height=760+chosen.length*rowH;
+      canvas.width=width*scale;canvas.height=height*scale;
+      const ctx=canvas.getContext("2d");ctx.scale(scale,scale);
+      ctx.fillStyle="#071019";ctx.fillRect(0,0,width,height);
+      const fitText=(text,maxWidth,size,minSize=34,bold=false)=>{
+        let fontSize=size;
+        ctx.font=(bold?"bold ":"")+fontSize+"px Arial";
+        while(fontSize>minSize&&ctx.measureText(String(text)).width>maxWidth){fontSize--;ctx.font=(bold?"bold ":"")+fontSize+"px Arial"}
+        return fontSize;
+      };
+      ctx.textAlign="center";
+      ctx.fillStyle="#b7f34b";
+      const title="Omegaplus Auto prediction AI";
+      ctx.font="bold 100px Arial";ctx.fillText(title,width/2,112);
+      const codeLabel="Booking code: "+dailyBestBookingCodeForImage;
+      const codeFontSize=fitText(codeLabel,width-pad*2,80,44,true);
+      ctx.font="bold "+codeFontSize+"px Arial";ctx.fillText(codeLabel,width/2,222);
+      ctx.textAlign="left";
+      ctx.fillStyle="#edf6fc";
+      const dateLabel=prettyDate(date)+" · "+chosen.length+" selected games";
+      ctx.font=fitText(dateLabel,width-pad*2,54,42,false)+"px Arial";ctx.fillText(dateLabel,pad,326);
+      ctx.fillStyle="#91a5b6";
+      const criteriaLabel="1X2 or BTTS Yes only · Minimum odds 1.20";
+      ctx.font=fitText(criteriaLabel,width-pad*2,54,42,false)+"px Arial";ctx.fillText(criteriaLabel,pad,402);
+      ctx.fillStyle="#b7f34b";
+      const combinedLabel="Combined odds: "+chosen.reduce((v,x)=>v*Number(x.odds||1),1).toFixed(2);
+      ctx.font="bold 58px Arial";ctx.fillText(combinedLabel,pad,478);
+      let y=586;
+      chosen.forEach((x,i)=>{
+        ctx.fillStyle=i%2?"#0d1925":"#10202d";ctx.fillRect(pad,y-72,width-pad*2,rowH-8);
+        const meta="#"+(x.dailyRank||i+1)+" · "+String(x.league||"")+" · "+String(x.time||"");
+        ctx.fillStyle="#91a5b6";ctx.font=fitText(meta,width-pad*2-48,54,34,false)+"px Arial";ctx.fillText(meta,pad+24,y-8);
+        const teams=(x.home||"")+" vs "+(x.away||"");
+        ctx.fillStyle="#edf6fc";ctx.font="bold "+fitText(teams,width-pad*2-48,54,34,true)+"px Arial";ctx.fillText(teams,pad+24,y+62);
+        const marketLine=(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS Yes":x.market||"")+" · "+(x.pick||"")+" · @"+Number(x.odds||0).toFixed(2);
+        ctx.fillStyle="#b7f34b";ctx.font="bold "+fitText(marketLine,width-pad*2-48,54,34,true)+"px Arial";ctx.fillText(marketLine,pad+24,y+132);
+        y+=rowH;
+      });
+      ctx.fillStyle="#91a5b6";ctx.font="30px Arial";ctx.fillText("Predictions are estimates; verify live odds and availability before booking.",pad,height-36);
+      const fileName="omegaplus-daily-best-"+date+".png";const dataUrl=canvas.toDataURL("image/png");if(window.AndroidApp&&typeof window.AndroidApp.saveImage==="function"){window.AndroidApp.saveImage(dataUrl.split(",")[1],fileName);return}const link=document.createElement("a");link.download=fileName;link.href=dataUrl;link.target="_blank";document.body.appendChild(link);link.click();link.remove();
+    };
+    renderDailyActions();
     refreshHistory(date).catch(()=>{});
-    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date,forceRefresh=false){
