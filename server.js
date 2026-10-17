@@ -620,11 +620,10 @@ app.get("/api/app/config",async(_,r)=>{
     const s=await getAdminSettings();
     r.setHeader("Cache-Control","no-store");
     r.json({ok:true,config:{
-      maintenanceMode:s.maintenanceMode,maintenanceMessage:s.maintenanceMessage,
-      assistantEnabled:s.assistantEnabled,voiceInputEnabled:s.voiceInputEnabled,voiceRepliesEnabled:s.voiceRepliesEnabled,
-      announcementEnabled:s.announcementEnabled,announcementTitle:s.announcementTitle,
-      announcementMessage:s.announcementMessage,announcementType:s.announcementType,
-      notificationsEnabled:s.notificationsEnabled,browserNotificationsEnabled:s.browserNotificationsEnabled
+      maintenanceMode:Boolean(s.maintenanceMode),maintenanceMessage:"",
+      assistantEnabled:true,voiceInputEnabled:true,voiceRepliesEnabled:true,
+      announcementEnabled:false,announcementTitle:"",announcementMessage:"",announcementType:"info",
+      notificationsEnabled:true,browserNotificationsEnabled:true
     }});
   }catch(e){r.status(503).json({ok:false,error:"App configuration is temporarily unavailable."})}
 });
@@ -854,6 +853,11 @@ app.get("/api/predictions",async(req,r)=>{
   }catch(e){r.status(502).json({ok:false,error:e.message,predictions:[]})}
 });
 
+function normalizedMarketProbability(market,outcome){
+  const active=(market?.outcomes||[]).filter(o=>o.isActive!==false&&Number.isFinite(Number(o.odds))&&Number(o.odds)>1);
+  const total=active.reduce((sum,o)=>sum+1/Number(o.odds),0);
+  return total>0&&Number(outcome?.odds)>1?(1/Number(outcome.odds))/total*100:0;
+}
 function dailyCoreMarketType(market){
   if(isDirectWinningMarket(market))return "1x2";
   if(marketMatches(market,"btts"))return "btts";
