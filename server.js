@@ -683,11 +683,13 @@ app.get("/api/history",async(req,r)=>{
           return updated;
         });
         const predictions=settleRows(archive.predictions);
+        const dailyBestPredictions=Array.isArray(archive.dailyBestPredictions)?settleRows(archive.dailyBestPredictions):null;
         const correctScores=settleRows((archive.correctScores||[]).map(x=>({...x,pick:x.pick||x.bestScore?.score||x.bestScore?.label||x.bestScore?.result||""})));
         const resultSignature=rows=>JSON.stringify((Array.isArray(rows)?rows:[]).map(x=>[x.providerId,x.date,x.home,x.away,x.homeScore,x.awayScore,x.status,x.verificationStatus]).sort((a,b)=>String(a[0]||"").localeCompare(String(b[0]||""))));
         const resultsChanged=resultSignature(archive.results)!==resultSignature(resultRows);
         if(changed||resultsChanged){
           archive.predictions=predictions;
+          if(dailyBestPredictions)archive.dailyBestPredictions=dailyBestPredictions;
           archive.correctScores=correctScores;
           archive.results=resultRows;
           archive.settlementUpdatedAt=new Date().toISOString();
