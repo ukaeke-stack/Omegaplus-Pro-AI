@@ -27,6 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           find . -path './node_modules' -prune -o -path './public/app-1.5.3.js' -prune -o -path './public/app-1.5.4.js' -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check
+      - name: Run Snap Predict regression tests
+        run: node --test test/snap-image-matching.test.js
 
   deploy-production:
     name: Deploy tested build to Vercel Production
