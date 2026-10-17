@@ -147,7 +147,7 @@ async function refreshHistory(date=historySelectedDate()){
       const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
       archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    let day=(archive?.dailyBestPredictions||archive?.predictions||[]).slice(0,15).map(x=>({...x,date,sport:state.sport}));
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
     // Use the result snapshot returned with the archive. A separate forced refresh here
@@ -434,7 +434,7 @@ async function loadDailyBest(attempt=0){
       };
       ctx.textAlign="center";
       ctx.fillStyle="#b7f34b";
-      const title="Omegaplus Auto prediction AI";
+      const title="Omegaplus Pro AI";
       ctx.font="bold 100px Arial";ctx.fillText(title,width/2,112);
       const codeLabel="Booking code: "+dailyBestBookingCodeForImage;
       const codeFontSize=fitText(codeLabel,width-pad*2,80,44,true);
@@ -461,7 +461,7 @@ async function loadDailyBest(attempt=0){
         y+=rowH;
       });
       ctx.fillStyle="#91a5b6";ctx.font="30px Arial";ctx.fillText("Predictions are estimates; verify live odds and availability before booking.",pad,height-36);
-      const fileName="omegaplus-daily-best-"+date+".png";const dataUrl=canvas.toDataURL("image/png");if(window.AndroidApp&&typeof window.AndroidApp.saveImage==="function"){window.AndroidApp.saveImage(dataUrl.split(",")[1],fileName);return}const link=document.createElement("a");link.download=fileName;link.href=dataUrl;link.target="_blank";document.body.appendChild(link);link.click();link.remove();
+      const fileName="omegaplus-pro-daily-best-"+date+".png";const dataUrl=canvas.toDataURL("image/png");if(window.AndroidApp&&typeof window.AndroidApp.saveImage==="function"){window.AndroidApp.saveImage(dataUrl.split(",")[1],fileName);return}const link=document.createElement("a");link.download=fileName;link.href=dataUrl;link.target="_blank";document.body.appendChild(link);link.click();link.remove();
     };
     renderDailyActions();
     refreshHistory(date).catch(()=>{});
