@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,7 +33,7 @@ jobs:
 
   deploy-production:
     name: Deploy tested build to Vercel Production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: verify
     runs-on: ubuntu-latest
     environment: production
@@ -49,6 +50,11 @@ jobs:
           persist-credentials: false
       - name: Install pinned Vercel CLI
         run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+      - name: Verify Vercel deployment credential
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          test -n "$VERCEL_TOKEN" || { echo "::error::Missing VERCEL_TOKEN secret. Add it in GitHub repository Settings > Secrets and variables > Actions, then run this workflow again."; exit 1; }
       - name: Pull production project configuration
         run: vercel pull --yes --environment=production
         env:
