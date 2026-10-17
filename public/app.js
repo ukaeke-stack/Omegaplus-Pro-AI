@@ -1,4 +1,5 @@
-const state={sport:"football",rows:[],selected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
+let snapPredictMatches=[];let snapPredictSource="image";let snapResultsType="image";let snapBetterOptionMap=new Map();
+const state={sport:"football",rows:[],selected:new Map(),dailyBestSelected:new Map(),markets:new Set(["ou"]),selections:new Set(["ou::over_1_5"]),date:"",dates:new Set(),settings:{games:20,minConfidence:0,defaultMarket:"ou",defaultSelection:"Over 1.5",riskProfile:"Balanced",oddsMin:"",oddsMax:"",autoRefresh:false,showConfidence:true,notifications:false}};
 function readSavedSettings(){try{return {...state.settings,...JSON.parse(localStorage.getItem("omegaplus_settings_v2")||"{}")}}catch{return {...state.settings}}}
 function applySettings(s){
   state.settings={...state.settings,...s};
@@ -146,7 +147,7 @@ async function refreshHistory(date=historySelectedDate()){
       const generated=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
       archive={date,sport:state.sport,predictions:generated.predictions||[],correctScores:[],results:[]};
     }
-    let day=(archive?.predictions||[]).slice(0,10).map(x=>({...x,date,sport:state.sport}));
+    let day=(archive?.dailyBestPredictions||archive?.predictions||[]).slice(0,15).map(x=>({...x,date,sport:state.sport}));
     let correctScoreRows=(archive?.correctScores||[]).slice(0,5).map((x,i)=>({...x,id:x.id||"cs_"+(x.eventId||i),eventId:x.eventId||x.id||("cs_"+i),sport:"football",date,market:"Correct Score",outcome:x.outcome||"Pending"}));
     let resultRows=Array.isArray(archive?.results)?archive.results:[];
     // Use the result snapshot returned with the archive. A separate forced refresh here
@@ -349,18 +350,121 @@ async function loadCalendar(){
     $("#calendarGames").innerHTML=rows.map(x=>'<article class="calendar-game"><div><small>'+esc(x.league)+'</small><b>'+esc(x.home)+' vs '+esc(x.away)+'</b></div><time>'+esc(x.time)+'</time></article>').join("");
   }catch{$("#calendarStatus").textContent="Unable to load fixtures for this date."}
 }
-async function loadDailyBest(){
+async function loadDailyBest(attempt=0){
   const box=$("#dailyBest");if(!box)return;const date=state.date;
-  box.innerHTML='<div class="empty">Loading 10 best games for '+esc(prettyDate(date))+'…</div>';
+  box.innerHTML='<div class="empty">Loading archived Daily Best picks for '+esc(prettyDate(date))+'…</div>';
   try{
-    const limit=10,market="all";const d=await jsonFetch("/api/daily-best?sport="+encodeURIComponent(state.sport)+"&date="+encodeURIComponent(date));
-    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="Strict daily Top 10 · mixed markets · minimum odds 1.10";
-    let rows=(d.predictions||[]).slice(0,10);
-    rows=rows.map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const d=await jsonFetch("/api/daily-best?sport=football&date="+encodeURIComponent(date),{cache:"no-store"});
+    if(!d.ok)throw new Error(d.error||"Unable to load daily picks.");
+    if(d.retryable&&attempt<2){
+      if($("#bestPicksStatus"))$("#bestPicksStatus").textContent="No fixture response yet — retrying automatically ("+(attempt+1)+"/2)…";
+      await new Promise(resolve=>setTimeout(resolve,1400));
+      if(date!==state.date)return;
+      return loadDailyBest(attempt+1);
+    }
+    const rows=(d.predictions||[]).slice(0,15).map(x=>({...x,outcome:x.outcome||"Pending"}));
+    const odds=rows.reduce((v,x)=>v*Number(x.odds||1),1);
+    if($("#bestPicksStatus"))$("#bestPicksStatus").textContent=d.message||"Direct Winning / BTTS Yes only · minimum odds 1.20 each · combined odds "+Number(d.combinedOdds||odds).toFixed(2);
     updateOutcomeSummary(rows,"daily");
-    box.innerHTML=rows.length?rows.map(x=>'<article class="match compact"><div><div class="meta">'+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · Grade '+esc(x.qualityGrade||"—")+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.selected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.selected.has(x.id)?"Remove":"Select")+'</button></div></article>').join(""):'<div class="empty">No qualifying games found for '+esc(prettyDate(date))+'.</div>';
+    if(rows.length){try{window.dispatchEvent(new CustomEvent("omega-daily-best-ready",{detail:{date,picks:rows.length,combinedOdds:Number(d.combinedOdds||odds)}}))}catch{}}
+    if(!rows.length){
+      box.innerHTML='<div class="empty">'+esc(d.message||("No 15-game quality-qualified Daily Best set is available for "+prettyDate(date)+"."))+'</div>';
+      return;
+    }
+    state.dailyBestSelected.clear();
+    let dailyBestBookingCodeForImage="";
+    const clearDailyBookingCode=()=>{dailyBestBookingCodeForImage="";const resultBox=$("#dailyBookingResult");if(resultBox)resultBox.hidden=true;};
+    const actionBar='<div class="daily-actions"><button class="primary" id="dailySelectAll">Select All '+rows.length+'</button><button class="secondary" id="dailyClearAll">Clear Daily Selections</button><button class="primary" id="dailyGenerateBooking">Generate Booking Code</button><button class="secondary" id="dailySaveImage">Save Image</button><span class="daily-combo">Combined odds: <b>'+esc(Number(d.combinedOdds||odds).toFixed(2))+'</b></span><small id="dailySelectedCombo" class="daily-selected-combo">0 selected</small></div><div id="dailyBookingResult" class="booking-result" aria-live="polite" hidden><small id="dailyBookingTarget">DAILY BEST BOOKING CODE</small><strong id="dailyBookingCode"></strong><small id="dailyBookingSource"></small><div id="dailyBookingUnavailable" class="muted"></div><button class="secondary" id="dailyCopyBooking">Copy code</button></div>';
+    box.innerHTML=rows.map(x=>'<article class="match compact"><div><div class="meta">#'+esc(x.dailyRank||"—")+' · '+esc(x.league)+' · '+esc(x.time)+'</div><div class="teams">'+esc(x.home)+' <span>vs</span> '+esc(x.away)+'</div><div class="pick"><span>'+esc(x.market)+' · '+esc(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS":x.pick)+' · Odds '+esc(Number(x.odds||0).toFixed(2))+'</span><b>'+esc(x.pick)+'</b></div><div class="pick"><span>Result</span><b>'+esc(x.outcome)+'</b></div>'+predictionReasonsHtml(x)+'</div><div class="prob"><strong>'+esc(x.confidence)+'%</strong><button class="select '+(state.dailyBestSelected.has(x.id)?"selected":"")+'" data-top-id="'+esc(x.id)+'">'+(state.dailyBestSelected.has(x.id)?"Remove":"Select")+'</button></div></article>').join("")+actionBar;
+    const renderDailyActions=()=>{
+      const selectedRows=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      const combined=selectedRows.reduce((v,x)=>v*Number(x.odds||1),selectedRows.length?1:0);
+      const badge=$("#dailySelectedCombo");
+      if(badge)badge.textContent=selectedRows.length+" selected"+(selectedRows.length?" · odds "+combined.toFixed(2):"");
+      if($("#dailySelected"))$("#dailySelected").textContent=selectedRows.length+"/15";
+      const all=$("#dailySelectAll");if(all)all.textContent=rows.length>0&&rows.every(x=>state.dailyBestSelected.has(x.id))?"Clear All "+rows.length:"Select All "+rows.length;
+      document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>{const on=state.dailyBestSelected.has(b.dataset.topId);b.classList.toggle("selected",on);b.textContent=on?"Remove":"Select"});
+    };
+    $("#dailySelectAll").onclick=()=>{
+      clearDailyBookingCode();
+      const allSelected=rows.length>0&&rows.every(x=>state.dailyBestSelected.has(x.id));
+      if(allSelected)rows.forEach(x=>state.dailyBestSelected.delete(x.id));
+      else rows.forEach(x=>state.dailyBestSelected.set(x.id,x));
+      renderDailyActions();
+    };
+    $("#dailyClearAll").onclick=()=>{clearDailyBookingCode();rows.forEach(x=>state.dailyBestSelected.delete(x.id));renderDailyActions()};
+    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{
+      clearDailyBookingCode();
+      const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;
+      if(state.dailyBestSelected.has(row.id))state.dailyBestSelected.delete(row.id);else if(state.dailyBestSelected.size<15)state.dailyBestSelected.set(row.id,row);
+      renderDailyActions();
+    });
+    $("#dailyGenerateBooking").onclick=async()=>{
+      const chosen=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      if(!chosen.length){alert("Select at least one Daily Best game first.");return}
+      const missing=chosen.filter(x=>!x.eventId||!x.marketId||!x.outcomeId);
+      if(missing.length){alert("Some selected Daily Best rows do not contain the SportyBet market identifiers needed for booking. Refresh Daily Best and try again.");return}
+      const button=$("#dailyGenerateBooking");button.disabled=true;button.textContent="Generating…";
+      try{
+        const bookmaker=$("#bookmaker")?.value||"sportybet";
+        const response=await fetch("/api/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sport:"football",bookmaker,selections:chosen.map(x=>({eventId:x.eventId,home:x.home,away:x.away,pick:x.pick,marketId:x.marketId,specifier:x.specifier,outcomeId:x.outcomeId,date:x.date||date}))})});
+        const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"Booking code unavailable.");
+        dailyBestBookingCodeForImage=String(result.bookingCode||"");
+        $("#dailyBookingCode").textContent=dailyBestBookingCodeForImage;
+        $("#dailyBookingTarget").textContent=(result.target||bookmaker)+" · DAILY BEST BOOKING CODE";
+        $("#dailyBookingSource").textContent=(result.source||"")+" · "+(result.availableSelections?.length??chosen.length)+" available selection(s)";
+        $("#dailyBookingUnavailable").textContent=result.unavailableSelections?.length?result.unavailableSelections.length+" selection(s) were unavailable and excluded.": "";
+        $("#dailyBookingResult").hidden=false;
+        $("#dailyCopyBooking").onclick=async()=>{try{await navigator.clipboard.writeText(result.bookingCode);$("#dailyCopyBooking").textContent="Copied"}catch{alert("Booking code: "+result.bookingCode)}};
+      }catch(e){alert(e.message||"Booking code unavailable.")}finally{button.disabled=false;button.textContent="Generate Booking Code"}
+    };
+    $("#dailySaveImage").onclick=()=>{
+      const chosen=rows.filter(x=>state.dailyBestSelected.has(x.id));
+      if(!chosen.length){alert("Select the Daily Best games you want in the image first.");return}
+      if(!dailyBestBookingCodeForImage){alert("Generate the booking code first. It will be displayed in bold, centered directly below the app name on the saved image.");return}
+      const canvas=document.createElement("canvas"),scale=2,pad=72,rowH=240,width=1800,height=760+chosen.length*rowH;
+      canvas.width=width*scale;canvas.height=height*scale;
+      const ctx=canvas.getContext("2d");ctx.scale(scale,scale);
+      ctx.fillStyle="#071019";ctx.fillRect(0,0,width,height);
+      const fitText=(text,maxWidth,size,minSize=34,bold=false)=>{
+        let fontSize=size;
+        ctx.font=(bold?"bold ":"")+fontSize+"px Arial";
+        while(fontSize>minSize&&ctx.measureText(String(text)).width>maxWidth){fontSize--;ctx.font=(bold?"bold ":"")+fontSize+"px Arial"}
+        return fontSize;
+      };
+      ctx.textAlign="center";
+      ctx.fillStyle="#b7f34b";
+      const title="Omegaplus Pro AI";
+      ctx.font="bold 100px Arial";ctx.fillText(title,width/2,112);
+      const codeLabel="Booking code: "+dailyBestBookingCodeForImage;
+      const codeFontSize=fitText(codeLabel,width-pad*2,80,44,true);
+      ctx.font="bold "+codeFontSize+"px Arial";ctx.fillText(codeLabel,width/2,222);
+      ctx.textAlign="left";
+      ctx.fillStyle="#edf6fc";
+      const dateLabel=prettyDate(date)+" · "+chosen.length+" selected games";
+      ctx.font=fitText(dateLabel,width-pad*2,54,42,false)+"px Arial";ctx.fillText(dateLabel,pad,326);
+      ctx.fillStyle="#91a5b6";
+      const criteriaLabel="1X2 or BTTS Yes only · Minimum odds 1.20";
+      ctx.font=fitText(criteriaLabel,width-pad*2,54,42,false)+"px Arial";ctx.fillText(criteriaLabel,pad,402);
+      ctx.fillStyle="#b7f34b";
+      const combinedLabel="Combined odds: "+chosen.reduce((v,x)=>v*Number(x.odds||1),1).toFixed(2);
+      ctx.font="bold 58px Arial";ctx.fillText(combinedLabel,pad,478);
+      let y=586;
+      chosen.forEach((x,i)=>{
+        ctx.fillStyle=i%2?"#0d1925":"#10202d";ctx.fillRect(pad,y-72,width-pad*2,rowH-8);
+        const meta="#"+(x.dailyRank||i+1)+" · "+String(x.league||"")+" · "+String(x.time||"");
+        ctx.fillStyle="#91a5b6";ctx.font=fitText(meta,width-pad*2-48,54,34,false)+"px Arial";ctx.fillText(meta,pad+24,y-8);
+        const teams=(x.home||"")+" vs "+(x.away||"");
+        ctx.fillStyle="#edf6fc";ctx.font="bold "+fitText(teams,width-pad*2-48,54,34,true)+"px Arial";ctx.fillText(teams,pad+24,y+62);
+        const marketLine=(x.marketType==="1x2"?"1X2":x.marketType==="btts"?"BTTS Yes":x.market||"")+" · "+(x.pick||"")+" · @"+Number(x.odds||0).toFixed(2);
+        ctx.fillStyle="#b7f34b";ctx.font="bold "+fitText(marketLine,width-pad*2-48,54,34,true)+"px Arial";ctx.fillText(marketLine,pad+24,y+132);
+        y+=rowH;
+      });
+      ctx.fillStyle="#91a5b6";ctx.font="30px Arial";ctx.fillText("Predictions are estimates; verify live odds and availability before booking.",pad,height-36);
+      const fileName="omegaplus-pro-daily-best-"+date+".png";const dataUrl=canvas.toDataURL("image/png");if(window.AndroidApp&&typeof window.AndroidApp.saveImage==="function"){window.AndroidApp.saveImage(dataUrl.split(",")[1],fileName);return}const link=document.createElement("a");link.download=fileName;link.href=dataUrl;link.target="_blank";document.body.appendChild(link);link.click();link.remove();
+    };
+    renderDailyActions();
     refreshHistory(date).catch(()=>{});
-    document.querySelectorAll("#dailyBest [data-top-id]").forEach(b=>b.onclick=()=>{const row=rows.find(x=>x.id===b.dataset.topId);if(!row)return;const selected=state.selected.has(row.id);if(selected)state.selected.delete(row.id);else if(state.selected.size<50)state.selected.set(row.id,row);b.classList.toggle("selected",!selected);b.textContent=selected?"Select":"Remove";renderSlip();});
   }catch(e){renderHistory(date);box.innerHTML='<div class="empty">'+esc(e.message||"Unable to load daily picks.")+'</div>'}
 }
 async function loadCorrectScores(date=$("#csDate")?.value||state.date,forceRefresh=false){
@@ -397,8 +501,26 @@ function showPage(n){
 const side=$("#side"),backdrop=$("#backdrop");function closeSide(){side.classList.remove("open");backdrop.classList.remove("show")}function openSide(){side.classList.add("open");backdrop.classList.add("show")}
 $("#menu").onclick=()=>side.classList.contains("open")?closeSide():openSide();$("#sideClose").onclick=closeSide;backdrop.onclick=closeSide;
 $$("[data-page]").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
+function snapEsc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function snapStatus(message,error=false){const el=$("#snapStatus");if(!el)return;el.hidden=!message;el.textContent=message||"";el.classList.toggle("error",!!error)}
+function snapMode(mode){snapPredictSource=mode;$("#snapImagePanel").hidden=mode!=="image";$("#snapCodePanel").hidden=mode!=="code";$("#snapImageMode").classList.toggle("active",mode==="image");$("#snapCodeMode").classList.toggle("active",mode==="code");$("#snapImageMode").setAttribute("aria-selected",String(mode==="image"));$("#snapCodeMode").setAttribute("aria-selected",String(mode==="code"));snapStatus("");}
+async function snapLoadOcr(){if(window.Tesseract)return window.Tesseract;return new Promise((resolve,reject)=>{const script=document.createElement("script");script.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";script.onload=()=>window.Tesseract?resolve(window.Tesseract):reject(new Error("OCR library did not load."));script.onerror=()=>reject(new Error("Could not load image text reader. Check your connection and try again."));document.head.appendChild(script)})}
+function snapRenderMatches(data){snapResultsType=snapPredictSource;const received=Array.isArray(data.matches)?data.matches:[];snapPredictMatches=received.filter(m=>String(m.home||"").trim()&&String(m.away||"").trim()&&!/^(unknown team|unknown|sportybet|fixture unavailable|booked selection|selection read from booking)$/i.test(String(m.home||"").trim())&&!/^(unknown team|unknown|sportybet|fixture unavailable|booked selection|selection read from booking)$/i.test(String(m.away||"").trim()));$("#snapResults").innerHTML="";$("#snapBetterResults").innerHTML="";$("#snapBetterWrap").hidden=!snapPredictMatches.length;if(!snapPredictMatches.length){snapPredictMatches=[];snapStatus(data.message||"No reliable fixture match was found. The screenshot may have been read, but team names could not be matched confidently. Try a clearer screenshot showing the full fixture names.",true);return}
+snapStatus("Matched "+snapPredictMatches.length+" fixture"+(snapPredictMatches.length===1?"":"s")+". Existing slip selections were not changed. Original market/pick is shown only when recognized; no replacement is applied automatically.");
+$("#snapResults").innerHTML=snapPredictMatches.map((m,i)=>{const time=m.startTimeMs?new Date(m.startTimeMs).toLocaleString(undefined,{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"";const confidence=m.confidence==null?"Not available":snapEsc(m.confidence)+"%";const market=m.market?snapEsc(m.market):"Market not identified";const pick=m.pick?snapEsc(m.pick):"Selection not identified";const odds=m.odds==null?"—":snapEsc(m.odds);const title=snapResultsType==="code"?"Original booked selection":(m.selectionType==="original"?"Original screenshot selection":"Fixture matched · original pick not identified");const retainKey="snapretain"+i;const retainOption={...m,pick:m.pick||m.selection||"",odds:Number(m.odds)||0,market:m.market||"",marketId:m.selectedMarketId||m.marketId||m.selected?.marketId||"",specifier:m.selectedSpecifier||m.specifier||m.selected?.specifier||"",outcomeId:m.selectedOutcomeId||m.outcomeId||m.selected?.outcomeId||"",eventId:m.eventId,home:m.home,away:m.away};snapBetterOptionMap.set(retainKey,retainOption);const retained=state.selected.has(snapOptionSlipId(retainOption));const recommendation=m.recommendation;const recommendationKey="snaprec"+i;let recommendationHtml="";if(recommendation){const recOption={...recommendation,eventId:m.eventId,home:m.home,away:m.away,league:m.league,startTimeMs:m.startTimeMs};recOption.pick=recOption.pick||recOption.selection||"";recOption.market=recOption.market||"";recOption.marketId=recOption.marketId||recOption.selectedMarketId||"";recOption.specifier=recOption.specifier||recOption.selectedSpecifier||"";recOption.outcomeId=recOption.outcomeId||recOption.selectedOutcomeId||"";snapBetterOptionMap.set(recommendationKey,recOption);const recRetained=state.selected.has(snapOptionSlipId(recOption));recommendationHtml='<div class="snap-recommendation"><small>Separate AI suggestion · not applied to your original selection</small><b>'+snapEsc(recOption.market||"Market")+' · '+snapEsc(recOption.pick||"Suggestion")+'</b><button type="button" class="snap-retain-option'+(recRetained?" selected":"")+'" data-snap-retain="'+recommendationKey+'">'+(recRetained?"✓ Retained":"＋ Add AI suggestion")+"</button></div>"}const displayMarket=m.market?snapEsc(m.market):"Market not identified";const displayPick=m.pick?snapEsc(m.pick):"Not confidently identified from screenshot";return '<article class="snap-match"><div class="snap-match-top"><span class="snap-match-index">GAME '+(i+1)+'</span><span class="snap-match-time">'+snapEsc(time)+'</span></div><strong class="snap-teams">'+snapEsc(m.home)+' <span>vs</span> '+snapEsc(m.away)+'</strong><small class="snap-league">'+snapEsc(m.league||"League unavailable")+'</small><div class="snap-pick-row"><div><small>'+title+'</small><b>'+displayMarket+' · '+displayPick+'</b></div><div class="snap-odds"><small>Odds</small><b>'+odds+'</b></div></div><div class="snap-probability"><span>Confidence level</span><b>'+confidence+'</b></div>'+(m.selectionType==="original"?'<button type="button" class="snap-retain-option'+(retained?" selected":"")+'" data-snap-retain="'+retainKey+'">'+(retained?"✓ Retained":"＋ Retain original selection")+"</button>":'<p class="snap-disclaimer">Original pick was not confidently identified, so it has not been replaced.</p>')+recommendationHtml+"</article>"}).join("");$$("#snapResults [data-snap-retain]").forEach(b=>b.onclick=()=>snapAddBetterOption(b.dataset.snapRetain,b));
+const note=data.probabilityNote||"Percentages are odds-implied estimates from current odds, not guarantees.";$("#snapResults").insertAdjacentHTML("beforeend",'<p class="snap-disclaimer">'+snapEsc(note)+'</p>')}
+async function snapAnalyzeImage(){const file=$("#fixtureFile")?.files?.[0];if(!file){snapStatus("Choose an image first.",true);return}const button=$("#snapAnalyzeImage");button.disabled=true;button.textContent="Reading image…";$("#snapBetterWrap").hidden=true;$("#snapResults").innerHTML="";try{snapStatus("Reading the text in your screenshot…");const T=await snapLoadOcr();const result=await T.recognize(file,"eng");const text=String(result?.data?.text||"").trim();if(text.length<12)throw new Error("Very little text could be read. Try a clearer screenshot or crop the booked-games section.");snapStatus("Matching extracted teams with current SportyBet fixtures…");const response=await fetch("/api/snap-predict/analyze-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ocrText:text})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"Image analysis failed.");snapRenderMatches(data)}catch(e){snapStatus(e.message||"Could not analyze this image.",true)}finally{button.disabled=!$("#fixtureFile")?.files?.length;button.textContent="Analyze Games"}}
+async function snapAnalyzeCode(){const code=$("#snapBookingCode").value.trim();if(!code){snapStatus("Paste or type a SportyBet booking code first.",true);return}const button=$("#snapAnalyzeCode");button.disabled=true;button.textContent="Analyzing code…";$("#snapBetterWrap").hidden=true;$("#snapResults").innerHTML="";try{snapStatus("Retrieving your booking selections from SportyBet…");const response=await fetch("/api/snap-predict/booking-code",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"Booking-code analysis failed.");snapRenderMatches(data)}catch(e){snapStatus(e.message||"Could not analyze this booking code.",true)}finally{button.disabled=false;button.textContent="Analyze Booking Code"}}
+function snapOptionSlipId(o){return ["snap",o.eventId||"unknown-event",o.marketId||o.selectedMarketId||o.market||"unknown-market",o.specifier||o.selectedSpecifier||"",o.outcomeId||o.selectedOutcomeId||o.pick||o.selection||"unknown-pick"].join("_")}
+function snapSyncOptionButtons(id){$$("#snapResults [data-snap-retain],#snapBetterResults [data-snap-add]").forEach(b=>{const o=snapBetterOptionMap.get(b.dataset.snapRetain||b.dataset.snapAdd);if(!o||snapOptionSlipId(o)!==id)return;const retained=state.selected.has(id);b.classList.toggle("selected",retained);if(b.hasAttribute("data-snap-retain")){b.textContent=retained?"✓ Retained":"＋ Retain selection";b.setAttribute("aria-label",(retained?"Remove ":"Retain ")+(o.pick||"selection")+(retained?" from":" to")+" slip")}else{b.textContent=retained?"✓":"＋";b.setAttribute("aria-label",(retained?"Remove ":"Add ")+(o.pick||"selection")+" to slip")}})}
+function snapAddBetterOption(key,button){const o=snapBetterOptionMap.get(key);if(!o||!o.eventId){snapStatus("This selection is missing its fixture ID and cannot be added to the slip.",true);return}const id=snapOptionSlipId(o);if(state.selected.has(id)){state.selected.delete(id)}else{if(state.selected.size>=50){snapStatus("Your slip can contain up to 50 selections.",true);return}const date=o.startTimeMs?dateKey(new Date(o.startTimeMs)):dateKey(new Date());state.selected.set(id,{...o,id,date,sport:"football",confidence:o.confidence??null})}renderSlip();saveSlip();snapSyncOptionButtons(id);if($("#slipStatus"))$("#slipStatus").textContent=state.selected.size?"Slip saved on this device · "+state.selected.size+" selection(s)":"Your slip is empty."}
+async function snapFindBetter(){const ids=[...new Set(snapPredictMatches.map(m=>String(m.eventId||"")).filter(Boolean))];if(!ids.length)return;const button=$("#snapBetterOptions");button.disabled=true;button.textContent="Finding alternatives…";try{const response=await fetch("/api/snap-predict/better-options",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({eventIds:ids,selections:snapPredictMatches.map(m=>({eventId:m.eventId,marketId:m.selectedMarketId||m.marketId||m.selected?.marketId||"",specifier:m.selectedSpecifier||m.specifier||m.selected?.specifier||"",outcomeId:m.selectedOutcomeId||m.outcomeId||m.selected?.outcomeId||""}))})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"Could not find alternatives.");let optionIndex=0;$("#snapBetterResults").innerHTML=(data.matches||[]).map(m=>'<article class="snap-match snap-alternatives"><strong class="snap-teams">'+snapEsc(m.home)+' <span>vs</span> '+snapEsc(m.away)+'</strong>'+(m.options||[]).slice(0,8).map(o=>{const key="snapopt"+(optionIndex++);const option={...o,eventId:m.eventId,home:m.home,away:m.away};snapBetterOptionMap.set(key,option);const selected=state.selected.has(snapOptionSlipId(option));return '<div class="snap-alt-row"><span>'+snapEsc(o.market)+' · '+snapEsc(o.pick)+'</span><span class="snap-alt-right"><b>'+snapEsc(o.odds)+' <small>odds</small></b><button type="button" class="snap-add-option'+(selected?' selected':'')+'" data-snap-add="'+key+'" aria-label="'+(selected?'Remove':'Add')+' '+snapEsc(o.pick)+' to slip">'+(selected?'✓':'＋')+'</button></span></div>'}).join("")+'</article>').join("")+'<p class="snap-disclaimer">'+snapEsc(data.note||"Alternatives are ranked using current market-implied estimates and are not guarantees.")+'</p>';$("#snapBetterResults").querySelectorAll("[data-snap-add]").forEach(b=>b.onclick=()=>snapAddBetterOption(b.dataset.snapAdd,b));if(!data.matches?.length)throw new Error("No current alternatives were available for these fixtures.")}catch(e){$("#snapBetterResults").innerHTML='<p class="snap-status error">'+snapEsc(e.message||"Could not find alternatives.")+'</p>'}finally{button.disabled=false;button.textContent="Find Better Options"}}
 $("#snapToggle").onclick=()=>{$("#snapBody").classList.toggle("open");$("#snapArrow").textContent=$("#snapBody").classList.contains("open")?"⌃":"⌄"};
-$("#fixtureFile").onchange=e=>$("#fileName").textContent=e.target.files[0]?"Selected: "+e.target.files[0].name:"";
+$("#snapImageMode").onclick=()=>snapMode("image");$("#snapCodeMode").onclick=()=>snapMode("code");
+$("#fixtureFile").onchange=e=>{const f=e.target.files[0],preview=$("#snapImagePreview"),icon=$("#snapUploadIcon"),title=$("#snapUploadTitle"),hint=$("#snapUploadHint");$("#fileName").textContent=f?"Image selected: "+f.name+" · "+Math.max(1,Math.round(f.size/1024))+" KB":"No image selected";$("#snapAnalyzeImage").disabled=!f;if(preview){if(f&&["image/png","image/jpeg","image/webp"].includes(String(f.type||"").toLowerCase())){preview.src=URL.createObjectURL(f);preview.hidden=false;if(icon)icon.hidden=true;if(title)title.textContent="Image ready to analyze";if(hint)hint.textContent="Preview loaded · tap to choose another image"}else{preview.removeAttribute("src");preview.hidden=true;if(icon)icon.hidden=false;if(title)title.textContent="Upload a booked-games screenshot";if(hint)hint.textContent="PNG, JPG or WEBP · clear text works best"}}$("#snapResults").innerHTML="";$("#snapBetterResults").innerHTML="";$("#snapBetterWrap").hidden=true;snapPredictMatches=[];snapStatus("")};
+$("#snapAnalyzeImage").onclick=snapAnalyzeImage;$("#snapAnalyzeCode").onclick=snapAnalyzeCode;$("#snapBetterOptions").onclick=snapFindBetter;
+$("#snapBookingCode").addEventListener("keydown",e=>{if(e.key==="Enter")snapAnalyzeCode()});
+
 $("#sportSelect").onchange=async e=>{state.sport=e.target.value||"football";const defaults=state.sport==="basketball"?["basketball_total"]:state.sport==="tennis"?["tennis_moneyline"]:state.sport==="ice_hockey"?["hockey_moneyline"]:state.sport==="baseball"?["baseball_moneyline"]:["ou"];state.markets=new Set(defaults);state.selections=new Set();marketCatalog=allMarketCatalog;renderMarketOptions();renderSelectionOptions();state.selected.clear();renderSlip();$("#league").innerHTML="";await Promise.all([loadLeagues(),loadBase()]);if($("#page-predictions")?.classList.contains("active-page"))loadDailyBest();};
 $("#fixtureDate").onchange=async e=>{setDate(e.target.value);$("#league").innerHTML="";state.selected.clear();renderSlip();await Promise.all([loadLeagues(),loadBase()])};
 $("#prevDate").onclick=async()=>{$("#fixtureDate").value=shiftDate(-1);$("#fixtureDate").dispatchEvent(new Event("change"))};
