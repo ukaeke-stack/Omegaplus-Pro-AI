@@ -2,7 +2,29 @@
 <div class="app-shell"><aside id="side" class="side"><div class="side-head"><div class="logo">⚽</div><div><strong>Omegaplus</strong><small>PRO AI</small></div><button id="sideClose" class="close-side">×</button></div><nav class="side-nav"><div id="omegaSideAuth" class="omega-side-auth"><button type="button" id="omegaSideLogin" class="omega-side-login"><span class="omega-side-icon">↪</span><span>Login</span></button><button type="button" id="omegaSideCreate" class="omega-side-create"><span class="omega-side-icon">＋</span><span>Create account</span></button><div id="omegaSideProfile" hidden><div id="omegaSideUser"></div><button type="button" id="omegaSideLogout">Log out</button><button type="button" id="omegaSideAccount">My account</button></div></div><button class="active" data-page="home">⌂ <span>Home</span></button><button data-page="predictions">▥ <span>Predictions</span></button><button data-page="calendar">▣ <span>Calendar</span></button><button data-page="history">◷ <span>History</span></button><button data-page="stats">♜ <span>Statistics</span></button> <button data-page="other-sports">🏓 <span>Other Sports</span></button><button type="button" id="latestUpdatesButton">↻ <span>Latest Updates</span></button><button data-page="feedback">✎ <span>Feedback</span></button><button data-page="suggestion">★ <span>Suggestions</span></button><button data-page="message">✉ <span>Message Admin</span></button><button data-page="live-chat">◉ <span>Live Chat</span></button></nav></aside><div id="backdrop"></div>
 <main><header class="topbar"><button id="menu" class="menu-btn" aria-label="Open sidebar" title="Open sidebar">☰</button><button type="button" id="toolbarGrip" class="toolbar-grip" aria-label="Drag toolbar" title="Drag toolbar">⠿</button><div class="top-brand"><div class="logo">⚽</div><div><strong>Omegaplus</strong><small>AI MULTI-SPORT ANALYTICS</small></div></div><button id="refreshScan" class="secondary top-update">Update Scan</button></header>
 <div id="page-home" class="page active-page"><section class="hero-home"><h1>AI FOOTBALL<br><em>PREDICTIONS</em></h1><p>Live SportyBet data with sport-specific, multi-league, multi-market confidence ranking.</p></section>
-<section class="snap-card"><button id="snapToggle" class="snap-head"><span class="feature-icon">▣</span><span class="snap-copy"><strong>SNAP PREDICT</strong><small>Upload a fixture screenshot — AI predicts all games</small></span><b class="new-badge">NEW</b><span id="snapArrow">⌄</span></button><div id="snapBody" class="snap-body"><label class="upload-box" for="fixtureFile"><span class="upload-icon">⇧</span><strong>Drop a fixture screenshot here</strong><small>or click to browse · PNG, JPG, WEBP</small><input id="fixtureFile" type="file" accept="image/png,image/jpeg,image/webp"></label><div id="fileName"></div></div></section>
+<section class="snap-card snap-card-v2">
+<button id="snapToggle" class="snap-head"><span class="feature-icon">▣</span><span class="snap-copy"><strong>SNAP PREDICT</strong><small>Analyze booked games from a screenshot or SportyBet code</small></span><b class="new-badge">NEW</b><span id="snapArrow">⌄</span></button>
+<div id="snapBody" class="snap-body open">
+<div class="snap-mode-tabs" role="tablist" aria-label="Snap Predict input method">
+<button type="button" class="snap-mode active" id="snapImageMode" role="tab" aria-selected="true">▧ Upload Image</button>
+<button type="button" class="snap-mode" id="snapCodeMode" role="tab" aria-selected="false">⌗ Booking Code</button>
+</div>
+<div id="snapImagePanel" class="snap-panel">
+<label class="upload-box snap-upload" for="fixtureFile"><img id="snapImagePreview" class="snap-image-preview" alt="Selected booking screenshot preview" hidden><span id="snapUploadIcon" class="upload-icon">⇧</span><strong id="snapUploadTitle">Upload a booked-games screenshot</strong><small id="snapUploadHint">PNG, JPG or WEBP · clear text works best</small><input id="fixtureFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+<div id="fileName" class="snap-file-name">No image selected</div>
+<button id="snapAnalyzeImage" class="primary full snap-action" type="button" disabled>Analyze Games</button>
+<p class="snap-privacy">Image text is read in your browser. The image file itself is not uploaded.</p>
+</div>
+<div id="snapCodePanel" class="snap-panel" hidden>
+<label class="snap-input-label" for="snapBookingCode">SportyBet booking code</label>
+<input id="snapBookingCode" class="snap-code-input" type="text" inputmode="text" autocomplete="off" maxlength="40" placeholder="Paste or type your booking code">
+<button id="snapAnalyzeCode" class="primary full snap-action" type="button">Analyze Booking Code</button>
+<p class="snap-privacy">For now, booking-code lookup supports SportyBet only.</p>
+</div>
+<div id="snapStatus" class="snap-status" role="status" aria-live="polite" hidden></div>
+<div id="snapResults" class="snap-results"></div>
+<div id="snapBetterWrap" hidden><button id="snapBetterOptions" class="secondary full snap-action" type="button">Find Better Options</button><div id="snapBetterResults"></div></div>
+</div></section>
 <section class="live-card"><span class="live-badge">◉ LIVE</span><div><strong>Live market analysis</strong><small>SportyBet fixtures, markets and confidence ranking</small></div></section>
 <section class="stats-row"><div class="metric"><span>Selected Date</span><b id="selectedDateMetric">—</b><em>Fixture day</em><i>▣</i></div><div class="metric"><span>Available Games</span><b id="predictionTotal">—</b><em>Live feed</em><i>◎</i></div></section><section class="stats-row"><div class="metric"><span>Selected</span><b id="selectedHome">0</b><em>Current slip</em><i>◎</i></div><div class="metric"><span>Engine</span><b>LIVE</b><em>Market model</em><i>％</i></div></section>
 <section class="today-picks"><div class="section-head"><div><small>LIVE MARKET SCAN</small><h2>Fixture Analyzer</h2><p>Select <b>multiple leagues</b>, <b>multiple markets</b> and <b>multiple options</b>. Results are ranked by confidence and limited to the exact number requested.</p></div><span class="live-badge">◉ LIVE</span></div>
