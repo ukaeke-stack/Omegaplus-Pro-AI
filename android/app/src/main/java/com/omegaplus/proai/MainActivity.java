@@ -14,6 +14,14 @@ import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
 import android.webkit.JavascriptInterface;
 import android.content.Intent;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.util.Base64;
+import java.io.OutputStream;
+import java.util.Locale;
 import android.net.Uri;
 import android.content.pm.PackageInfo;
 import android.view.KeyEvent;
@@ -24,6 +32,7 @@ import com.google.firebase.messaging.FirebaseMessaging;
 
 public class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4201;
+    private static final String CHANNEL_ID = "omegaplus_daily_best";
     private WebView webView;
     private boolean volumeUpPressed;
     private boolean volumeDownPressed;
@@ -51,6 +60,18 @@ public class MainActivity extends Activity {
             }
         }
 
+        @JavascriptInterface public void showNotification(String title, String body) {
+            runOnUiThread(() -> showNativeNotification(title, body));
+        }
+
+        @JavascriptInterface public void requestNotificationPermission() {
+            runOnUiThread(MainActivity.this::requestNotificationPermissionIfNeeded);
+        }
+
+        @JavascriptInterface public void saveImage(String base64Png, String fileName) {
+            runOnUiThread(() -> savePngToGallery(base64Png, fileName));
+        }
+
         @JavascriptInterface public void openPlayStore() {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName())));
@@ -76,6 +97,42 @@ public class MainActivity extends Activity {
         setContentView(webView);
         webView.loadUrl(APP_URL);
         requestNotificationPermissionIfNeeded();
+    }
+
+    private void savePngToGallery(String base64Png, String fileName) {
+        try {
+            if (base64Png == null || base64Png.trim().isEmpty()) throw new IllegalArgumentException("Image data is empty.");
+            byte[] bytes = Base64.decode(base64Png, Base64.DEFAULT);
+            String safeName = (fileName == null ? "omegaplus-daily-best.png" : fileName).replaceAll("[^A-Za-z0-9._-]", "_");
+            if (!safeName.toLowerCase(Locale.ROOT).endsWith(".png")) safeName += ".png";
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, safeName);
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+            if (Build.VERSION.SDK_INT >= 29) values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Omegaplus");
+            Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IllegalStateException("Could not create image in gallery.");
+            try (OutputStream stream = getContentResolver().openOutputStream(uri)) {
+                if (stream == null) throw new IllegalStateException("Could not open image output.");
+                stream.write(bytes);
+                stream.flush();
+            }
+            Toast.makeText(this, "Image saved to Pictures/Omegaplus", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not save image: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showNativeNotification(String title, String body) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(new NotificationChannel(CHANNEL_ID, "Omegaplus Daily Best", NotificationManager.IMPORTANCE_DEFAULT));
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this);
+        String safeTitle = title == null || title.trim().isEmpty() ? "Omegaplus" : title;
+        String safeBody = body == null ? "" : body;
+        builder.setSmallIcon(getApplicationInfo().icon).setContentTitle(safeTitle).setContentText(safeBody)
+                .setStyle(new Notification.BigTextStyle().bigText(safeBody)).setAutoCancel(true);
+        manager.notify(safeTitle.hashCode() ^ safeBody.hashCode(), builder.build());
     }
 
     private void requestNotificationPermissionIfNeeded() {
