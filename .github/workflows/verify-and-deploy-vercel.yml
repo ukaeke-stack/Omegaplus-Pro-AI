@@ -1,0 +1,59 @@
+name: Verify Pro AI Port and Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+      - feature/port-auto-prediction-updates
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify JavaScript and dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Check JavaScript syntax
+        run: |
+          set -euo pipefail
+          find . -path './node_modules' -prune -o -name '*.js' -type f -print0 | xargs -0 -n1 node --check
+
+  deploy-production:
+    name: Deploy tested build to Vercel Production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    env:
+      VERCEL_ORG_ID: team_iBAh0X2UsEES0UejqSZSCNlT
+      VERCEL_PROJECT_ID: prj_hmKdFW378LauHThdRt5awow5SBf8
+      VERCEL_CLI_VERSION: 41.7.3
+    steps:
+      - name: Checkout reviewed production source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install pinned Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+      - name: Pull production project configuration
+        run: vercel pull --yes --environment=production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      - name: Build with production settings
+        run: vercel build --prod
+      - name: Deploy tested build to production
+        run: vercel deploy --prebuilt --prod --yes
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
