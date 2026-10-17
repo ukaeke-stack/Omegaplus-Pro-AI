@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android v1.6.2
+    name: Build Android v1.6.3
     runs-on: ubuntu-latest
 
     steps:
@@ -83,7 +83,7 @@ jobs:
       - name: Upload Android release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Omegaplus-Pro-AI-v1.6.2-android-release
+          name: Omegaplus-Pro-AI-v1.6.3-android-release
           path: |
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/bundle/release/app-release.aab
@@ -95,12 +95,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          TAG="android-v1.6.2"
+          TAG="android-v1.6.3"
           APK="android/app/build/outputs/apk/release/app-release.apk"
           AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Omegaplus Pro AI Android v1.6.2" --notes "Signed Android release with Firebase notification diagnostics. Hold both volume buttons together to display the device's Firebase messaging token for test-message verification."
+            gh release create "$TAG" --title "Omegaplus Pro AI Android v1.6.3" --notes "Signed Android release with Firebase notification diagnostics. Hold both volume buttons together to display the device's Firebase messaging token for test-message verification."
           fi
 
           gh release upload "$TAG" "$APK" --clobber
