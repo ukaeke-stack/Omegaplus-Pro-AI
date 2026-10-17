@@ -81,7 +81,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String APP_URL = "https://omegaplus-pro-ai.vercel.app/";
+    private static final String APP_URL = "https://omegaplus-pro-ai-ukaeke-9967.vercel.app/";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
