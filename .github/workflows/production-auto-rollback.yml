@@ -20,7 +20,7 @@ jobs:
       - name: Check production health
         id: health
         env:
-          PRODUCTION_URL: https://omegaplus-pro-ai.vercel.app
+          PRODUCTION_URL: https://omegaplus-pro-ai-ukaeke-9967.vercel.app
         run: |
           set -e
           ok=0
